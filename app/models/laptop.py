@@ -5,6 +5,7 @@ from sqlmodel import SQLModel, Field
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
+from sqlalchemy.orm import DeclarativeBase
 
 class LaptopBase(SQLModel):
     brand: str
@@ -19,7 +20,7 @@ class LaptopBase(SQLModel):
     raw_specs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     image_url: Optional[str] = None
 
-class Laptop(LaptopBase, table=True):
+class Laptop(DeclarativeBase, LaptopBase, table=True):
     __tablename__ = "laptops"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -31,7 +32,7 @@ class LaptopRead(LaptopBase):
 class LaptopCreate(LaptopBase):
     pass
 
-class LaptopEmbedding(SQLModel, table=True):
+class LaptopEmbedding(DeclarativeBase, SQLModel, table=True):
     __tablename__ = "laptop_embeddings"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     laptop_id: uuid.UUID = Field(foreign_key="laptops.id", unique=True)
