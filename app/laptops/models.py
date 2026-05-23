@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import DeclarativeBase
 
+# Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
     brand: str
     model_code: str = Field(unique=True, index=True)
@@ -20,18 +21,22 @@ class LaptopBase(SQLModel):
     raw_specs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     image_url: Optional[str] = None
 
-class Laptop(DeclarativeBase, LaptopBase, table=True):
+# db tbl model for laptops, inherits from both DeclarativeBase and LaptopBase
+class Laptop(DeclarativeBase,LaptopBase, table=True):
     __tablename__ = "laptops"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+# API interface model for reading laptop data
 class LaptopRead(LaptopBase):
     id: uuid.UUID
     created_at: datetime
 
+# API request model for creating a new laptop entry
 class LaptopCreate(LaptopBase):
     pass
 
+# AI Vector Embedding
 class LaptopEmbedding(DeclarativeBase, SQLModel, table=True):
     __tablename__ = "laptop_embeddings"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)

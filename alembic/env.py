@@ -9,9 +9,9 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__))) 
 
-
 from sqlmodel import SQLModel
-from app.models import User, Laptop, LaptopEmbedding 
+from app.laptops.models import Laptop, LaptopEmbedding
+from app.users.models import User
 
 target_metadata = SQLModel.metadata
 

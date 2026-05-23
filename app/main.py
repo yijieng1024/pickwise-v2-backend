@@ -1,26 +1,17 @@
 from fastapi import FastAPI
-from app.database import init_db
-
-from app.api.endpoints import laptops
+from app.laptops.router import router as laptops_router
+from app.users.router import router as users_router
 
 app = FastAPI(
-    title="PickWise API v2",
-    description="Agentic Backend for PickWise Laptop Recommendation System",
+    title="PickWise v2 API",
+    description="Enterprise Laptop Recommendation System Backend",
     version="2.0.0"
 )
 
-@app.on_event("startup")
-def on_startup():
-    init_db()
+# declare routes before including routers to avoid circular imports
+app.include_router(laptops_router)
+app.include_router(users_router)
 
 @app.get("/")
-def read_root():
-    return {"message": "Welcome to PickWise v2 Backend! System is online."}
-
-# Routers
-# prefix="/laptops" means all routes in laptops.router will be prefixed with /laptops
-app.include_router(laptops.router, prefix="/laptops", tags=["Laptops"])
-
-# app.include_router(users.router, prefix="/users", tags=["Users"])
-# app.include_router(chat.router, prefix="/chat", tags=["AI Agent"])
-# app.include_router(scraper.router, prefix="/scraper", tags=["ETL Pipeline"])
+def root():
+    return {"status": "healthy", "project": "PickWise v2 Backend"}
