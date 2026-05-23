@@ -6,7 +6,7 @@ from typing import List
 
 router = APIRouter(prefix="/laptops", tags=["Laptops"])
 
-@router.post("/", response_model=LaptopRead, status_code=21)
+@router.post("/", response_model=LaptopRead, status_code=201)
 def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session)):
     db_laptop = Laptop.model_validate(laptop)
     session.add(db_laptop)

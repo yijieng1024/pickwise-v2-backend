@@ -4,7 +4,7 @@ from app.users.router import router as users_router
 
 app = FastAPI(
     title="PickWise v2 API",
-    description="Enterprise Laptop Recommendation System Backend",
+    description="A Smart Laptop Recommendation System Backend",
     version="2.0.0"
 )
 

@@ -8,6 +8,7 @@ from pgvector.sqlalchemy import Vector
 
 # Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
+    # Part 1: Core Specifications
     brand: str
     model_code: str = Field(unique=True, index=True)
     product_name: str
@@ -15,14 +16,28 @@ class LaptopBase(SQLModel):
     cpu_benchmark: int
     gpu_benchmark: int
     ram_gb: int
+    ssd_gb: int
     weight_kg: float
     battery_wh: int
+    display_size_inch: float
+    display_refresh_rate_hz: Optional[int] = None
+    release_year: Optional[int] = None
+    
+    # Part 2: AI-Enhanced Features
+    ai_ready: bool = Field(default=False)
+    microsoft_office: bool = Field(default=False)
+    os: Optional[str] = None # e.g., "Windows 11", "macOS"
+    gpu_brand: Optional[str] = None # e.g., "NVIDIA", "AMD"
+    processor_brand: Optional[str] = None # e.g., "Intel", "Apple"
+
+    # Part 3: Original Specs & Image
     raw_specs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     image_url: Optional[str] = None
 
+
 # db tbl model for laptops, inherits from both DeclarativeBase and LaptopBase
 class Laptop(LaptopBase, table=True):
-    __tablename__ = "laptops"
+    __tablename__ = "laptops" # type: ignore
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -37,7 +52,7 @@ class LaptopCreate(LaptopBase):
 
 # AI Vector Embedding
 class LaptopEmbedding(SQLModel, table=True):
-    __tablename__ = "laptop_embeddings"
+    __tablename__ = "laptop_embeddings" # type: ignore
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     laptop_id: uuid.UUID = Field(foreign_key="laptops.id", unique=True)
     embedding: Any = Field(sa_column=Column(Vector(768)))
