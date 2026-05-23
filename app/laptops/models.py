@@ -5,7 +5,6 @@ from sqlmodel import SQLModel, Field
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
-from sqlalchemy.orm import DeclarativeBase
 
 # Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
@@ -22,7 +21,7 @@ class LaptopBase(SQLModel):
     image_url: Optional[str] = None
 
 # db tbl model for laptops, inherits from both DeclarativeBase and LaptopBase
-class Laptop(DeclarativeBase,LaptopBase, table=True):
+class Laptop(LaptopBase, table=True):
     __tablename__ = "laptops"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -37,7 +36,7 @@ class LaptopCreate(LaptopBase):
     pass
 
 # AI Vector Embedding
-class LaptopEmbedding(DeclarativeBase, SQLModel, table=True):
+class LaptopEmbedding(SQLModel, table=True):
     __tablename__ = "laptop_embeddings"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     laptop_id: uuid.UUID = Field(foreign_key="laptops.id", unique=True)
