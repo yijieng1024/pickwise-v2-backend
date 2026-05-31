@@ -1,6 +1,7 @@
+from typing import Any, Dict, Optional
 import uuid
 from datetime import datetime, timezone
-from sqlmodel import SQLModel, Field
+from sqlmodel import JSON, Column, SQLModel, Field
 
 class User(SQLModel, table=True):
     __tablename__ = "users" # type: ignore
@@ -11,6 +12,7 @@ class User(SQLModel, table=True):
     password: str
     role: str = Field(default="user")
     is_verified: bool = Field(default=False)
+    preferences: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # frontend receive data for creating a new user
