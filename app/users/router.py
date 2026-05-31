@@ -1,11 +1,11 @@
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 
 from app.database import get_session
 from app.config import settings
-from app.users.models import User, UserRead, Token
+from app.users.models import User, UserRead, Token, LaptopUserPreference
 from app.users.auth import (
     create_password_reset_token,
     get_password_hash,
@@ -108,8 +108,26 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = D
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/me/preferences", response_model=UserPreferences)
-def get_my_preferences(current_user: User = Depends(get_current_user)):
-    return current_user.preferences or {}
+def get_my_preferences(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # Get user with preferences relationship loaded
+    user = session.exec(select(User).where(User.id == current_user.id)).first()
+    
+    if not user or not user.preferences:
+        return UserPreferences()
+    
+    # Convert database model to schema
+    prefs = user.preferences
+    return UserPreferences(
+        budget=prefs.budget,
+        purpose=prefs.purpose or [],
+        priorities=prefs.priorities or {},
+        screen_size=prefs.screen_size or [],
+        portability=prefs.portability,
+        brand_preferences=prefs.brand_preferences or []
+    )
 
 @router.put("/me/preferences", response_model=UserPreferences)
 def update_my_preferences(
@@ -117,20 +135,52 @@ def update_my_preferences(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-
-    new_prefs = preferences_in.model_dump(exclude_unset=True)
+    # Get user with preferences relationship
+    user = session.exec(select(User).where(User.id == current_user.id)).first()
     
-    # Update the existing dictionary or create a new one
-    current_prefs = current_user.preferences or {}
-    current_prefs.update(new_prefs)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     
-    current_user.preferences = current_prefs
+    # Check if user already has preferences record
+    existing_pref = session.exec(
+        select(LaptopUserPreference).where(LaptopUserPreference.user_id == user.id)
+    ).first()
     
-    session.add(current_user)
+    if existing_pref:
+        # Update existing preferences
+        pref_data = preferences_in.model_dump(exclude_unset=True)
+        for key, value in pref_data.items():
+            setattr(existing_pref, key, value)
+        existing_pref.updated_at = datetime.now(timezone.utc)
+        session.add(existing_pref)
+    else:
+        # Create new preferences record
+        new_pref = LaptopUserPreference(
+            user_id=user.id,
+            budget=preferences_in.budget,
+            purpose=preferences_in.purpose,
+            priorities=preferences_in.priorities,
+            screen_size=preferences_in.screen_size,
+            portability=preferences_in.portability,
+            brand_preferences=preferences_in.brand_preferences
+        )
+        session.add(new_pref)
+    
     session.commit()
-    session.refresh(current_user)
-
-    return current_user.preferences
+    
+    # Fetch updated preferences
+    updated_pref = session.exec(
+        select(LaptopUserPreference).where(LaptopUserPreference.user_id == user.id)
+    ).first()
+    
+    return UserPreferences(
+        budget=updated_pref.budget,
+        purpose=updated_pref.purpose or [],
+        priorities=updated_pref.priorities or {},
+        screen_size=updated_pref.screen_size or [],
+        portability=updated_pref.portability,
+        brand_preferences=updated_pref.brand_preferences or []
+    )
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
 def forgot_password(
