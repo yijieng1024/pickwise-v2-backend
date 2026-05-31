@@ -211,13 +211,13 @@ def update_my_preferences(
     ).first()
     
     return UserPreferences(
-        budget=updated_pref.budget,
-        purpose=updated_pref.purpose or [],
-        priorities=updated_pref.priorities or {},
-        screen_size=updated_pref.screen_size or [],
-        portability=updated_pref.portability,
-        brand_preferences=updated_pref.brand_preferences or [],
-        tech_savviness=updated_pref.tech_savviness
+        budget=updated_pref.budget, #type: ignore
+        purpose=updated_pref.purpose or [], #type: ignore
+        priorities=updated_pref.priorities or {}, #type: ignore
+        screen_size=updated_pref.screen_size or [], #type: ignore
+        portability=updated_pref.portability, #type: ignore
+        brand_preferences=updated_pref.brand_preferences or [], #type: ignore
+        tech_savviness=updated_pref.tech_savviness #type: ignore
     )
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
