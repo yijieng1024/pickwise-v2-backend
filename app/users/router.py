@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.database import get_session
 from app.config import settings
-from app.users.models import User, UserCreate, UserRead, Token
+from app.users.models import User, UserRead, Token
 from app.users.auth import (
     create_password_reset_token,
     get_password_hash,
@@ -17,36 +17,41 @@ from app.users.auth import (
 )
 
 from app.users.email import send_password_reset_email, send_verification_email
-from app.users.schema import ForgotPasswordRequest, ResetPasswordRequest, UserPreferences
+from app.users.schema import ForgotPasswordRequest, ResetPasswordRequest, UserPreferences, UserRegisterRequest
 from app.users.auth import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def register(user: UserCreate, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
-    # check if username or email already exists 
-    statement = select(User).where((User.username == user.username) | (User.email == user.email))
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+def register(
+    request: UserRegisterRequest,
+    background_tasks: BackgroundTasks, 
+    session: Session = Depends(get_session)
+):
+     
+    statement = select(User).where(
+        (User.username == request.username) | (User.email == request.email)
+    )
     if session.exec(statement).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username or email already registered"
         )
     
-    # save user to database
     db_user = User(
-        username=user.username,
-        email=user.email,
-        password=get_password_hash(user.password) 
+        username=request.username,
+        email=request.email,
+        password=get_password_hash(request.password)
     )
+    
     session.add(db_user)
     session.commit()
     session.refresh(db_user)
+
+    verification_token = create_email_verification_token(db_user.email)
+    background_tasks.add_task(send_verification_email, db_user.email, verification_token)
     
-    # send verification email in the background
-    verification_token = create_email_verification_token(user.email)
-    background_tasks.add_task(send_verification_email, user.email, verification_token)
-    
-    return db_user
+    return {"message": "User created successfully. Please check your email to verify."}
 
 
 @router.get("/verify-email")

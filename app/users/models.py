@@ -15,12 +15,6 @@ class User(SQLModel, table=True):
     preferences: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-# frontend receive data for creating a new user
-class UserCreate(SQLModel):
-    username: str
-    email: str
-    password: str
-
 # data for read user info (password is optional)
 class UserRead(SQLModel):
     id: uuid.UUID

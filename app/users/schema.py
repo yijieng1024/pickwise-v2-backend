@@ -1,5 +1,28 @@
-from pydantic import BaseModel, EmailStr, Field
+import re
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Optional, Dict
+
+class UserRegisterRequest(BaseModel):
+    username: str 
+    email: EmailStr  # Automatically blocks fake formats like "jack@com"
+    password: str = Field(min_length=8, description="Must be at least 8 characters")
+
+    @field_validator('password')
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        """
+        Enforces password strength:
+        - At least one uppercase letter
+        - At least one lowercase letter
+        - At least one number
+        """
+        if not re.match(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)", v):
+            raise ValueError(
+                "Password must contain at least one uppercase letter, "
+                "one lowercase letter, and one number."
+            )
+        return v
 
 class UserPreferences(BaseModel):
     budget: Optional[int] = Field(default=None, description="Maximum budget in RM")
