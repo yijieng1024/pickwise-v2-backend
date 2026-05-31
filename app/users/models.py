@@ -1,7 +1,14 @@
 from typing import Any, Dict, Optional
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
+from enum import Enum
 from sqlmodel import Relationship, JSON, Column, SQLModel, Field
+
+class GenderEnum(str, Enum):
+    """Gender enum for user profile"""
+    MALE = "Male"
+    FEMALE = "Female"
+    OTHER = "Other"
 
 class User(SQLModel, table=True):
     __tablename__ = "users" # type: ignore
@@ -12,6 +19,9 @@ class User(SQLModel, table=True):
     password: str
     role: str = Field(default="user")
     is_verified: bool = Field(default=False)
+    birthday: Optional[date] = Field(default=None, description="User's date of birth")
+    gender: Optional[str] = Field(default=None, description="User's gender (Male, Female, Other)")
+    occupation: Optional[str] = Field(default=None, description="User's occupation")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationship to preferences
@@ -28,6 +38,7 @@ class LaptopUserPreference(SQLModel, table=True):
     screen_size: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))
     portability: Optional[str] = Field(default=None)
     brand_preferences: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))
+    tech_savviness: Optional[str] = Field(default=None, description="Tech-savviness level: 'Very tech-savvy', 'Somewhat tech-savvy', or 'Not very tech-savvy'")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
@@ -41,6 +52,9 @@ class UserRead(SQLModel):
     email: str
     role: str
     is_verified: bool
+    birthday: Optional[date]
+    gender: Optional[str]
+    occupation: Optional[str]
     created_at: datetime
 
 # token response model for authentication

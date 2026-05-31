@@ -17,7 +17,7 @@ from app.users.auth import (
 )
 
 from app.users.email import send_password_reset_email, send_verification_email
-from app.users.schema import ForgotPasswordRequest, ResetPasswordRequest, UserPreferences, UserRegisterRequest
+from app.users.schema import ForgotPasswordRequest, ResetPasswordRequest, UserPreferences, UserRegisterRequest, UserProfile
 from app.users.auth import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -76,6 +76,41 @@ def verify_email(token: str, session: Session = Depends(get_session)):
     
     return {"message": "Email verified successfully! You can now log in."}
 
+@router.get("/me/profile", response_model=UserRead)
+def get_my_profile(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get current user's profile information"""
+    user = session.exec(select(User).where(User.id == current_user.id)).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return user
+
+@router.put("/me/profile", response_model=UserRead)
+def update_my_profile(
+    profile_in: UserProfile,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Update current user's profile information"""
+    user = session.exec(select(User).where(User.id == current_user.id)).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Update only provided fields
+    profile_data = profile_in.model_dump(exclude_unset=True)
+    for key, value in profile_data.items():
+        setattr(user, key, value)
+    
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    
+    return user
 
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
@@ -126,7 +161,8 @@ def get_my_preferences(
         priorities=prefs.priorities or {},
         screen_size=prefs.screen_size or [],
         portability=prefs.portability,
-        brand_preferences=prefs.brand_preferences or []
+        brand_preferences=prefs.brand_preferences or [],
+        tech_savviness=prefs.tech_savviness
     )
 
 @router.put("/me/preferences", response_model=UserPreferences)
@@ -162,7 +198,8 @@ def update_my_preferences(
             priorities=preferences_in.priorities,
             screen_size=preferences_in.screen_size,
             portability=preferences_in.portability,
-            brand_preferences=preferences_in.brand_preferences
+            brand_preferences=preferences_in.brand_preferences,
+            tech_savviness=preferences_in.tech_savviness
         )
         session.add(new_pref)
     
@@ -179,7 +216,8 @@ def update_my_preferences(
         priorities=updated_pref.priorities or {},
         screen_size=updated_pref.screen_size or [],
         portability=updated_pref.portability,
-        brand_preferences=updated_pref.brand_preferences or []
+        brand_preferences=updated_pref.brand_preferences or [],
+        tech_savviness=updated_pref.tech_savviness
     )
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)

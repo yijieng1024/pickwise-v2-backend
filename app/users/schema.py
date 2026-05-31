@@ -1,5 +1,5 @@
 import re
-
+from datetime import date
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Optional, Dict
 
@@ -24,6 +24,20 @@ class UserRegisterRequest(BaseModel):
             )
         return v
 
+class UserProfile(BaseModel):
+    """User profile information update"""
+    birthday: Optional[date] = Field(default=None, description="User's date of birth (YYYY-MM-DD)")
+    gender: Optional[str] = Field(default=None, description="User's gender: 'Male', 'Female', or 'Other'")
+    occupation: Optional[str] = Field(default=None, description="User's occupation")
+    
+    @field_validator('gender')
+    @classmethod
+    def validate_gender(cls, v: Optional[str]) -> Optional[str]:
+        """Validate gender is one of the allowed values"""
+        if v is not None and v not in ["Male", "Female", "Other"]:
+            raise ValueError("Gender must be 'Male', 'Female', or 'Other'")
+        return v
+
 class UserPreferences(BaseModel):
     budget: Optional[int] = Field(default=None, description="Maximum budget in RM")
     purpose: Optional[List[str]] = Field(default_factory=list, description="e.g., ['Office', 'Gaming', 'Programming']")
@@ -31,6 +45,15 @@ class UserPreferences(BaseModel):
     screen_size: Optional[List[str]] = Field(default_factory=list, description="e.g., ['13-14', '15-16']")
     portability: Optional[str] = Field(default=None, description="e.g., 'Ultra-light', 'Doesn't matter'")
     brand_preferences: Optional[List[str]] = Field(default_factory=list, description="e.g., ['Apple', 'Asus', 'Lenovo']")
+    tech_savviness: Optional[str] = Field(default=None, description="Tech-savviness level: 'Very tech-savvy', 'Somewhat tech-savvy', or 'Not very tech-savvy'")
+    
+    @field_validator('tech_savviness')
+    @classmethod
+    def validate_tech_savviness(cls, v: Optional[str]) -> Optional[str]:
+        """Validate tech_savviness is one of the allowed values"""
+        if v is not None and v not in ["Very tech-savvy", "Somewhat tech-savvy", "Not very tech-savvy"]:
+            raise ValueError("Tech-savviness must be 'Very tech-savvy', 'Somewhat tech-savvy', or 'Not very tech-savvy'")
+        return v
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
