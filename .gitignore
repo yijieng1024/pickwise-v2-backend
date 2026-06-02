@@ -17,3 +17,6 @@ alembic.ini
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Agent File
+Progress.md
