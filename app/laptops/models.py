@@ -57,3 +57,25 @@ class LaptopEmbedding(SQLModel, table=True):
     laptop_id: uuid.UUID = Field(foreign_key="laptops.id", unique=True)
     embedding: Any = Field(sa_column=Column(Vector(768)))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class LaptopUpdate(SQLModel):
+    brand: Optional[str] = None
+    model_code: Optional[str] = None
+    product_name: Optional[str] = None
+    price_rm: Optional[float] = None
+    cpu_benchmark: Optional[int] = None
+    gpu_benchmark: Optional[int] = None
+    ram_gb: Optional[int] = None
+    ssd_gb: Optional[int] = None
+    weight_kg: Optional[float] = None
+    battery_wh: Optional[int] = None
+    display_size_inch: Optional[float] = None
+    display_refresh_rate_hz: Optional[int] = None
+    release_year: Optional[int] = None
+    ai_ready: Optional[bool] = None
+    microsoft_office: Optional[bool] = None
+    os: Optional[str] = None
+    gpu_brand: Optional[str] = None
+    processor_brand: Optional[str] = None
+    raw_specs: Optional[Dict[str, Any]] = None
+    image_url: Optional[str] = None
