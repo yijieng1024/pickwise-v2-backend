@@ -5,7 +5,7 @@ from typing import List, Optional, Dict
 
 class UserRegisterRequest(BaseModel):
     username: str 
-    email: EmailStr  # Automatically blocks fake formats like "jack@com"
+    email: EmailStr
     password: str = Field(min_length=8, description="Must be at least 8 characters")
 
     @field_validator('password')

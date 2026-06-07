@@ -6,36 +6,61 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 def extract_apple_specs(page) -> dict:
     title = page.title()
     clean_price = 0.0
+    image_url = None
+    raw_specs_list = []
     
+    # 1. PRICE EXTRACTION (The Regex Engine)
     try:
         price_element = page.wait_for_selector('.rc-prices-fullprice, .violator-frameless', timeout=5000)
-        
         if price_element:
             raw_price_text = price_element.inner_text()
-            
-            # --- THE REGEX PARSER ---
-            # 1. Strip commas first so "6,999.00" becomes "6999.00"
             text_without_commas = raw_price_text.replace(',', '')
-            
-            # 2. Extract all standalone numbers (including decimals) from the text
-            # This turns "From 2499 or 104.13/mo" into a clean list: ['2499', '104.13']
             found_numbers = re.findall(r'\b\d+(?:\.\d+)?\b', text_without_commas)
             
             if found_numbers:
-                # Apple always lists the full price first, so we grab index [0]
                 clean_price = float(found_numbers[0])
-                
     except PlaywrightTimeoutError:
-        print(f"⚠️ Could not locate price for {title}. Defaulting to 0.0")
-        pass
+        print(f"⚠️ Timeout: Could not locate price for {title}.")
 
-    # Extract the clean product name
+    # 2. IMAGE EXTRACTION (The Meta Tag Trick)
+    # Instead of hunting for the exact <img> on the page, Apple always puts 
+    # a pristine, high-res product image in the OpenGraph meta tag for sharing.
+    try:
+        meta_image = page.locator('meta[property="og:image"]').first
+        if meta_image:
+            image_url = meta_image.get_attribute('content')
+    except Exception as e:
+        print(f"⚠️ Could not locate meta image: {e}")
+
+    # 3. HARDWARE SPECS EXTRACTION
+    # Apple usually lists the CPU, RAM, and Storage in a specific summary list
+    # The class '.rf-bfe-techspecs li' or '.tech-specs-list li' are common targets
+    try:
+        # Wait a brief moment for the spec list to render
+        page.wait_for_selector('ul li', timeout=3000)
+        
+        # We look for list items that contain typical hardware keywords
+        # This is a resilient way to grab specs even if Apple changes their CSS classes
+        list_items = page.query_selector_all('li')
+        for item in list_items:
+            text = item.inner_text().strip()
+            # If the list item mentions cores, GB, or TB, it's a hardware spec
+            if text and any(keyword in text for keyword in ['-core', 'GB', 'TB', 'Unified Memory', 'SSD']):
+                # Prevent duplicates
+                if text not in raw_specs_list:
+                    raw_specs_list.append(text)
+    except PlaywrightTimeoutError:
+        print(f"⚠️ Timeout: Could not locate hardware specs list.")
+
+    # Clean the product name
     product_name = title.split('-')[0].replace('Buy', '').strip()
 
     return {
         "brand": "Apple",
         "product_name": product_name,
         "price_rm": clean_price,
+        "image_url": image_url,
+        "raw_specs": raw_specs_list,
         "status": "success" if clean_price > 0 else "partial_success"
     }
 

@@ -79,3 +79,20 @@ class LaptopUpdate(SQLModel):
     processor_brand: Optional[str] = None
     raw_specs: Optional[Dict[str, Any]] = None
     image_url: Optional[str] = None
+
+class RawScrapLaptop(SQLModel, table=True):
+    __tablename__ = "raw_scrap_laptops" # type: ignore
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    source_url: str = Field(unique=True, index=True)
+    brand: str
+    raw_product_name: str
+    raw_price_rm: float
+    image_url: Optional[str] = None
+
+    raw_specs_dump: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
+
+    # AI Queue Tracker
+    processing_status: str = Field(default="pending") # States: 'pending', 'processing', 'completed', 'failed'
+    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
