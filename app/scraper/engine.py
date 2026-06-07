@@ -30,19 +30,45 @@ def extract_apple_specs(page) -> dict:
     except Exception as e:
         print(f"⚠️ Could not locate meta image: {e}")
 
-    # 3. HARDWARE SPECS EXTRACTION
+    # 3. HARDWARE SPECS EXTRACTION (The Upgraded Filter)
     try:
-        page.wait_for_selector('ul li', timeout=3000)
+        # Grab all readable text on the entire page, exactly like Ctrl+A -> Ctrl+C
+        body_text = page.locator('body').inner_text(timeout=3000)
         
-        list_items = page.query_selector_all('li')
-        for item in list_items:
-            text = item.inner_text().strip()
-            if text and any(keyword in text for keyword in ['-core', 'GB', 'TB', 'Unified Memory', 'SSD']):
-                # Prevent duplicates
+        # Split the massive wall of text into individual lines
+        lines = [line.strip() for line in body_text.split('\n') if line.strip()]
+        
+        # Expanded keywords to catch displays and specific chips
+        target_keywords = [
+            '-core', 'GB', 'TB', 'Unified Memory', 'SSD', 'chip', 
+            'resolution', 'display', 'Hz', 'nits', 'GHz'
+        ]
+        
+        # Explicit blocklist for Apple's legal footnotes
+        junk_phrases = [
+            '1gb =', 'testing conducted', 'battery life', 'formatted capacity', 
+            'weight varies', 'trade-in', 'apple.com', 'footnote'
+        ]
+
+        for text in lines:
+            text_lower = text.lower()
+            
+            # Rule A: Does it contain a hardware keyword?
+            has_keyword = any(kw.lower() in text_lower for kw in target_keywords)
+            
+            # Rule B: Is it short? (Sentences over 120 chars are almost always legal text)
+            is_short = len(text) < 120 
+            
+            # Rule C: Is it free of junk phrases?
+            is_clean = not any(junk in text_lower for junk in junk_phrases)
+
+            # If it passes all 3 rules, it's a genuine spec!
+            if has_keyword and is_short and is_clean:
                 if text not in raw_specs_list:
                     raw_specs_list.append(text)
-    except PlaywrightTimeoutError:
-        print(f"⚠️ Timeout: Could not locate hardware specs list.")
+                    
+    except Exception as e:
+        print(f"⚠️ Could not extract text body: {e}")
 
     product_name = title.split('-')[0].replace('Buy', '').strip()
 
@@ -57,7 +83,7 @@ def extract_apple_specs(page) -> dict:
 
 def scrape_official_website(url: str, brand: str) -> Dict[str, Any]:
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=False) # Set to True for production
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )

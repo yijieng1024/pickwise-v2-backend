@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from app.database import get_session
-from app.laptops.models import Laptop, LaptopRead, LaptopCreate, LaptopUpdate
+from app.laptops.models import Laptop, LaptopRead, LaptopCreate, LaptopUpdate, RawScrapLaptop
 from typing import List
 from uuid import UUID
+from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/laptops", tags=["Laptops"])
 
@@ -18,6 +19,21 @@ def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session))
 @router.get("/", response_model=List[LaptopRead])
 def list_laptops(session: Session = Depends(get_session)):
     return session.exec(select(Laptop)).all()
+
+@router.get("/raw-scrap-laptops", dependencies=[Depends(get_current_admin)])
+def list_raw_scrap_laptops(
+    offset: int = 0, 
+    limit: int = 50, 
+    session: Session = Depends(get_session)
+) -> List[RawScrapLaptop]:
+    """
+    Retrieves a paginated list of raw scraped laptops for the Admin dashboard.
+    """
+    # Using offset and limit prevents memory crashes
+    statement = select(RawScrapLaptop).order_by(RawScrapLaptop.created_at.desc()).offset(offset).limit(limit) # type: ignore
+    scrap_laptops = session.exec(statement).all()
+    
+    return list(scrap_laptops)
 
 @router.get("/{laptop_id}", response_model=LaptopRead)
 def get_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
