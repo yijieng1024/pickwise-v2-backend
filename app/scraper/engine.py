@@ -9,7 +9,7 @@ def extract_apple_specs(page) -> dict:
     image_url = None
     raw_specs_list = []
     
-    # 1. PRICE EXTRACTION (The Regex Engine)
+    # 1. PRICE EXTRACTION
     try:
         price_element = page.wait_for_selector('.rc-prices-fullprice, .violator-frameless', timeout=5000)
         if price_element:
@@ -22,9 +22,7 @@ def extract_apple_specs(page) -> dict:
     except PlaywrightTimeoutError:
         print(f"⚠️ Timeout: Could not locate price for {title}.")
 
-    # 2. IMAGE EXTRACTION (The Meta Tag Trick)
-    # Instead of hunting for the exact <img> on the page, Apple always puts 
-    # a pristine, high-res product image in the OpenGraph meta tag for sharing.
+    # 2. IMAGE EXTRACTION
     try:
         meta_image = page.locator('meta[property="og:image"]').first
         if meta_image:
@@ -33,18 +31,12 @@ def extract_apple_specs(page) -> dict:
         print(f"⚠️ Could not locate meta image: {e}")
 
     # 3. HARDWARE SPECS EXTRACTION
-    # Apple usually lists the CPU, RAM, and Storage in a specific summary list
-    # The class '.rf-bfe-techspecs li' or '.tech-specs-list li' are common targets
     try:
-        # Wait a brief moment for the spec list to render
         page.wait_for_selector('ul li', timeout=3000)
         
-        # We look for list items that contain typical hardware keywords
-        # This is a resilient way to grab specs even if Apple changes their CSS classes
         list_items = page.query_selector_all('li')
         for item in list_items:
             text = item.inner_text().strip()
-            # If the list item mentions cores, GB, or TB, it's a hardware spec
             if text and any(keyword in text for keyword in ['-core', 'GB', 'TB', 'Unified Memory', 'SSD']):
                 # Prevent duplicates
                 if text not in raw_specs_list:
@@ -52,7 +44,6 @@ def extract_apple_specs(page) -> dict:
     except PlaywrightTimeoutError:
         print(f"⚠️ Timeout: Could not locate hardware specs list.")
 
-    # Clean the product name
     product_name = title.split('-')[0].replace('Buy', '').strip()
 
     return {
@@ -64,21 +55,7 @@ def extract_apple_specs(page) -> dict:
         "status": "success" if clean_price > 0 else "partial_success"
     }
 
-def extract_lenovo_specs(page) -> Dict[str, Any]:
-    title = page.title()
-    price_element = page.wait_for_selector('.saleprice', timeout=5000)
-    price_text = price_element.inner_text() if price_element else "0"
-    clean_price = float(price_text.replace('RM', '').replace(',', '').strip()) if price_text != "0" else 0.0
-
-    return {
-        "brand": "Lenovo",
-        "product_name": title,
-        "price_rm": clean_price,
-        "status": "success"
-    }
-
 def scrape_official_website(url: str, brand: str) -> Dict[str, Any]:
-    # Notice we use 'with' instead of 'async with'
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
@@ -91,8 +68,6 @@ def scrape_official_website(url: str, brand: str) -> Dict[str, Any]:
 
             if brand.lower() == "apple":
                 data = extract_apple_specs(page)
-            elif brand.lower() == "lenovo":
-                data = extract_lenovo_specs(page)
             else:
                 raise ValueError(f"No extraction logic built for brand: {brand}")
             
