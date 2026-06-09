@@ -6,6 +6,7 @@ from alembic import context
 from sqlmodel import SQLModel
 from app.laptops.models import Laptop, LaptopEmbedding
 from app.users.models import User
+from app.scraper.models import ScrapeTarget
 
 config = context.config
 
