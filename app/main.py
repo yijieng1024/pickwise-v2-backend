@@ -16,9 +16,9 @@ app = FastAPI(
 )
 
 # declare routes before including routers to avoid circular imports
-app.include_router(brands_router)
-app.include_router(laptops_router)
 app.include_router(users_router)
+app.include_router(laptops_router)
+app.include_router(brands_router)
 app.include_router(scraper_router)
 
 
