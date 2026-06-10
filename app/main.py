@@ -5,6 +5,7 @@ from app.laptops.router import router as laptops_router
 from app.laptops.brand_router import router as brands_router
 from app.users.router import router as users_router
 from app.scraper.router import router as scraper_router
+from app.processor.router import router as processor_router
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -20,6 +21,7 @@ app.include_router(users_router)
 app.include_router(laptops_router)
 app.include_router(brands_router)
 app.include_router(scraper_router)
+app.include_router(processor_router)
 
 
 @app.get("/")

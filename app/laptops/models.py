@@ -68,7 +68,7 @@ class LaptopBase(SQLModel):
 
     # Part 3: Original Specs & Image
     raw_specs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
-    image_url: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
 
 
 # db tbl model for laptops, inherits from both DeclarativeBase and LaptopBase
