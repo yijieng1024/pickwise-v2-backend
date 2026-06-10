@@ -7,7 +7,7 @@ from uuid import UUID
 
 from app.users.auth import get_current_admin
 
-router = APIRouter(prefix="/brands", tags=["Brands"])
+router = APIRouter(prefix="/brands", tags=["Laptop Brands"])
 
 
 @router.post("", response_model=BrandRead, dependencies=[Depends(get_current_admin)], status_code=201)
