@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 from typing import cast
 
@@ -13,7 +14,6 @@ from app.laptops.models import (
     Laptop,
 )
 from app.processor.schemas import ExtractedLaptopFamily
-
 
 def process_raw_laptop_data(
     raw_laptop_id: str,
@@ -90,6 +90,9 @@ def process_raw_laptop_data(
                 Raw Product Name:
                 {product_name}
 
+                [Current System Year] 
+                {current_year}
+
                 [RAW PRICE MATRIX]
                 {raw_prices}
 
@@ -111,6 +114,7 @@ def process_raw_laptop_data(
                 {
                     "brand_name": brand_name,
                     "product_name": raw_data.raw_product_name,
+                    "current_year": datetime.now().year,
                     "raw_prices": json.dumps(
                         raw_data.raw_prices,
                         ensure_ascii=False,
@@ -127,14 +131,15 @@ def process_raw_laptop_data(
 
         saved_count = 0
 
+        # 5. Map the AI output to your SQLModel (Laptop) and save to DB
         for variant in extracted_data.variants:
             new_laptop = Laptop(
                 brand_id=raw_data.brand_id,
                 model_code=variant.model_code.lower(),
                 product_name=variant.product_name,
+                processor_model=variant.processor_model,
+                gpu_model=variant.gpu_model,
                 price_rm=variant.price_rm,
-                cpu_benchmark=variant.cpu_benchmark,
-                gpu_benchmark=variant.gpu_benchmark,
                 ram_gb=variant.ram_gb,
                 ssd_gb=variant.ssd_gb,
                 weight_kg=variant.weight_kg,
@@ -148,19 +153,15 @@ def process_raw_laptop_data(
                 gpu_brand=variant.gpu_brand,
                 processor_brand=variant.processor_brand,
                 raw_specs={"ai_extraction_source": raw_data.raw_specs_dump},
-                image_urls=raw_data.image_urls,
+                image_urls=raw_data.image_urls 
             )
-
+            
             try:
-                session.add_all([new_laptop])
+                session.add(new_laptop)
                 session.commit()
-
-                saved_count += 1
-
             except IntegrityError:
                 session.rollback()
-
-                print(f"⚠️ Skipped duplicate model_code: {variant.model_code}")
+                print(f"⚠️ Skipped duplicate SKU: {variant.model_code}")
 
         raw_data.processing_status = "completed"
 

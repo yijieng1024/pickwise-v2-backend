@@ -63,123 +63,38 @@ def crawl_apple_specs_links(start_url: str = "https://www.apple.com/my/mac/") ->
 
 def extract_apple_specs(page) -> dict:
     title = page.title()
-    product_name = (
-        title.split("-")[0].replace("Buy", "").replace("Tech Specs", "").strip()
-    )
-
-    raw_prices_list = []
-    raw_specs_list = []
+    product_name = title.split("-")[0].replace("Buy", "").replace("Tech Specs", "").strip()
+    
     extracted_images = []
-
     try:
         meta_image = page.locator('meta[property="og:image"]').first
         if meta_image:
             extracted_images.append(meta_image.get_attribute("content"))
-
         all_imgs = page.locator("img").evaluate_all("imgs => imgs.map(i => i.src)")
         for src in all_imgs:
-            if not src:
-                continue
+            if not src: continue
             src_lower = src.lower()
-            if (
-                any(ext in src_lower for ext in [".png", ".jpg", ".jpeg", ".webp"])
-                and "icon" not in src_lower
-                and "logo" not in src_lower
-            ):
+            if any(ext in src_lower for ext in [".png", ".jpg", ".jpeg", ".webp"]) and "icon" not in src_lower and "logo" not in src_lower:
                 if src not in extracted_images:
                     extracted_images.append(src)
     except Exception as e:
-        print(f"⚠️ Image extraction error: {e}")
+        print(f"⚠️ Image error: {e}")
 
-    size_tabs = ["13-inch", "14-inch", "15-inch", "16-inch"]
-
-    tabs_found_on_page = []
-    for size in size_tabs:
-        tab_locator = page.locator(
-            f'button:has-text("{size}"), a:has-text("{size}")'
-        ).first
-        if tab_locator.is_visible():
-            tabs_found_on_page.append({"size_name": size, "locator": tab_locator})
-
-    if not tabs_found_on_page:
-        tabs_found_on_page = [{"size_name": "Default", "locator": None}]
-
-    for tab in tabs_found_on_page:
-        size_label = tab["size_name"]
-
-        if tab["locator"]:
-            print(f"Selecting size: {size_label}...")
-            tab["locator"].click()
-            page.wait_for_timeout(1000)
-
-        try:
-            # Condition 1: Check for the original .techspecs-row layout
-            price_row = page.locator(".techspecs-row").filter(
-                has=page.locator(".techspecs-rowheader", has_text="Price")
-            ).first
-            
-            if price_row.is_visible() and price_row.locator(".techspecs-column").count() > 0:
-                price_columns = price_row.locator(".techspecs-column").all()
-                for col in price_columns:
-                    col_text = col.inner_text()
-                    clean_text = " | ".join(
-                        [line.strip().replace("\xa0", " ") for line in col_text.split("\n") if line.strip()]
-                    )
-                    if clean_text:
-                        tagged_price = f"[{size_label}] {clean_text}"
-                        if tagged_price not in raw_prices_list:
-                            raw_prices_list.append(tagged_price)
-                            
-            # Condition 2: Check for the new .section-price grid layout
-            else:
-                price_section = page.locator(".section.section-price").first
-                if price_section.is_visible():
-                    # Target all list items inside the grid container
-                    list_items = price_section.locator('li[role="listitem"]').all()
-                    
-                    for item in list_items:
-                        price_el = item.locator(".grid-item-price").first
-                        label_el = item.locator(".visuallyhidden").first
-                        
-                        price_text = price_el.inner_text().strip().replace("\xa0", " ") if price_el.is_visible() else ""
-                        label_text = label_el.inner_text().strip().replace("\xa0", " ") if label_el.is_visible() else ""
-                        
-                        # Combine them elegantly (e.g., "RM 5,799 | price for 2-Port Model")
-                        combined_text = f"{price_text} | {label_text}" if label_text else price_text
-                        
-                        if price_text:
-                            tagged_price = f"[{size_label}] {combined_text}"
-                            if tagged_price not in raw_prices_list:
-                                raw_prices_list.append(tagged_price)
-        except Exception as e:
-            print(f"⚠️ Price extraction error for {size_label}: {e}")
-
-        try:
-            subheaders = page.locator(".techspecs-subheader").all_inner_texts()
-            for text in subheaders:
-                clean_text = text.strip().replace("\xa0", " ")
-                if clean_text:
-                    tagged_spec = f"[{size_label}] {clean_text}"
-                    if tagged_spec not in raw_specs_list:
-                        raw_specs_list.append(tagged_spec)
-
-            list_items = page.locator(".techspecs-list li").all_inner_texts()
-            for text in list_items:
-                clean_text = text.strip().replace("\xa0", " ")
-                if clean_text:
-                    tagged_spec = f"[{size_label}] {clean_text}"
-                    if tagged_spec not in raw_specs_list:
-                        raw_specs_list.append(tagged_spec)
-        except Exception:
-            pass
+    raw_specs_text = ""
+    try:
+        page.wait_for_selector(".techspecs-section", timeout=5000)
+        sections_texts = page.locator(".techspecs-section").all_inner_texts()
+        raw_specs_text = "\n\n".join([text.strip() for text in sections_texts if text.strip()])
+    except PlaywrightTimeoutError:
+        print(f"⚠️ Timeout: .techspecs-section not found on {title}.")
 
     return {
         "brand": "Apple",
         "product_name": product_name,
-        "raw_prices_list": raw_prices_list,
+        "raw_prices_list": [],
         "image_urls": extracted_images,
-        "raw_specs": raw_specs_list,
-        "status": "success" if len(raw_specs_list) > 0 else "failed",
+        "raw_specs": [raw_specs_text],
+        "status": "success" if raw_specs_text else "failed",
     }
 
 

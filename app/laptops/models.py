@@ -48,9 +48,9 @@ class LaptopBase(SQLModel):
     brand_id: uuid.UUID = Field(foreign_key="laptop_brands.id")
     model_code: str = Field(unique=True, index=True)
     product_name: str
+    processor_model: str
+    gpu_model: str
     price_rm: float
-    cpu_benchmark: int
-    gpu_benchmark: int
     ram_gb: int
     ssd_gb: int
     weight_kg: float
@@ -103,8 +103,6 @@ class LaptopUpdate(SQLModel):
     model_code: Optional[str] = None
     product_name: Optional[str] = None
     price_rm: Optional[float] = None
-    cpu_benchmark: Optional[int] = None
-    gpu_benchmark: Optional[int] = None
     ram_gb: Optional[int] = None
     ssd_gb: Optional[int] = None
     weight_kg: Optional[float] = None
