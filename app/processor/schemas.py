@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 class ExtractedLaptopVariant(BaseModel):
     """Instructions for the AI to extract a single laptop configuration (Flat SKU Row)."""
@@ -78,6 +78,17 @@ class ExtractedLaptopVariant(BaseModel):
     microsoft_office_included: bool = Field(description="True if Microsoft Office or Microsoft 365 is explicitly mentioned as included. False otherwise.")
     bundled_accessories: Optional[str] = Field(description="Items included in the box besides the laptop and charger, e.g., 'Backpack', 'Polishing cloth'.")
     warranty_details: Optional[str] = Field(description="Details on warranty and support, e.g., '1 Year Limited Warranty'.")
+
+    # Part 9: The "Catch-All" for Leftovers
+    unmapped_specs: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Extract any specifications, footnotes, software trials, or legal disclaimers "
+            "from the source text that DO NOT fit into any of the explicitly defined fields above. "
+            "Store them as Key-Value pairs (e.g., {'xbox_game_pass': '3 months included', 'm2_slot_restriction': 'only single-sided SSDs supported'}). "
+            "DO NOT duplicate data already extracted in other fields."
+        )
+    )
 
 class ExtractedLaptopFamily(BaseModel):
     variants: List[ExtractedLaptopVariant]

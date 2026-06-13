@@ -51,33 +51,29 @@ def process_raw_laptop_data(
     system_prompt = """
         You are an expert hardware data engineer.
 
-        Your task is to extract highly structured laptop specifications from
-        scraped website text.
+        Your task is to extract highly structured laptop specifications from scraped website text into flat, distinct SKU configurations.
 
-        Rules:
+        CRITICAL RULES FOR HANDLING CONFIGURABLE MODELS (e.g., Apple):
+        1. COMBINATORIAL EXTRACTION: The raw text often lists a base model followed by "Configurable to" options (e.g., upgrading RAM or SSD). You MUST generate a distinct configuration object for EVERY valid combination of Processor, RAM, and SSD mentioned.
+        2. PRICE MAPPING & CALCULATION: 
+        - If the text lists a base price and separate upgrade prices (e.g., "RM 6,999 base", "+RM 850 for 24GB"), calculate and output the final total `price_rm` for that specific variant.
+        - If a list of standalone prices is provided (e.g., RM 6,999, RM 7,849, RM 8,999), use your reasoning to map the ascending prices sequentially to the ascending RAM/SSD configurations described in the text.
+        3. INFERRING SKUS: Ensure the `model_code` you generate distinctly reflects the unique combination of the generated row (e.g., append `-24gb-1tb` to differentiate it from the base model).
+        4. SDXC card slot at Macbook is port to let creators use SD cards for media transfer, not for storage expansion. So it should not be considered as an expansion slot for storage.
 
-        1. The raw text may contain multiple different variants of the same
-        product family (e.g. 14-inch and 16-inch models mixed together).
-
-        2. Separate all variants into distinct configuration objects.
-
-        3. Pay close attention to RAM, SSD, CPU, GPU, display size,
-        refresh rate and pricing differences.
-
-        4. Ignore marketing fluff, environmental reports, legal notices,
-        warranty text and unrelated content.
-
-        5. Deduce implicit Apple information:
+        STANDARD EXTRACTION RULES:
+        5. Separate all identified and calculated variants into distinct configuration objects.
+        6. Pay close attention to RAM, SSD, CPU, GPU, display size, refresh rate, and pricing differences.
+        7. Ignore marketing fluff, environmental reports, legal notices, warranty text, and unrelated content.
+        8. Deduce implicit Apple information if applicable:
         - os = "macOS"
         - gpu_brand = "Apple"
         - processor_brand = "Apple"
         - ai_ready = true
-
-        6. Only extract information that can reasonably be inferred from
-        the supplied data.
-
-        7. If a field is unavailable, return null.
-        """
+        9. Only extract information that can reasonably be inferred or calculated from the supplied data.
+        10. Any leftover technical specifications, limitations, or legal footnotes MUST be collected and placed into the `unmapped_specs` JSON object.
+        11. If a specific field is entirely unavailable and cannot be inferred, return null.
+    """
 
     prompt_template = ChatPromptTemplate.from_messages(
         [
@@ -133,29 +129,85 @@ def process_raw_laptop_data(
 
         # 5. Map the AI output to your SQLModel (Laptop) and save to DB
         for variant in extracted_data.variants:
+            if len(variant.unmapped_specs) > 0:
+                spec_or_unmapped = variant.unmapped_specs
+            else:
+                spec_or_unmapped = {"ai_extraction_source": raw_data.raw_specs_dump}
+            
             new_laptop = Laptop(
+                # Part 1: Core Identifiers
                 brand_id=raw_data.brand_id,
                 model_code=variant.model_code.lower(),
                 product_name=variant.product_name,
-                processor_model=variant.processor_model,
-                gpu_model=variant.gpu_model,
-                price_rm=variant.price_rm,
-                ram_gb=variant.ram_gb,
-                ssd_gb=variant.ssd_gb,
-                weight_kg=variant.weight_kg,
-                battery_wh=variant.battery_wh,
-                display_size_inch=variant.display_size_inch,
-                display_refresh_rate_hz=variant.display_refresh_rate_hz,
                 release_year=variant.release_year,
-                ai_ready=variant.ai_ready,
-                microsoft_office=variant.microsoft_office,
-                os=variant.os,
-                gpu_brand=variant.gpu_brand,
+                price_rm=variant.price_rm,
+
+                # Part 2: Processor & AI Engine
                 processor_brand=variant.processor_brand,
-                raw_specs={"ai_extraction_source": raw_data.raw_specs_dump},
-                image_urls=raw_data.image_urls 
+                processor_model=variant.processor_model,
+                processor_ghz=variant.processor_ghz,
+                cpu_cores=variant.cpu_cores,
+                cpu_threads=variant.cpu_threads,
+                npu_model=variant.npu_model,
+                npu_tops=variant.npu_tops,
+                ai_ready=variant.ai_ready,
+                ai_features=variant.ai_features,
+
+                # Part 3: Graphics & Hardware Acceleration
+                gpu_brand=variant.gpu_brand,
+                gpu_model=variant.gpu_model,
+                gpu_cores=variant.gpu_cores,
+                media_engine_details=variant.media_engine_details,
+
+                # Part 4: Memory & Storage
+                ram_gb=variant.ram_gb,
+                ram_type=variant.ram_type,
+                ram_upgradable=variant.ram_upgradable,
+                max_ram_gb=variant.max_ram_gb,
+                ssd_gb=variant.ssd_gb,
+                storage_type=variant.storage_type,
+                storage_upgradable=variant.storage_upgradable,
+                expansion_slots_summary=variant.expansion_slots_summary,
+
+                # Part 5: Display & External Video
+                display_size_inch=variant.display_size_inch,
+                display_resolution=variant.display_resolution,
+                display_type=variant.display_type,
+                display_refresh_rate_hz=variant.display_refresh_rate_hz,
+                display_brightness_nits=variant.display_brightness_nits,
+                touchscreen=variant.touchscreen,
+                external_display_support=variant.external_display_support,
+
+                # Part 6: Build, Battery & Connectivity
+                weight_kg=variant.weight_kg,
+                dimensions_cm=variant.dimensions_cm,
+                battery_wh=variant.battery_wh,
+                power_supply_details=variant.power_supply_details,
+                os=variant.os,
+                colors=variant.colors,
+                ports_summary=variant.ports_summary,
+                wifi_standard=variant.wifi_standard,
+                bluetooth_version=variant.bluetooth_version,
+
+                # Part 7: Peripherals, Input & Audio
+                keyboard_touchpad_details=variant.keyboard_touchpad_details,
+                audio_details=variant.audio_details,
+                camera_details=variant.camera_details,
+                facial_recognition=variant.facial_recognition,
+                fingerprint_reader=variant.fingerprint_reader,
+
+                # Part 8: Security, Certifications & Extras
+                security_features=variant.security_features,
+                materials_and_certifications=variant.materials_and_certifications,
+                microsoft_office_included=variant.microsoft_office_included,  # Note: renamed from microsoft_office
+                bundled_accessories=variant.bundled_accessories,
+                warranty_details=variant.warranty_details,
+
+                # Part 9: External/Raw Assets
+                raw_specs=spec_or_unmapped,
+                image_urls=raw_data.image_urls
             )
-            
+            #spec_or_unmapped
             try:
                 session.add(new_laptop)
                 session.commit()
@@ -163,7 +215,7 @@ def process_raw_laptop_data(
                 session.rollback()
                 print(f"⚠️ Skipped duplicate SKU: {variant.model_code}")
 
-        raw_data.processing_status = "completed"
+        # raw_data.processing_status = "completed"
 
         session.add(raw_data)
         session.commit()
