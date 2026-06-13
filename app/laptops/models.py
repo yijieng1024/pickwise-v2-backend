@@ -44,29 +44,77 @@ class BrandRead(BrandBase):
 
 # Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
-    # Part 1: Core Specifications
+    # Part 1: Core Identifiers & Categorization
     brand_id: uuid.UUID = Field(foreign_key="laptop_brands.id")
     model_code: str = Field(unique=True, index=True)
     product_name: str
-    processor_model: str
-    gpu_model: str
-    price_rm: float
-    ram_gb: int
-    ssd_gb: int
-    weight_kg: float
-    battery_wh: int
-    display_size_inch: float
-    display_refresh_rate_hz: Optional[int] = None
     release_year: Optional[int] = None
+    price_rm: float
 
-    # Part 2: AI-Enhanced Features
+    # Part 2: Processor & AI Engine
+    processor_brand: Optional[str] = None
+    processor_model: str 
+    processor_ghz: Optional[str] = None 
+    cpu_cores: Optional[int] = None
+    cpu_threads: Optional[int] = None
+    npu_model: Optional[str] = None
+    npu_tops: Optional[float] = None
     ai_ready: bool = Field(default=False)
-    microsoft_office: bool = Field(default=False)
-    os: Optional[str] = None  # e.g., "Windows 11", "macOS"
-    gpu_brand: Optional[str] = None  # e.g., "NVIDIA", "AMD"
-    processor_brand: Optional[str] = None  # e.g., "Intel", "Apple"
+    ai_features: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
 
-    # Part 3: Original Specs & Image
+    # Part 3: Graphics & Hardware Acceleration
+    gpu_brand: Optional[str] = None
+    gpu_model: str
+    gpu_cores: Optional[int] = None
+    media_engine_details: Optional[str] = None  # Captures AV1 decode, ProRes, HEVC support
+
+    # Part 4: Memory & Storage
+    ram_gb: int
+    ram_type: Optional[str] = None
+    ram_upgradable: bool = Field(default=False)
+    max_ram_gb: Optional[int] = None
+
+    ssd_gb: int
+    storage_type: Optional[str] = None
+    storage_upgradable: bool = Field(default=False)
+    expansion_slots_summary: Optional[str] = None 
+
+    # Part 5: Display & External Video
+    display_size_inch: float
+    display_resolution: Optional[str] = None
+    display_type: Optional[str] = None
+    display_refresh_rate_hz: Optional[int] = None
+    display_brightness_nits: Optional[int] = None
+    touchscreen: bool = Field(default=False)
+    external_display_support: Optional[str] = None
+
+    # Part 6: Build, Battery & Connectivity
+    weight_kg: float
+    dimensions_cm: Optional[str] = None
+    battery_wh: float 
+    power_supply_details: Optional[str] = None 
+    os: Optional[str] = None
+    colors: List[str] = Field(default_factory=list, sa_column=Column(JSONB)) 
+    ports_summary: List[str] = Field(default_factory=list, sa_column=Column(JSONB)) 
+    wifi_standard: Optional[str] = None 
+    bluetooth_version: Optional[str] = None 
+
+    # Part 7: Peripherals, Input & Audio
+    keyboard_touchpad_details: Optional[str] = None
+    audio_details: Optional[str] = None
+    camera_details: Optional[str] = None
+    facial_recognition: bool = Field(default=False)
+    fingerprint_reader: bool = Field(default=False)
+
+    # Part 8: Security, Certifications & Extras
+    security_features: Optional[str] = None  # Captures TPM, BIOS protection, McAfee
+    materials_and_certifications: Optional[str] = None  # Captures MIL-STD 810H, REACH
+    microsoft_office_included: bool = Field(default=False)
+    bundled_accessories: Optional[str] = None 
+    warranty_details: Optional[str] = None 
+
+    # Part 9: RAG & LLM Embedding Block
+    # Used strictly for footnotes, extreme edge cases, and legal disclaimers
     raw_specs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     image_urls: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
 
