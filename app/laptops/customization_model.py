@@ -3,15 +3,17 @@ from typing import Optional, List
 import uuid
 from app.laptops.laptop_models import Laptop
 
-class LaptopCustomization(SQLModel, table=True):
-    __tablename__ = "laptop_customizations" # type: ignore
+class CustomizationBase(SQLModel):
+    category: str 
+    option_name: str 
+    price_add_rm: float 
+    dependency_note: Optional[str] = None 
 
+class LaptopCustomization(CustomizationBase, table=True):
+    __tablename__ = "laptop_customizations" # type: ignore
+    
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
-    category: str
-    option_name: str
-    price_add_rm: float
-    dependency_note: Optional[str] = None
     laptop: Optional["Laptop"] = Relationship(back_populates="customizations")
 
 # Schema for reading out the data

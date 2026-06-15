@@ -1,7 +1,6 @@
-# app/processor/router.py
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
-from typing import List, Dict, Any
+from typing import Dict, Any
 
 from app.database import get_session 
 from app.laptops.laptop_models import RawScrapLaptop
