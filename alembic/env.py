@@ -4,7 +4,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from sqlmodel import SQLModel
-from app.laptops.models import Laptop, LaptopEmbedding, LaptopCustomization
+from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopCustomization
 from app.users.models import User
 from app.scraper.models import ScrapeTarget
 

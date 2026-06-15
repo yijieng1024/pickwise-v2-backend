@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from app.database import get_session
-from app.laptops.models import Laptop, LaptopBrand, BrandCreate, BrandRead, BrandUpdate
+from app.laptops.laptop_models import Laptop
+from app.laptops.brand_model import LaptopBrand, BrandRead, BrandCreate, BrandUpdate
 from typing import List
 from uuid import UUID
 

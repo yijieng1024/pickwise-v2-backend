@@ -5,63 +5,7 @@ from sqlmodel import Relationship, SQLModel, Field
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSON, JSONB
 from pgvector.sqlalchemy import Vector
-
-
-class LaptopBrand(SQLModel, table=True):
-    __tablename__ = "laptop_brands"  # type: ignore
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    name: str = Field(unique=True, index=True)
-    base_scrape_url: str
-    icons_url: Optional[str] = Field(nullable=True)
-    is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-# Brand Schema Models for API
-class BrandBase(SQLModel):
-    name: str
-    base_scrape_url: str
-    icons_url: Optional[str] = None
-    is_active: bool = Field(default=True)
-
-
-class BrandCreate(BrandBase):
-    pass
-
-
-class BrandUpdate(SQLModel):
-    name: Optional[str] = None
-    base_scrape_url: Optional[str] = None
-    icons_url: Optional[str] = None
-    is_active: Optional[bool] = None
-
-
-class BrandRead(BrandBase):
-    id: uuid.UUID
-    created_at: datetime
-
-class LaptopCustomization(SQLModel, table=True):
-    __tablename__ = "laptop_customizations" # type: ignore
-    
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
-    
-    # Category of the upgrade: "RAM", "Storage", "Processor", "Power Adapter"
-    category: str 
-    
-    # The exact name: "24GB Unified Memory" or "1TB SSD"
-    option_name: str 
-    
-    # The additional cost: 850.00
-    # Note: Store the ADDED cost, not the total cost. 
-    price_add_rm: float 
-    
-    # If upgrading this requires another upgrade (e.g., "Requires M5 Pro chip")
-    dependency_note: Optional[str] = None 
-
-    # Relationship back to the laptop
-    laptop: Optional["Laptop"] = Relationship(back_populates="customizations") 
+from app.laptops.customization_model import LaptopCustomization
 
 # Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
@@ -147,13 +91,10 @@ class Laptop(LaptopBase, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-# API interface model for reading laptop data
 class LaptopRead(LaptopBase):
     id: uuid.UUID
     created_at: datetime
 
-
-# API request model for creating a new laptop entry
 class LaptopCreate(LaptopBase):
     pass
 

@@ -4,7 +4,7 @@ from app.database import get_session
 from pydantic import BaseModel
 from uuid import UUID
 
-from app.laptops.models import RawScrapLaptop
+from app.laptops.laptop_models import RawScrapLaptop
 from app.users.auth import get_current_admin
 from .apple_scraper import crawl_apple_specs_links, scrape_official_website
 from app.scraper.models import ScrapeTarget
@@ -26,7 +26,7 @@ class CrawlerQueueRequest(BaseModel):
 def feed_crawler_queue(
     request: CrawlerQueueRequest, session: Session = Depends(get_session)
 ) -> dict:
-    from app.laptops.models import LaptopBrand
+    from app.laptops.laptop_models import LaptopBrand
 
     # Verify the brand_id exists
     brand = session.get(LaptopBrand, request.brand_id)
@@ -74,7 +74,7 @@ def feed_crawler_queue(
 def run_official_scraper(
     request: ScraperRequest, session: Session = Depends(get_session)
 ) -> dict:
-    from app.laptops.models import LaptopBrand
+    from app.laptops.laptop_models import LaptopBrand
 
     # Verify the brand_id exists and get the brand name
     brand = session.get(LaptopBrand, request.brand_id)

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from app.database import get_session
-from app.laptops.models import (
+from app.laptops.laptop_models import (
     Laptop, LaptopRead, LaptopCreate, LaptopUpdate, RawScrapLaptop
 )
 from typing import List

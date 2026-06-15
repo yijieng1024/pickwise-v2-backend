@@ -4,12 +4,13 @@ from sqlmodel import Session, select
 from typing import List, Dict, Any
 
 from app.database import get_session 
-from app.laptops.models import RawScrapLaptop
+from app.laptops.laptop_models import RawScrapLaptop
 from app.processor.engine import process_raw_laptop_data
+from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/processor", tags=["Processor"])
 
-@router.post("/process/{raw_laptop_id}")
+@router.post("/process/{raw_laptop_id}", dependencies=[Depends(get_current_admin)])
 def process_single_laptop(
     raw_laptop_id: str, 
     session: Session = Depends(get_session)
@@ -24,7 +25,7 @@ def process_single_laptop(
         
     return result
 
-@router.post("/process-pending")
+@router.post("/process-pending", dependencies=[Depends(get_current_admin)])
 def process_all_pending_laptops(
     session: Session = Depends(get_session)
 ) -> Dict[str, Any]:
