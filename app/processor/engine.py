@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.laptops.models import (
+from app.laptops.laptop_models import (
     RawScrapLaptop,
     LaptopBrand,
     Laptop,

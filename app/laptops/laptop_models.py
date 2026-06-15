@@ -1,46 +1,11 @@
 import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
-from sqlmodel import SQLModel, Field
+from sqlmodel import Relationship, SQLModel, Field
 from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSON, JSONB
 from pgvector.sqlalchemy import Vector
-
-
-class LaptopBrand(SQLModel, table=True):
-    __tablename__ = "laptop_brands"  # type: ignore
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    name: str = Field(unique=True, index=True)
-    base_scrape_url: str
-    icons_url: Optional[str] = Field(nullable=True)
-    is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-# Brand Schema Models for API
-class BrandBase(SQLModel):
-    name: str
-    base_scrape_url: str
-    icons_url: Optional[str] = None
-    is_active: bool = Field(default=True)
-
-
-class BrandCreate(BrandBase):
-    pass
-
-
-class BrandUpdate(SQLModel):
-    name: Optional[str] = None
-    base_scrape_url: Optional[str] = None
-    icons_url: Optional[str] = None
-    is_active: Optional[bool] = None
-
-
-class BrandRead(BrandBase):
-    id: uuid.UUID
-    created_at: datetime
-
+from app.laptops.customization_model import LaptopCustomization
 
 # Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
@@ -66,7 +31,7 @@ class LaptopBase(SQLModel):
     gpu_brand: Optional[str] = None
     gpu_model: str
     gpu_cores: Optional[int] = None
-    media_engine_details: Optional[str] = None  # Captures AV1 decode, ProRes, HEVC support
+    media_engine_details: Optional[str] = None
 
     # Part 4: Memory & Storage
     ram_gb: int
@@ -118,21 +83,18 @@ class LaptopBase(SQLModel):
     raw_specs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     image_urls: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
 
-
 # db tbl model for laptops, inherits from both DeclarativeBase and LaptopBase
 class Laptop(LaptopBase, table=True):
     __tablename__ = "laptops"  # type: ignore
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    customizations: List["LaptopCustomization"] = Relationship(back_populates="laptop")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-# API interface model for reading laptop data
 class LaptopRead(LaptopBase):
     id: uuid.UUID
     created_at: datetime
 
-
-# API request model for creating a new laptop entry
 class LaptopCreate(LaptopBase):
     pass
 

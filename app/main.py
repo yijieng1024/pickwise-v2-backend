@@ -1,7 +1,7 @@
 import asyncio
 import sys
 from fastapi import FastAPI
-from app.laptops.router import router as laptops_router
+from app.laptops.laptop_router import router as laptops_router
 from app.laptops.brand_router import router as brands_router
 from app.users.router import router as users_router
 from app.scraper.router import router as scraper_router
