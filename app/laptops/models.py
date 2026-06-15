@@ -1,9 +1,9 @@
 import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
-from sqlmodel import SQLModel, Field
+from sqlmodel import Relationship, SQLModel, Field
 from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSON, JSONB
 from pgvector.sqlalchemy import Vector
 
 
@@ -41,6 +41,27 @@ class BrandRead(BrandBase):
     id: uuid.UUID
     created_at: datetime
 
+class LaptopCustomization(SQLModel, table=True):
+    __tablename__ = "laptop_customizations" # type: ignore
+    
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
+    
+    # Category of the upgrade: "RAM", "Storage", "Processor", "Power Adapter"
+    category: str 
+    
+    # The exact name: "24GB Unified Memory" or "1TB SSD"
+    option_name: str 
+    
+    # The additional cost: 850.00
+    # Note: Store the ADDED cost, not the total cost. 
+    price_add_rm: float 
+    
+    # If upgrading this requires another upgrade (e.g., "Requires M5 Pro chip")
+    dependency_note: Optional[str] = None 
+
+    # Relationship back to the laptop
+    laptop: Optional["Laptop"] = Relationship(back_populates="customizations") 
 
 # Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
@@ -66,7 +87,7 @@ class LaptopBase(SQLModel):
     gpu_brand: Optional[str] = None
     gpu_model: str
     gpu_cores: Optional[int] = None
-    media_engine_details: Optional[str] = None  # Captures AV1 decode, ProRes, HEVC support
+    media_engine_details: Optional[str] = None
 
     # Part 4: Memory & Storage
     ram_gb: int
@@ -118,11 +139,11 @@ class LaptopBase(SQLModel):
     raw_specs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     image_urls: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
 
-
 # db tbl model for laptops, inherits from both DeclarativeBase and LaptopBase
 class Laptop(LaptopBase, table=True):
     __tablename__ = "laptops"  # type: ignore
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    customizations: List["LaptopCustomization"] = Relationship(back_populates="laptop")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
