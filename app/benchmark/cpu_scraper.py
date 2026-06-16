@@ -1,5 +1,8 @@
 import sys
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 from playwright.sync_api import sync_playwright
 from sqlmodel import Session
 from sqlalchemy.dialects.postgresql import insert
@@ -13,7 +16,7 @@ def run_cpu_list_scraper():
     Can be imported and invoked by a FastAPI router endpoint.
     """
     with sync_playwright() as p:
-        print("Launching browser...")
+        logger.info("Launching browser...")
         browser = p.chromium.launch(headless=True)
         
         context = browser.new_context(
@@ -21,14 +24,14 @@ def run_cpu_list_scraper():
         )
         page = context.new_page()
         
-        print("Navigating to PassMark...")
+        logger.info("Navigating to PassMark...")
         try:
             page.goto("https://www.cpubenchmark.net/cpu-list/all", wait_until="domcontentloaded", timeout=60000)
             
-            print("Waiting for data table to render...")
+            logger.info("Waiting for data table to render...")
             page.wait_for_selector("#cputable tbody tr", timeout=60000)
             
-            print("Extracting CPU Name and Mark...")
+            logger.info("Extracting CPU Name and Mark...")
             cpu_data = page.evaluate("""
                 () => {
                     const rows = document.querySelectorAll("#cputable tbody tr");
@@ -49,7 +52,7 @@ def run_cpu_list_scraper():
                 }
             """)
             
-            print(f"Scraped {len(cpu_data)} items. Committing directly to PostgreSQL Database...")
+            logger.info(f"Scraped {len(cpu_data)} items. Committing directly to PostgreSQL Database...")
             
             with Session(engine) as session:
                 for item in cpu_data:
@@ -65,11 +68,11 @@ def run_cpu_list_scraper():
                 
                 session.commit()
                 
-            print(f"Success! Sync completed for 'cpu_benchmarks' table.")
+            logger.info("Success! Sync completed for 'cpu_benchmarks' table.")
             return len(cpu_data)
                 
         except Exception as e:
-            print(f"Extraction or DB persistence failed: {e}")
+            logger.error(f"Extraction or DB persistence failed: {e}")
             raise e
             
         finally:
