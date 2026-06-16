@@ -10,9 +10,9 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.laptops.laptop_models import (
     RawScrapLaptop,
-    LaptopBrand,
     Laptop,
 )
+from app.laptops.brand_model import LaptopBrand
 from app.processor.schemas import ExtractedLaptopFamily
 
 def process_raw_laptop_data(

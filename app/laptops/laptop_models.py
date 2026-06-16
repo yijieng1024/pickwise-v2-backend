@@ -1,11 +1,13 @@
 import uuid
-from typing import List, Optional, Dict, Any
+from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from datetime import datetime, timezone
 from sqlmodel import Relationship, SQLModel, Field
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSON, JSONB
 from pgvector.sqlalchemy import Vector
-from app.laptops.customization_model import LaptopCustomization
+
+if TYPE_CHECKING:
+    from app.laptops.customization_model import LaptopCustomization
 
 # Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
@@ -149,3 +151,8 @@ class RawScrapLaptop(SQLModel, table=True):
     )  # States: 'pending', 'processing', 'completed', 'failed'
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# Import here (after all classes are defined) to register LaptopCustomization
+# in SQLAlchemy's mapper registry, so Laptop's Relationship() can resolve it.
+# This is NOT circular because customization_model only imports Laptop under TYPE_CHECKING.
+from app.laptops.customization_model import LaptopCustomization  # noqa: E402, F401

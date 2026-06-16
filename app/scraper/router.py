@@ -26,7 +26,7 @@ class CrawlerQueueRequest(BaseModel):
 def feed_crawler_queue(
     request: CrawlerQueueRequest, session: Session = Depends(get_session)
 ) -> dict:
-    from app.laptops.laptop_models import LaptopBrand
+    from app.laptops.brand_model import LaptopBrand
 
     # Verify the brand_id exists
     brand = session.get(LaptopBrand, request.brand_id)
@@ -74,7 +74,7 @@ def feed_crawler_queue(
 def run_official_scraper(
     request: ScraperRequest, session: Session = Depends(get_session)
 ) -> dict:
-    from app.laptops.laptop_models import LaptopBrand
+    from app.laptops.brand_model import LaptopBrand
 
     # Verify the brand_id exists and get the brand name
     brand = session.get(LaptopBrand, request.brand_id)
