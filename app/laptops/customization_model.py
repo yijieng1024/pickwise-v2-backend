@@ -1,7 +1,9 @@
 from sqlmodel import SQLModel, Relationship, Field
-from typing import Optional, List
+from typing import TYPE_CHECKING, Optional, List
 import uuid
-from app.laptops.laptop_models import Laptop
+
+if TYPE_CHECKING:
+    from app.laptops.laptop_models import Laptop
 
 class CustomizationBase(SQLModel):
     category: str 

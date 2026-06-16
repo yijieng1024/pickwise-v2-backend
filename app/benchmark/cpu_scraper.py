@@ -1,7 +1,17 @@
-import json
+import sys
+import os
 from playwright.sync_api import sync_playwright
+from sqlmodel import Session
+from sqlalchemy.dialects.postgresql import insert
 
-def scrape_cpu_list():
+from app.database import engine
+from app.benchmark.model import CPUBenchmark
+
+def run_cpu_list_scraper():
+    """
+    Scrapes the PassMark CPU list and pushes records directly into the database.
+    Can be imported and invoked by a FastAPI router endpoint.
+    """
     with sync_playwright() as p:
         print("Launching browser...")
         browser = p.chromium.launch(headless=True)
@@ -19,37 +29,48 @@ def scrape_cpu_list():
             page.wait_for_selector("#cputable tbody tr", timeout=60000)
             
             print("Extracting CPU Name and Mark...")
-            # Run JavaScript inside the browser to map the table rows into a clean dictionary
             cpu_data = page.evaluate("""
                 () => {
                     const rows = document.querySelectorAll("#cputable tbody tr");
                     const data = [];
                     rows.forEach(row => {
                         const cols = row.querySelectorAll("td");
-                        // Ensure the row actually has data columns
                         if (cols.length >= 2) {
-                            data.push({
-                                cpu_name: cols[0].innerText.trim(),
-                                // Strip commas out of the score (e.g., "4,500" -> "4500")
-                                cpu_mark: cols[1].innerText.replace(/,/g, '').trim() 
-                            });
+                            const rawScore = cols[1].innerText.replace(/,/g, '').trim();
+                            if (rawScore && !isNaN(rawScore)) {
+                                data.push({
+                                    cpu_name: cols[0].innerText.trim(),
+                                    cpu_mark: parseInt(rawScore, 10)
+                                });
+                            }
                         }
                     });
                     return data;
                 }
             """)
             
-            # Save the extracted dictionary directly to a JSON file
-            with open("cpu_benchmarks_filtered.json", "w", encoding="utf-8") as f:
-                json.dump(cpu_data, f, indent=4, ensure_ascii=False)
+            print(f"Scraped {len(cpu_data)} items. Committing directly to PostgreSQL Database...")
+            
+            with Session(engine) as session:
+                for item in cpu_data:
+                    # PostgreSQL native Upsert (on conflict update score)
+                    stmt = insert(CPUBenchmark).values(
+                        cpu_name=item["cpu_name"],
+                        cpu_mark=item["cpu_mark"]
+                    ).on_conflict_do_update(
+                        index_elements=['cpu_name'],
+                        set_=dict(cpu_mark=item["cpu_mark"])
+                    )
+                    session.exec(stmt)
                 
-            print(f"\nSuccess! Saved {len(cpu_data)} CPUs to cpu_benchmarks_filtered.json")
+                session.commit()
+                
+            print(f"Success! Sync completed for 'cpu_benchmarks' table.")
+            return len(cpu_data)
                 
         except Exception as e:
-            print(f"Extraction failed: {e}")
+            print(f"Extraction or DB persistence failed: {e}")
+            raise e
             
         finally:
             browser.close()
-
-if __name__ == "__main__":
-    scrape_cpu_list()

@@ -1,12 +1,21 @@
-import json
+import sys
+import os
 from playwright.sync_api import sync_playwright
+from sqlmodel import Session
+from sqlalchemy.dialects.postgresql import insert
 
-def scrape_gpu_list():
+from app.database import engine
+from app.benchmark.model import GPUBenchmark
+
+def run_gpu_list_scraper():
+    """
+    Scrapes the PassMark Video Card list and pushes records directly into the database.
+    Can be imported and invoked by a FastAPI router endpoint.
+    """
     with sync_playwright() as p:
-        print("Launching browser...")
+        print("Launching browser for GPU data...")
         browser = p.chromium.launch(headless=True)
         
-        # Spoofing the User-Agent to keep Cloudflare happy
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
@@ -14,14 +23,12 @@ def scrape_gpu_list():
         
         print("Navigating to PassMark GPU list...")
         try:
-            # Target the Video Card URL
             page.goto("https://www.videocardbenchmark.net/gpu_list.php", wait_until="domcontentloaded", timeout=60000)
             
             print("Waiting for data table to render...")
             page.wait_for_selector("#cputable tbody tr", timeout=60000)
             
             print("Extracting GPU Name and G3D Mark...")
-            # Run JavaScript inside the browser to grab columns 0 and 1
             gpu_data = page.evaluate("""
                 () => {
                     const rows = document.querySelectorAll("#cputable tbody tr");
@@ -29,28 +36,41 @@ def scrape_gpu_list():
                     rows.forEach(row => {
                         const cols = row.querySelectorAll("td");
                         if (cols.length >= 2) {
-                            data.push({
-                                gpu_name: cols[0].innerText.trim(),
-                                // Strip commas from the score so you can store it as an INT in your database
-                                gpu_mark: cols[1].innerText.replace(/,/g, '').trim() 
-                            });
+                            const rawScore = cols[1].innerText.replace(/,/g, '').trim();
+                            if (rawScore && !isNaN(rawScore)) {
+                                data.push({
+                                    gpu_name: cols[0].innerText.trim(),
+                                    gpu_mark: parseInt(rawScore, 10)
+                                });
+                            }
                         }
                     });
                     return data;
                 }
             """)
             
-            # Save to JSON
-            with open("gpu_benchmarks_filtered.json", "w", encoding="utf-8") as f:
-                json.dump(gpu_data, f, indent=4, ensure_ascii=False)
+            print(f"Scraped {len(gpu_data)} items. Committing directly to PostgreSQL Database...")
+            
+            with Session(engine) as session:
+                for item in gpu_data:
+                    # PostgreSQL Upsert (on conflict update score)
+                    stmt = insert(GPUBenchmark).values(
+                        gpu_name=item["gpu_name"],
+                        gpu_mark=item["gpu_mark"]
+                    ).on_conflict_do_update(
+                        index_elements=['gpu_name'],
+                        set_=dict(gpu_mark=item["gpu_mark"])
+                    )
+                    session.exec(stmt)
                 
-            print(f"\nSuccess! Saved {len(gpu_data)} GPUs to gpu_benchmarks_filtered.json")
+                session.commit()
+                
+            print(f"Success! Sync completed for 'gpu_benchmarks' table.")
+            return len(gpu_data)
                 
         except Exception as e:
-            print(f"Extraction failed: {e}")
+            print(f"Extraction or DB persistence failed: {e}")
+            raise e
             
         finally:
             browser.close()
-
-if __name__ == "__main__":
-    scrape_gpu_list()

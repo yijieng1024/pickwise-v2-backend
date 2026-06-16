@@ -4,9 +4,12 @@ from sqlalchemy import pool
 from alembic import context
 
 from sqlmodel import SQLModel
-from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopCustomization
+from app.laptops.laptop_models import Laptop, LaptopEmbedding, RawScrapLaptop
+from app.laptops.customization_model import LaptopCustomization
+from app.laptops.brand_model import LaptopBrand
 from app.users.models import User
 from app.scraper.models import ScrapeTarget
+from app.benchmark.model import CPUBenchmark, GPUBenchmark
 
 config = context.config
 
