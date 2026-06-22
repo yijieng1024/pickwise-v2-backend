@@ -17,6 +17,10 @@ class CustomizationBulkCreate(CustomizationBase):
     """Schema for assigning the exact same customization to multiple laptops at once"""
     laptop_ids: List[uuid.UUID]
 
+class CustomizationBulkCreateByPattern(CustomizationBase):
+    """Schema for assigning customization to laptops matching a model_code pattern"""
+    target_pattern: str
+
 class CustomizationUpdate(SQLModel):
     """Schema for updating an existing customization (all fields optional)"""
     category: Optional[str] = None

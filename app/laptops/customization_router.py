@@ -5,6 +5,7 @@ import uuid
 from app.database import get_session
 from app.laptops.laptop_models import Laptop
 from app.laptops.customization_model import CustomizationUpdate, CustomizationBulkCreate, CustomizationRead, LaptopCustomization
+from app.laptops.customization_schema import CustomizationBulkCreateByPattern
 from app.users.auth import get_current_admin 
 # from app.schemas import CustomizationBulkCreate, CustomizationRead, CustomizationUpdate
 
@@ -52,6 +53,48 @@ def create_customizations_for_laptops(
     return created_customizations
 
 
+@router.post("/bulk-by-pattern", response_model=List[CustomizationRead], dependencies=[Depends(get_current_admin)])
+def create_customizations_by_pattern(
+    request: CustomizationBulkCreateByPattern, 
+    session: Session = Depends(get_session)
+):
+    """
+    BULK CREATE BY PATTERN: Assigns a customization to all laptops where model_code contains the target_pattern.
+    e.g., target_pattern="m5-max" will add this upgrade to all M5 Max laptops automatically.
+    """
+    created_customizations = []
+    
+    # 1. Find all laptops matching the keyword in their model_code
+    statement = select(Laptop).where(col(Laptop.model_code).contains(request.target_pattern))
+    matching_laptops = session.exec(statement).all()
+
+    if not matching_laptops:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"No laptops found matching pattern: '{request.target_pattern}'"
+        )
+
+    # 2. Create a distinct customization row for each matching laptop
+    for laptop in matching_laptops:
+        new_customization = LaptopCustomization(
+            laptop_id=laptop.id,
+            category=request.category,
+            option_name=request.option_name,
+            price_add_rm=request.price_add_rm,
+            dependency_note=request.dependency_note
+        )
+        session.add(new_customization)
+        created_customizations.append(new_customization)
+
+    session.commit()
+    
+    # 3. Refresh to get the generated UUIDs
+    for custom in created_customizations:
+        session.refresh(custom)
+        
+    return created_customizations
+
+
 @router.get("/laptop/{laptop_id}", response_model=List[CustomizationRead], dependencies=[Depends(get_current_admin)])
 def get_customizations_by_laptop(
     laptop_id: uuid.UUID, 
@@ -61,7 +104,7 @@ def get_customizations_by_laptop(
     READ: Get all available upgrades for a specific base laptop model.
     """
     customizations = session.exec(
-        select(LaptopCustomization).where(LaptopCustomization.laptop_id == laptop_id)
+        select(LaptopCustomization).where(col(LaptopCustomization.laptop_id) == laptop_id)
     ).all()
     
     return customizations
