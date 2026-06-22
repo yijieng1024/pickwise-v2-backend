@@ -8,10 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.laptops.laptop_models import (
-    RawScrapLaptop,
-    Laptop,
-)
+from app.laptops.laptop_models import Laptop
+from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
 from app.processor.schemas import ExtractedLaptopFamily
 

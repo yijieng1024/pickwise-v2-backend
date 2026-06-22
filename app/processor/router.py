@@ -3,7 +3,7 @@ from sqlmodel import Session, select
 from typing import Dict, Any
 
 from app.database import get_session 
-from app.laptops.laptop_models import RawScrapLaptop
+from app.scraper.models import RawScrapLaptop
 from app.processor.engine import process_raw_laptop_data
 from app.users.auth import get_current_admin
 

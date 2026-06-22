@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from app.database import get_session
 from app.laptops.laptop_models import (
-    Laptop, LaptopRead, LaptopCreate, LaptopUpdate, RawScrapLaptop
+    Laptop, LaptopRead, LaptopCreate, LaptopUpdate
 )
+from app.scraper.models import RawScrapLaptop
 from typing import List
 from uuid import UUID
 from app.users.auth import get_current_admin

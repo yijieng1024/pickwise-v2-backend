@@ -1,25 +1,32 @@
-from playwright.sync_api import sync_playwright
 from typing import Dict, Any
-import re
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+from playwright.async_api import async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+from .playwright_utils import run_async_playwright
 
 
-def crawl_apple_specs_links(start_url: str = "https://www.apple.com/my/mac/") -> list:
+# ---------------------------------------------------------------------------
+# Internal async implementations (run inside the worker thread, via
+# run_async_playwright). Same shape as asus_scraper's _async_* functions.
+# ---------------------------------------------------------------------------
+
+async def _async_crawl_apple_specs_links(start_url: str) -> list:
     print(f"🕸️ Crawler booting up... Scanning on '{start_url}'")
 
     unique_spec_links = set()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        page = context.new_page()
+        page = await context.new_page()
 
         try:
-            page.goto(start_url, wait_until="networkidle", timeout=15000)
+            await page.goto(start_url, wait_until="networkidle", timeout=15000)
 
-            learn_more_hrefs = page.eval_on_selector_all(
+            learn_more_hrefs = await page.eval_on_selector_all(
                 "a",
                 """elements => {
                 return elements
@@ -53,7 +60,7 @@ def crawl_apple_specs_links(start_url: str = "https://www.apple.com/my/mac/") ->
             print(f"⚠️ Crawler encountered an error: {e}")
 
         finally:
-            browser.close()
+            await browser.close()
 
     final_list = list(unique_spec_links)
     print(
@@ -61,18 +68,23 @@ def crawl_apple_specs_links(start_url: str = "https://www.apple.com/my/mac/") ->
     )
     return final_list
 
-def extract_apple_specs(page) -> dict:
-    title = page.title()
+
+async def _extract_apple_specs(page) -> dict:
+    title = await page.title()
     product_name = title.split("-")[0].replace("Buy", "").replace("Tech Specs", "").strip()
-    
+
     extracted_images = []
     try:
         meta_image = page.locator('meta[property="og:image"]').first
-        if meta_image:
-            extracted_images.append(meta_image.get_attribute("content"))
-        all_imgs = page.locator("img").evaluate_all("imgs => imgs.map(i => i.src)")
+        if await meta_image.count() > 0:
+            content = await meta_image.get_attribute("content")
+            if content:
+                extracted_images.append(content)
+
+        all_imgs = await page.locator("img").evaluate_all("imgs => imgs.map(i => i.src)")
         for src in all_imgs:
-            if not src: continue
+            if not src:
+                continue
             src_lower = src.lower()
             if any(ext in src_lower for ext in [".png", ".jpg", ".jpeg", ".webp"]) and "icon" not in src_lower and "logo" not in src_lower:
                 if src not in extracted_images:
@@ -82,8 +94,8 @@ def extract_apple_specs(page) -> dict:
 
     raw_specs_text = ""
     try:
-        page.wait_for_selector(".techspecs-section", timeout=5000)
-        sections_texts = page.locator(".techspecs-section").all_inner_texts()
+        await page.wait_for_selector(".techspecs-section", timeout=5000)
+        sections_texts = await page.locator(".techspecs-section").all_inner_texts()
         raw_specs_text = "\n\n".join([text.strip() for text in sections_texts if text.strip()])
     except PlaywrightTimeoutError:
         print(f"⚠️ Timeout: .techspecs-section not found on {title}.")
@@ -98,21 +110,21 @@ def extract_apple_specs(page) -> dict:
     }
 
 
-def scrape_official_website(
+async def _async_scrape_official_website(
     url: str, brand_name: str, brand_id: str
 ) -> Dict[str, Any]:
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        page = context.new_page()
+        page = await context.new_page()
 
         try:
-            page.goto(url, wait_until="networkidle", timeout=20000)
+            await page.goto(url, wait_until="networkidle", timeout=20000)
 
             if brand_name.lower() == "apple":
-                data = extract_apple_specs(page)
+                data = await _extract_apple_specs(page)
             else:
                 raise ValueError(f"No extraction logic built for brand: {brand_name}")
 
@@ -130,4 +142,34 @@ def scrape_official_website(
                 "brand_id": brand_id,
             }
         finally:
-            browser.close()
+            await browser.close()
+
+
+# ---------------------------------------------------------------------------
+# Public entry points — call these from main.py / your route handlers.
+# Both are now `async def`, with the exact same call shape as
+# asus_scraper.crawl_asus_specs_links / scrape_asus_laptop_specs, so
+# main.py can treat every brand scraper identically.
+# ---------------------------------------------------------------------------
+
+async def crawl_apple_specs_links(start_url: str = "https://www.apple.com/my/mac/") -> list:
+    """
+    Crawls the Apple Mac listing page and returns a list of computed
+    Tech Specs page URLs.
+    Offloads Playwright to a worker thread with its own event loop so
+    it works correctly when uvicorn uses SelectorEventLoop on Windows.
+    """
+    return await run_async_playwright(_async_crawl_apple_specs_links(start_url))
+
+
+async def scrape_official_website(
+    url: str, brand_name: str, brand_id: str
+) -> Dict[str, Any]:
+    """
+    Navigates to a specific product's official spec page and extracts data.
+    Offloads Playwright to a worker thread with its own event loop so
+    it works correctly when uvicorn uses SelectorEventLoop on Windows.
+    """
+    return await run_async_playwright(
+        _async_scrape_official_website(url, brand_name, brand_id)
+    )

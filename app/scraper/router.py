@@ -3,11 +3,13 @@ from sqlmodel import Session, select
 from app.database import get_session
 from pydantic import BaseModel
 from uuid import UUID
+from datetime import datetime, timezone
 
-from app.laptops.laptop_models import RawScrapLaptop
+from app.laptops.brand_model import LaptopBrand
 from app.users.auth import get_current_admin
 from .apple_scraper import crawl_apple_specs_links, scrape_official_website
-from app.scraper.models import ScrapeTarget
+from .asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
+from app.scraper.models import ScrapeTarget, RawScrapLaptop
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -23,55 +25,58 @@ class CrawlerQueueRequest(BaseModel):
 
 
 @router.post("/feed-crawler", dependencies=[Depends(get_current_admin)])
-def feed_crawler_queue(
+async def feed_crawler_queue(
     request: CrawlerQueueRequest, session: Session = Depends(get_session)
 ) -> dict:
-    from app.laptops.brand_model import LaptopBrand
 
     # Verify the brand_id exists
     brand = session.get(LaptopBrand, request.brand_id)
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found")
 
-    # Only Apple brand scraping is currently supported
-    if brand.name.lower() != "apple":
+    found_urls = []
+
+    # 1. Route based on Brand
+    if brand.name.lower() == "apple":
+        # apple_scraper is now async (see playwright_utils refactor)
+        found_urls = await crawl_apple_specs_links(request.start_url)
+    
+    elif brand.name.lower() == "asus":
+        
+        # Playwright is async, so we await it
+        found_urls = await crawl_asus_specs_links(request.start_url)
+    
+    else:
         raise HTTPException(
-            status_code=400, detail="Currently, only Apple brand scraping is supported."
+            status_code=400, detail=f"Currently, {brand.name} brand crawling is not supported."
         )
 
-    found_links = crawl_apple_specs_links(request.start_url)
+    if not found_urls:
+        return {"message": "No URLs found to add to the queue.", "added_count": 0}
 
-    if not found_links:
-        return {"message": "Crawler completed, but no valid links were found."}
-
-    results_summary = {"newly_added": 0, "already_in_queue": 0}
-
-    for link in found_links:
-        existing_target = session.exec(
-            select(ScrapeTarget).where(ScrapeTarget.url == link)
+    # 2. Add found URLs to the laptop_scrape_urls table (ScrapeTarget)
+    added_count = 0
+    for url in found_urls:
+        existing = session.exec(
+            select(ScrapeTarget).where(ScrapeTarget.url == url)
         ).first()
 
-        if existing_target:
-            results_summary["already_in_queue"] += 1
-        else:
-            new_target = ScrapeTarget(
-                url=link,
-                brand_id=request.brand_id,
-                is_active=True,  # type: ignore
-            )
+        if not existing:
+            new_target = ScrapeTarget(url=url, brand_id=brand.id)
             session.add(new_target)
-            results_summary["newly_added"] += 1
+            added_count += 1
 
     session.commit()
 
     return {
-        "message": f"Crawler task completed! Found {len(found_links)} total links.",
-        "summary": results_summary,
+        "message": f"Successfully processed {brand.name} crawler queue.",
+        "total_found": len(found_urls),
+        "added_to_queue": added_count,
     }
 
 
-@router.post("/run", dependencies=[Depends(get_current_admin)])
-def run_official_scraper(
+@router.post("/scrape-url", dependencies=[Depends(get_current_admin)])
+async def scrape_url(
     request: ScraperRequest, session: Session = Depends(get_session)
 ) -> dict:
     from app.laptops.brand_model import LaptopBrand
@@ -92,27 +97,59 @@ def run_official_scraper(
             "status": existing_scrape.processing_status,
         }
 
-    result = scrape_official_website(request.url, brand.name, request.brand_id)  # type: ignore
+    # 1. Route based on Brand
+    if brand.name.lower() == "apple":
+        # apple_scraper is now async (see playwright_utils refactor)
+        result = await scrape_official_website(request.url, brand.name, request.brand_id) # type: ignore
+
+    elif brand.name.lower() == "asus":
+        result = await scrape_asus_laptop_specs(request.url, request.brand_id)
+
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"Currently, {brand.name} brand scraping is not supported."
+        )
+
+    # 2. Always stamp last_scraped_at — regardless of success or failure.
+    #    If the URL was never fed through /feed-crawler, create the ScrapeTarget
+    #    row so the timestamp is never silently lost.
+    scrape_target = session.exec(
+        select(ScrapeTarget).where(ScrapeTarget.url == request.url)
+    ).first()
+
+    if scrape_target:
+        scrape_target.last_scraped_at = datetime.now(timezone.utc)
+        session.merge(scrape_target)
+    else:
+        # URL was scraped directly without going through the crawler queue
+        new_target = ScrapeTarget(
+            url=request.url,
+            brand_id=request.brand_id,
+            last_scraped_at=datetime.now(timezone.utc),
+        )
+        session.add(new_target)
 
     if result.get("status") == "failed":
+        # Commit the timestamp update even on failure so we don't lose the record
+        session.commit()
         raise HTTPException(status_code=500, detail=result.get("error"))
 
+    # 3. Save the successfully scraped data
     raw_laptop = RawScrapLaptop(
         source_url=request.url,
         brand_id=request.brand_id,
-        raw_product_name=result["product_name"],
+        raw_product_name=result.get("product_name", "Unknown Model"),
         raw_prices=result.get("raw_prices_list", []),
         image_urls=result.get("image_urls", []),
         raw_specs_dump={"scraped_features": result.get("raw_specs", [])},
         processing_status="pending",
     )
-
     session.add(raw_laptop)
     session.commit()
     session.refresh(raw_laptop)
 
     return {
-        "message": "Scraped and saved to staging queue successfully!",
-        "raw_id": raw_laptop.id,
-        "raw_data": result,
+        "message": f"Successfully scraped {brand.name} laptop data.",
+        "laptop_id": raw_laptop.id,
+        "last_scraped_at": datetime.now(timezone.utc).isoformat(),
     }
