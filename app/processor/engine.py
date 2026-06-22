@@ -42,7 +42,7 @@ def process_raw_laptop_data(
     brand_name = brand.name if brand else "Unknown"
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite",
+        model="gemini-3.5-flash",
         temperature=0,
     )
 
@@ -51,28 +51,31 @@ def process_raw_laptop_data(
     system_prompt = """
         You are an expert hardware data engineer.
 
-        Your task is to extract highly structured laptop specifications from scraped website text into flat, distinct SKU configurations.
+        Your task is to extract highly structured laptop specifications from scraped website text into a list of flat, distinct SKU configurations (ExtractedLaptopVariant).
 
-        CRITICAL RULES FOR HANDLING CONFIGURABLE MODELS (e.g., Apple):
-        1. COMBINATORIAL EXTRACTION: The raw text often lists a base model followed by "Configurable to" options (e.g., upgrading RAM or SSD). You MUST generate a distinct configuration object for EVERY valid combination of Processor, RAM, and SSD mentioned.
-        2. PRICE MAPPING & CALCULATION: 
-        - If the text lists a base price and separate upgrade prices (e.g., "RM 6,999 base", "+RM 850 for 24GB"), calculate and output the final total `price_rm` for that specific variant.
-        - If a list of standalone prices is provided (e.g., RM 6,999, RM 7,849, RM 8,999), use your reasoning to map the ascending prices sequentially to the ascending RAM/SSD configurations described in the text.
-        3. INFERRING SKUS: Ensure the `model_code` you generate distinctly reflects the unique combination of the generated row (e.g., append `-24gb-1tb` to differentiate it from the base model).
-        4. SDXC card slot at Macbook is port to let creators use SD cards for media transfer, not for storage expansion. So it should not be considered as an expansion slot for storage.
+        CRITICAL RULES FOR GENERATING SKUS (Combinatorial Safety):
+        1. Base Models First: Identify the distinct base processors listed (e.g., M5 Pro 14-core vs M5 Max 16-core). 
+        2. Configurable Upgrades: The text will list "Configurable to" options (RAM/SSD) under each base model. You must generate a new, distinct SKU object for EVERY valid upgrade combination mentioned for that specific processor.
+        3. ISOLATE THE PRICING MATRIX:
+           - The raw text provides a sequential list of prices (e.g., RM 6,999, RM 7,849, RM 8,999).
+           - Do NOT guess the price of upgraded SKUs by blindly assigning them numbers from this list.
+           - ONLY assign a price to a SKU if the text explicitly pairs that price with a specific RAM/SSD configuration.
+           - If you generate an upgraded SKU (e.g., a 48GB RAM variant) but the exact total price is NOT explicitly stated in the text, you MUST output 0.0 for `price_rm`. Do not hallucinate prices.
+        4. INFERRING SKUS (model_code): Ensure the `model_code` you generate uniquely reflects the hardware.
+           - Apple Format: apple-macbook-pro-[size]-m5-[tier]-[cpu]c-[gpu]g-[ram]gb-[ssd]gb. (e.g., apple-macbook-pro-14-m5-pro-14c-16g-24gb-1024gb).
+           - PC Format: brand-product-cpumodel-gpumodel-ram-ssd.
+        5. SDXC card slot at Macbook is a port to let creators use SD cards for media transfer, not for storage expansion. So it should not be considered as an expansion slot for storage.
 
         STANDARD EXTRACTION RULES:
-        5. Separate all identified and calculated variants into distinct configuration objects.
-        6. Pay close attention to RAM, SSD, CPU, GPU, display size, refresh rate, and pricing differences.
-        7. Ignore marketing fluff, environmental reports, legal notices, warranty text, and unrelated content.
+        6. Separate all identified variants into distinct configuration objects.
+        7. Pay close attention to RAM, SSD, CPU, GPU, display size, refresh rate.
         8. Deduce implicit Apple information if applicable:
-        - os = "macOS"
-        - gpu_brand = "Apple"
-        - processor_brand = "Apple"
-        - ai_ready = true
+           - os = "macOS"
+           - gpu_brand = "Apple"
+           - processor_brand = "Apple"
+           - ai_ready = true
         9. Only extract information that can reasonably be inferred or calculated from the supplied data.
         10. Any leftover technical specifications, limitations, or legal footnotes MUST be collected and placed into the `unmapped_specs` JSON object.
-        11. If a specific field is entirely unavailable and cannot be inferred, return null.
     """
 
     prompt_template = ChatPromptTemplate.from_messages(
@@ -215,7 +218,7 @@ def process_raw_laptop_data(
                 session.rollback()
                 print(f"⚠️ Skipped duplicate SKU: {variant.model_code}")
 
-        # raw_data.processing_status = "completed"
+        raw_data.processing_status = "completed"
 
         session.add(raw_data)
         session.commit()

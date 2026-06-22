@@ -60,7 +60,7 @@ class ExtractedLaptopVariant(BaseModel):
     battery_wh: float = Field(description="Battery capacity in Watt-hours (Wh). Output a float. Output 0.0 if missing.")
     power_supply_details: Optional[str] = Field(description="Details of the charger, e.g., '70W USB-C Power Adapter', 'MagSafe 3'.")
     os: Optional[str] = Field(description="Operating System. E.g., 'macOS', 'Windows 11 Home'.")
-    colors: List[str] = Field(default_factory=list, description="List of available color options, e.g., ['Space Black', 'Silver'].")
+    colors: List[str] = Field(default_factory=list, description="List of available color options, e.g., ['Space Black', 'Silver']. in Apple case is section Finish")
     ports_summary: List[str] = Field(default_factory=list, description="List of physical I/O ports, e.g., ['2x USB 3.2 Gen 1 Type-A', '1x HDMI 1.4'].")
     wifi_standard: Optional[str] = Field(description="Wi-Fi generation, e.g., 'Wi-Fi 6E', 'Wi-Fi 7'.")
     bluetooth_version: Optional[str] = Field(description="Bluetooth version, e.g., '5.3', '6.0'.")

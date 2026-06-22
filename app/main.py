@@ -1,6 +1,7 @@
 import asyncio
 import sys
 from fastapi import FastAPI
+from app.laptops.customization_router import router as customization_router
 from app.laptops.laptop_router import router as laptops_router
 from app.laptops.brand_router import router as brands_router
 from app.users.router import router as users_router
@@ -21,6 +22,7 @@ app = FastAPI(
 app.include_router(users_router)
 app.include_router(laptops_router)
 app.include_router(brands_router)
+app.include_router(customization_router)
 app.include_router(scraper_router)
 app.include_router(processor_router)
 app.include_router(benchmark_router)
