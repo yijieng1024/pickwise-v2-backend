@@ -8,12 +8,17 @@ from .playwright_utils import run_async_playwright
 # run_async_playwright)
 # ---------------------------------------------------------------------------
 
+
 async def _async_crawl_asus_specs_links(start_url: str) -> list[str]:
     laptop_urls = []
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080}
+        )
+        page = await context.new_page()
 
         await page.goto(start_url, wait_until="domcontentloaded")
 
@@ -43,138 +48,232 @@ async def _async_crawl_asus_specs_links(start_url: str) -> list[str]:
     return laptop_urls
 
 
-async def _async_scrape_asus_laptop_specs(url: str) -> dict:
-    base_url = url if url.endswith('/') else url + '/'
-    is_rog = "rog.asus.com" in url
-    tech_spec_url = base_url + "spec/" if is_rog else base_url + "techspec/"
+async def _async_scrape_asus_laptop_specs(url: str) -> list[dict]:
+    """
+    Scrape one ASUS/ROG spec page.
 
-    specs = {}
-    image_urls = []
-    product_name = "Unknown Model"
+    ROG pages  → extract from __NEXT_DATA__ JSON (zero CSS selectors, variant-aware)
+    ASUS pages → DOM scraping via stable [class*="..."] partial selectors
+
+    Returns a list of result dicts — one per variant.
+    Each dict: { status, product_name, specs, image_urls, source_url_suffix }
+    On failure: { status: "failed", error: "..." }
+    """
+    clean_url = url
+    for suffix in ["/techspec/", "/techspec", "/spec/", "/spec"]:
+        if clean_url.endswith(suffix):
+            clean_url = clean_url[:-len(suffix)]
+            break
+    base_url = clean_url if clean_url.endswith("/") else clean_url + "/"
+    is_rog = "rog.asus.com" in clean_url
+    
+    # We MUST visit the spec/techspec subpage to get the full NUXT spec data
+    target_url = base_url + "spec/" if is_rog else base_url + "techspec/"
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        page = await browser.new_page()
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080}
+        )
+        page = await context.new_page()
 
         try:
-            await page.goto(tech_spec_url, wait_until="domcontentloaded", timeout=30000)
-            # Wait 10 seconds for the full page (including JS-rendered price) to load.
-            await page.wait_for_timeout(10000)
-
-            # --- Locators ---
+            # ================================================================
+            # ROG branch — window.__NUXT__.state.Spec.spec extraction
+            # ================================================================
             if is_rog:
-                target_row_class = ".ProductSpec__row__wSwCC"
-                target_title_class = ".ProductSpec__productSpecItemTitle__JVvSd"
-                target_value_class = ".ProductSpec__rowItem__hGYWS"
-                target_price_class = ".ProductSpecPrice__finallyPriceValue__fUbBJ"
+                # ROG site is Nuxt.js. Navigate to the main product page and
+                # wait for the Nuxt state store to be populated.
+                await page.goto(target_url, wait_until="networkidle", timeout=60000)
+
+                spec_obj: list[dict] = await page.evaluate(
+                    "() => window.__NUXT__?.state?.Spec?.spec || []"
+                )
+
+                if not spec_obj:
+                    raise Exception(
+                        "window.__NUXT__.state.Spec.spec is empty or not found. "
+                        "The ROG page may not have loaded fully."
+                    )
+
+                num_variants = len(spec_obj)
+                print(f"🔍 ROG __NUXT__: {num_variants} variant(s) at {base_url}")
+
+                results: list[dict] = []
+
+                for idx, sku in enumerate(spec_obj):
+                    # --------------------------------------------------------
+                    # Specs — specContent[].displayField / descriptionText
+                    # --------------------------------------------------------
+                    specs: dict = {}
+                    for item in sku.get("specContent", []):
+                        field = item.get("displayField", "").strip()
+                        value = item.get("descriptionText", "").strip()
+                        if field and value:
+                            # descriptionText uses literal \n — convert to readable
+                            specs[field] = value.replace("\\n", "\n").strip()
+
+                    # --------------------------------------------------------
+                    # Price — stored as float e.g. 9099.0  →  "RM9,099.00"
+                    # --------------------------------------------------------
+                    raw_price = sku.get("price")
+                    try:
+                        price_val = float(raw_price) if raw_price is not None else 0
+                        price_str = f"RM{price_val:,.2f}" if price_val > 0 else "N/A"
+                    except (TypeError, ValueError):
+                        price_str = "N/A"
+                    specs["Price"] = price_str
+
+                    # --------------------------------------------------------
+                    # Product name — mktName + skuName
+                    # --------------------------------------------------------
+                    mkt_name = sku.get("mktName", "").strip()
+                    sku_name = sku.get("skuName", "").strip()
+                    product_name = f"{mkt_name} ({sku_name})" if sku_name else mkt_name
+
+                    # --------------------------------------------------------
+                    # Image — skuImg is the per-variant hero image
+                    # --------------------------------------------------------
+                    sku_img = sku.get("skuImg", "")
+                    image_urls = [sku_img] if sku_img and sku_img.startswith("http") else []
+
+                    # --------------------------------------------------------
+                    # Source URL suffix — unique key per variant in DB
+                    # --------------------------------------------------------
+                    suffix = f"?v={idx + 1}" if num_variants > 1 else ""
+
+                    results.append({
+                        "status": "success",
+                        "product_name": product_name,
+                        "specs": specs,
+                        "image_urls": image_urls,
+                        "source_url_suffix": suffix,
+                    })
+
+                await browser.close()
+                return results
+
+            # ================================================================
+            # Standard ASUS branch — window.__NUXT__ JSON extraction
+            # ================================================================
             else:
-                target_row_class = ".TechSpec__rowTable__1LR9D"
-                target_title_class = ".rowTableTitle"
-                target_value_class = ".TechSpec__rowTableItems__KYWXp"
-                target_name_class = ".LevelFourProductPageHeader__modelName__70ttK"
+                # ASUS standard site is also Nuxt.js.
+                # All variant data lives in __NUXT__.state.PDPage.
+                await page.goto(target_url, wait_until="networkidle", timeout=60000)
 
-            # --- Extract Model Name ---
-            # Scraped from: <h1 class="LevelFourProductPageHeader__modelName__70ttK">ASUS Vivobook 14 (A1407)</h1>
-            if not is_rog:
-                model_locator = page.locator(target_name_class)  # type: ignore
-                if await model_locator.count() > 0:
-                    name_text = await model_locator.first.text_content()
-                    product_name = name_text.strip() if name_text else "Unknown Model"
+                pd_page: dict = await page.evaluate(
+                    "() => window.__NUXT__?.state?.PDPage || {}"
+                )
 
-            # --- Extract Product Images ---
-            if not is_rog:
-                image_elements = await page.locator(".TechSpec__rowImage__35vd6 img").all()
-                for img_el in image_elements:
-                    src = await img_el.get_attribute("src")
-                    if src:
-                        # Normalise protocol-relative URLs to absolute HTTPS
-                        if src.startswith("//"):
-                            src = "https:" + src
-                        image_urls.append(src)
+                if not pd_page:
+                    raise Exception(
+                        "window.__NUXT__.state.PDPage not found. "
+                        "The ASUS page may not have loaded fully."
+                    )
 
-            # --- Extract Specs (text rows only) ---
-            rows = await page.locator(target_row_class).all()
-
-            if len(rows) == 0:
-                raise Exception(f"No tech specs were found using locator: {target_row_class}")
-
-            for row in rows:
-                title_locator = row.locator(target_title_class)
-                value_locator = row.locator(target_value_class)
-
-                if await title_locator.count() > 0 and await value_locator.count() > 0:
-                    title = await title_locator.first.text_content()
-                    title = title.strip() if title else "Unknown"
-
-                    # Skip dedicated image rows — already captured above in image_urls
-                    is_image_row = await value_locator.locator(".TechSpec__rowImage__35vd6").count() > 0
-                    if is_image_row:
-                        continue
-
-                    img_locator = value_locator.locator("img")
-                    if await img_locator.count() > 0:
-                        value = await img_locator.first.get_attribute("src")
-                    else:
-                        value = await value_locator.first.text_content()
-
-                    if value:
-                        specs[title] = value.strip().replace('\n', ', ')
-
-            # --- Extract Price (scraped last) ---
-            # Price is in a sticky header that only appears after scrolling.
-            # We scrape it last so the page has had maximum time to fully render.
-            price_selectors = [
-                ".LevelFourProductPageHeader__priceNoDiscount__3Ayb4",  # full price (no discount)
-                ".LevelFourProductPageHeader__price__3qU_7",            # discounted price
-            ]
-            await page.wait_for_timeout(1000)               # wait for animation
-
-            specs["Price"] = "N/A"
-            for price_sel in price_selectors:
-                price_el = page.locator(price_sel).first
-                if await price_el.count() > 0:
-                    price_text = await price_el.inner_text()
-                    if not price_text or not price_text.strip():
-                        price_text = await price_el.text_content()
-                    if price_text and price_text.strip():
-                        specs["Price"] = price_text.strip()
+                # ---- Variants -------------------------------------------------
+                tech_specs = []
+                
+                # Check different possible lists of variants
+                for key in ["PDTechSpecM2List", "PDTechSpec", "PDTechSpecM2"]:
+                    tech_specs = pd_page.get(key, {}).get("TechSpec", [])
+                    if tech_specs:
                         break
-
-            # Fallback: business laptops (e.g. ExpertBook) don't show price on
-            # the techspec subpage — open the main product page and try there.
-            if specs["Price"] == "N/A":
-                main_page = await browser.new_page()
-                await main_page.goto(base_url, wait_until="domcontentloaded", timeout=30000)
-                await main_page.wait_for_timeout(10000)
-                await main_page.evaluate("window.scrollTo(0, 500)")
-                await main_page.wait_for_timeout(1000)
-                for price_sel in price_selectors:
-                    price_el = main_page.locator(price_sel).first
-                    if await price_el.count() > 0:
-                        price_text = await price_el.inner_text()
-                        if not price_text or not price_text.strip():
-                            price_text = await price_el.text_content()
-                        if price_text and price_text.strip():
-                            specs["Price"] = price_text.strip()
+                        
+                # Fallback if there is no TechSpec list but a direct SpecList
+                if not tech_specs:
+                    for key in ["PDTechSpecM2", "PDTechSpec"]:
+                        obj = pd_page.get(key, {})
+                        if "SpecList" in obj:
+                            tech_specs = [obj]  # wrap single variant in list
                             break
-                await main_page.close()
+
+                if not tech_specs:
+                    raise Exception(f"No variant data found in PDPage TechSpec keys at {target_url}.")
+
+                # ---- Marketing name -------------------------------------------
+                base_product_name: str = (
+                    pd_page.get("productTabList", {}).get("ModelName", "")
+                    or "Unknown Model"
+                )
+
+                # ---- Price lookup ---------------------------------------------
+                price_map: dict[str, str] = {}
+                fallback_price = None
+                valid_prices_found = 0
+                
+                # Combine all possible price lists
+                all_price_lists = []
+                for key in ["PDPriceList", "modelPrice", "modelSkuPrice"]:
+                    all_price_lists.extend(pd_page.get(key, {}).get("ProductList", []))
+                    
+                for p_entry in all_price_lists:
+                    # Try all possible ID fields
+                    pid = str(p_entry.get("ProductID") or p_entry.get("ProductId") or p_entry.get("PartNo") or p_entry.get("skuId") or "")
+                    
+                    price_val = p_entry.get("Price")
+                    if not price_val and price_val != 0:
+                        price_val = p_entry.get("SpecialPrice")
+                        
+                    if price_val and price_val != "N/A":
+                        valid_prices_found += 1
+                        if not fallback_price:
+                            fallback_price = str(price_val)  # store the first valid price
+                        if pid:
+                            price_map[pid] = str(price_val)
+
+                num_variants = len(tech_specs)
+                print(f"🔍 ASUS __NUXT__: {num_variants} variant(s). Price Map: {price_map}")
+
+                asus_results: list[dict] = []
+
+                for idx, sku in enumerate(tech_specs):
+                    variant_specs: dict = dict(sku.get("SpecList", {}))
+
+                    model_code = sku.get("Name", "").strip()
+                    product_name = (
+                        f"{base_product_name} ({model_code})"
+                        if model_code else base_product_name
+                    )
+
+                    img_link = sku.get("ImageLink", "")
+                    if img_link.startswith("//"):
+                        img_link = "https:" + img_link
+                    image_urls = [img_link] if img_link.startswith("http") else []
+
+                    # 1. Try to match by ID
+                    product_id = str(sku.get("ProductId") or sku.get("ProductID") or sku.get("PartNo") or "")
+                    price = price_map.get(product_id)
+                    
+                    # 2. Fallback to the single valid page price if ID map fails
+                    if not price and fallback_price and valid_prices_found == 1:
+                        price = fallback_price
+                        
+                    variant_specs["Price"] = price or "N/A"
+
+                    suffix = f"?v={idx + 1}" if num_variants > 1 else ""
+
+                    asus_results.append({
+                        "status": "success",
+                        "product_name": product_name,
+                        "specs": variant_specs,
+                        "image_urls": image_urls,
+                        "source_url_suffix": suffix,
+                    })
+
+                await browser.close()
+                return asus_results
 
         except Exception as e:
             await browser.close()
-            return {"status": "failed", "error": str(e)}
-
-        await browser.close()
-
-    # Return structured result with specs, image_urls, and product_name separated
-    return {"specs": specs, "image_urls": image_urls, "product_name": product_name}
+            return [{"status": "failed", "error": str(e)}]
 
 
 # ---------------------------------------------------------------------------
-# Public entry points — call these from main.py / your route handlers.
-# Same call shape as apple_scraper's crawl_apple_specs_links /
-# scrape_official_website, so main.py can treat every brand scraper
-# identically.
+# Public entry points
 # ---------------------------------------------------------------------------
+
 
 async def crawl_asus_specs_links(start_url: str) -> list[str]:
     """
@@ -186,25 +285,34 @@ async def crawl_asus_specs_links(start_url: str) -> list[str]:
     return await run_async_playwright(_async_crawl_asus_specs_links(start_url))
 
 
-async def scrape_asus_laptop_specs(url: str, brand_id) -> dict:
+async def scrape_asus_laptop_specs(url: str, brand_id) -> list[dict]:
     """
-    Navigates to the specific ASUS /techspec/ or ROG /spec/ page and extracts the data.
+    Navigates to the specific ASUS product page and extracts all variants
+    from window.__NUXT__ state — no CSS selectors.
+    Returns a list of formatted result dicts — one per variant found.
+    Each dict: { status, product_name, raw_prices_list, image_urls,
+                 raw_specs, source_url_suffix }
     Offloads Playwright to a worker thread with its own event loop so
     it works correctly when uvicorn uses SelectorEventLoop on Windows.
     """
-    raw = await run_async_playwright(_async_scrape_asus_laptop_specs(url))
+    raw_list: list[dict] = await run_async_playwright(
+        _async_scrape_asus_laptop_specs(url)
+    )
 
-    if raw.get("status") == "failed":
-        return raw
+    results: list[dict] = []
+    for raw in raw_list:
+        if raw.get("status") == "failed":
+            results.append(raw)
+            continue
 
-    raw_specs = raw.get("specs", {})
-    image_urls = raw.get("image_urls", [])
-    product_name = raw.get("product_name", "Unknown Model")
+        raw_specs = raw.get("specs", {})
+        results.append({
+            "status": "success",
+            "product_name": raw.get("product_name", "Unknown Model"),
+            "raw_prices_list": [{"price": raw_specs.get("Price", "N/A")}],
+            "image_urls": raw.get("image_urls", []),
+            "raw_specs": raw_specs,
+            "source_url_suffix": raw.get("source_url_suffix", ""),
+        })
 
-    return {
-        "status": "success",
-        "product_name": product_name,
-        "raw_prices_list": [{"price": raw_specs.get("Price", "N/A")}],
-        "image_urls": image_urls,
-        "raw_specs": raw_specs,
-    }
+    return results

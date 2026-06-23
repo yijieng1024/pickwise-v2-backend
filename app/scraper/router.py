@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session, select
 from app.database import get_session
 from pydantic import BaseModel
@@ -10,6 +10,7 @@ from app.users.auth import get_current_admin
 from .apple_scraper import crawl_apple_specs_links, scrape_official_website
 from .asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
 from app.scraper.models import ScrapeTarget, RawScrapLaptop
+from .bulk_scraper import run_bulk_scrape
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -21,6 +22,10 @@ class ScraperRequest(BaseModel):
 
 class CrawlerQueueRequest(BaseModel):
     start_url: str
+    brand_id: UUID
+
+
+class BulkScrapeRequest(BaseModel):
     brand_id: UUID
 
 
@@ -86,9 +91,11 @@ async def scrape_url(
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found")
 
-    # Prevent duplicate scraping
+    # Prevent duplicate scraping — check for bare URL or any variant (?v=N)
     existing_scrape = session.exec(
-        select(RawScrapLaptop).where(RawScrapLaptop.source_url == request.url)
+        select(RawScrapLaptop).where(
+            RawScrapLaptop.source_url.like(f"{request.url}%")  # type: ignore[arg-type]
+        )
     ).first()
 
     if existing_scrape:
@@ -97,13 +104,14 @@ async def scrape_url(
             "status": existing_scrape.processing_status,
         }
 
-    # 1. Route based on Brand
+    # 1. Route based on Brand — ASUS returns list[dict], Apple returns dict (wrapped below)
     if brand.name.lower() == "apple":
-        # apple_scraper is now async (see playwright_utils refactor)
-        result = await scrape_official_website(request.url, brand.name, request.brand_id) # type: ignore
+        raw_result = await scrape_official_website(request.url, brand.name, request.brand_id)  # type: ignore
+        variant_results = [raw_result]
 
     elif brand.name.lower() == "asus":
-        result = await scrape_asus_laptop_specs(request.url, request.brand_id)
+        # Returns list[dict] — one item per variant found on the page
+        variant_results = await scrape_asus_laptop_specs(request.url, request.brand_id)
 
     else:
         raise HTTPException(
@@ -111,8 +119,6 @@ async def scrape_url(
         )
 
     # 2. Always stamp last_scraped_at — regardless of success or failure.
-    #    If the URL was never fed through /feed-crawler, create the ScrapeTarget
-    #    row so the timestamp is never silently lost.
     scrape_target = session.exec(
         select(ScrapeTarget).where(ScrapeTarget.url == request.url)
     ).first()
@@ -121,7 +127,6 @@ async def scrape_url(
         scrape_target.last_scraped_at = datetime.now(timezone.utc)
         session.merge(scrape_target)
     else:
-        # URL was scraped directly without going through the crawler queue
         new_target = ScrapeTarget(
             url=request.url,
             brand_id=request.brand_id,
@@ -129,27 +134,127 @@ async def scrape_url(
         )
         session.add(new_target)
 
-    if result.get("status") == "failed":
-        # Commit the timestamp update even on failure so we don't lose the record
-        session.commit()
-        raise HTTPException(status_code=500, detail=result.get("error"))
-
-    # 3. Save the successfully scraped data
-    raw_laptop = RawScrapLaptop(
-        source_url=request.url,
-        brand_id=request.brand_id,
-        raw_product_name=result.get("product_name", "Unknown Model"),
-        raw_prices=result.get("raw_prices_list", []),
-        image_urls=result.get("image_urls", []),
-        raw_specs_dump={"scraped_features": result.get("raw_specs", [])},
-        processing_status="pending",
-    )
-    session.add(raw_laptop)
+    # Commit the timestamp regardless of scrape outcome
     session.commit()
-    session.refresh(raw_laptop)
+
+    # 3. Check if every variant failed
+    all_failed = all(v.get("status") == "failed" for v in variant_results)
+    if all_failed:
+        first_error = variant_results[0].get("error", "Unknown scraper error")
+        raise HTTPException(status_code=500, detail=first_error)
+
+    # 4. Save one RawScrapLaptop row per successful variant
+    saved_ids = []
+    for variant in variant_results:
+        if variant.get("status") == "failed":
+            continue
+
+        suffix = variant.get("source_url_suffix", "")
+        source_url = f"{request.url}{suffix}"
+
+        raw_laptop = RawScrapLaptop(
+            source_url=source_url,
+            brand_id=request.brand_id,
+            raw_product_name=variant.get("product_name", "Unknown Model"),
+            raw_prices=variant.get("raw_prices_list", []),
+            image_urls=variant.get("image_urls", []),
+            raw_specs_dump={"scraped_features": variant.get("raw_specs", [])},
+            processing_status="pending",
+        )
+        session.add(raw_laptop)
+        session.commit()
+        session.refresh(raw_laptop)
+        saved_ids.append(str(raw_laptop.id))
 
     return {
         "message": f"Successfully scraped {brand.name} laptop data.",
-        "laptop_id": raw_laptop.id,
+        "variants_saved": len(saved_ids),
+        "laptop_ids": saved_ids,
         "last_scraped_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bulk Scrape
+# ---------------------------------------------------------------------------
+
+@router.post("/bulk-scrape", dependencies=[Depends(get_current_admin)])
+async def bulk_scrape(
+    request: BulkScrapeRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+):
+    """
+    Scrape all pending URLs (last_scraped_at IS NULL) for the given brand.
+
+    Returns:
+    - HTTP 200 when every URL succeeded (or there were no pending URLs).
+    - HTTP 207 Multi-Status when at least one URL failed.
+
+    A timestamped failure log is written to logs/scraper/ whenever any URL
+    fails, containing the URL and its error message.
+    """
+    try:
+        report = await run_bulk_scrape(brand_id=request.brand_id, session=session)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    # Serialise the dataclass into a plain dict for JSON output
+    payload = {
+        "brand": report.brand_name,
+        "total_pending": report.total_pending,
+        "processed": report.processed,
+        "succeeded": report.succeeded,
+        "failed": report.failed,
+        "skipped": report.skipped,
+        "log_file": report.log_file,
+        "results": [
+            {"url": r.url, "status": r.status, "error": r.error}
+            for r in report.results
+        ],
+    }
+
+    # HTTP 207 Multi-Status when there is at least one failure
+    if report.failed > 0:
+        response.status_code = 207
+
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Raw Scraped Laptop — single record detail
+# ---------------------------------------------------------------------------
+
+@router.get("/raw-laptop/{raw_laptop_id}", dependencies=[Depends(get_current_admin)])
+def get_raw_laptop(
+    raw_laptop_id: UUID,
+    session: Session = Depends(get_session),
+):
+    """
+    Retrieve the full details of a single raw scraped laptop record.
+
+    Path param:
+    - **raw_laptop_id**: UUID of the RawScrapLaptop row.
+
+    Returns all fields including raw_specs_dump, image_urls, prices,
+    processing_status, and created_at.
+    """
+    raw_laptop = session.get(RawScrapLaptop, raw_laptop_id)
+
+    if not raw_laptop:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Raw scraped laptop with id={raw_laptop_id} not found.",
+        )
+
+    return {
+        "id": raw_laptop.id,
+        "source_url": raw_laptop.source_url,
+        "brand_id": raw_laptop.brand_id,
+        "raw_product_name": raw_laptop.raw_product_name,
+        "raw_prices": raw_laptop.raw_prices,
+        "image_urls": raw_laptop.image_urls,
+        "raw_specs_dump": raw_laptop.raw_specs_dump,
+        "processing_status": raw_laptop.processing_status,
+        "created_at": raw_laptop.created_at,
     }
