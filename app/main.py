@@ -9,6 +9,7 @@ from app.scraper.router import router as scraper_router
 from app.processor.router import router as processor_router
 from app.benchmark.router import router as benchmark_router
 from app.laptops.pickscore_router import router as pickscore_router
+from app.embeddings.router import router as embedding_router
 
 app = FastAPI(
     title="PickWise v2 API",
@@ -25,6 +26,7 @@ app.include_router(scraper_router)
 app.include_router(processor_router)
 app.include_router(benchmark_router)
 app.include_router(pickscore_router)
+app.include_router(embedding_router)
 
 
 @app.get("/")
