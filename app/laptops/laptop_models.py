@@ -110,6 +110,33 @@ class LaptopEmbedding(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class HybridSearchRequest(SQLModel):
+    query: str
+    budget_max: Optional[float] = None
+    brand: Optional[str] = None
+    top_k: int = Field(default=10, le=50)
+
+
+class LaptopSearchResult(SQLModel):
+    laptop_id: uuid.UUID
+    product_name: str
+    price_rm: float
+    similarity_score: float
+
+
+class LaptopPriceHistory(SQLModel, table=True):
+    __tablename__ = "laptop_price_history"  # type: ignore
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
+    price_rm: float
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class LaptopPriceHistoryRead(SQLModel):
+    price_rm: float
+    recorded_at: datetime
+
+
 class LaptopUpdate(SQLModel):
     brand_id: Optional[uuid.UUID] = None
     model_code: Optional[str] = None

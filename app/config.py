@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     smtp_username: str
     smtp_password: str
 
+    # Gemini API
+    gemini_api_key: str
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings() # type: ignore

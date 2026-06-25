@@ -1,9 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 from app.database import get_session
 from app.laptops.laptop_models import (
-    Laptop, LaptopRead, LaptopCreate, LaptopUpdate
+    Laptop, LaptopRead, LaptopCreate, LaptopUpdate, LaptopPriceHistory, LaptopPriceHistoryRead,
+    LaptopEmbedding, HybridSearchRequest, LaptopSearchResult
 )
+from app.laptops.brand_model import LaptopBrand
+from app.embeddings.service import embed_text
 from app.scraper.models import RawScrapLaptop
 from typing import List
 from uuid import UUID
@@ -17,11 +21,45 @@ def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session))
     session.add(db_laptop)
     session.commit()
     session.refresh(db_laptop)
+
+    session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
+    session.commit()
+
     return db_laptop
 
 @router.get("/", response_model=List[LaptopRead])
 def list_laptops(session: Session = Depends(get_session)):
     return session.exec(select(Laptop)).all()
+
+@router.post("/hybrid-search", response_model=List[LaptopSearchResult])
+def hybrid_search(request: HybridSearchRequest, session: Session = Depends(get_session)):
+    query_vector = embed_text(request.query)
+    distance = LaptopEmbedding.embedding.cosine_distance(query_vector)
+
+    statement = (
+        sa_select(Laptop, LaptopBrand.name, distance.label("distance")) # type: ignore
+        .join(LaptopEmbedding, LaptopEmbedding.laptop_id == Laptop.id)
+        .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
+    )
+
+    if request.budget_max is not None:
+        statement = statement.where(Laptop.price_rm <= request.budget_max)
+    if request.brand is not None:
+        statement = statement.where(LaptopBrand.name.ilike(request.brand))
+
+    statement = statement.order_by(distance.asc()).limit(request.top_k)
+
+    rows = session.execute(statement).all()
+
+    return [
+        LaptopSearchResult(
+            laptop_id=laptop.id,
+            product_name=f"{brand_name} {laptop.product_name}",
+            price_rm=laptop.price_rm,
+            similarity_score=round(1 - row_distance, 4),
+        )
+        for laptop, brand_name, row_distance in rows
+    ]
 
 @router.get("/raw-scrap-laptops", dependencies=[Depends(get_current_admin)])
 def list_raw_scrap_laptops(
@@ -53,15 +91,33 @@ def update_laptop(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Laptop not found")
     
     update_data = laptop_update.model_dump(exclude_unset=True)
-    
+    price_changed = "price_rm" in update_data and update_data["price_rm"] != db_laptop.price_rm
+
     for key, value in update_data.items():
         setattr(db_laptop, key, value)
-        
+
     session.add(db_laptop)
     session.commit()
     session.refresh(db_laptop)
-    
+
+    if price_changed:
+        session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
+        session.commit()
+
     return db_laptop
+
+@router.get("/{laptop_id}/price-history", response_model=List[LaptopPriceHistoryRead])
+def get_laptop_price_history(laptop_id: UUID, session: Session = Depends(get_session)):
+    db_laptop = session.get(Laptop, laptop_id)
+    if not db_laptop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Laptop not found")
+
+    statement = (
+        select(LaptopPriceHistory)
+        .where(LaptopPriceHistory.laptop_id == laptop_id)
+        .order_by(LaptopPriceHistory.recorded_at.asc())  # type: ignore
+    )
+    return session.exec(statement).all()
 
 @router.delete("/{laptop_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_laptop(laptop_id: UUID, session: Session = Depends(get_session)):

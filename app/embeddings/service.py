@@ -5,12 +5,19 @@ from uuid import UUID
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from sqlmodel import Session, select
 
+from app.config import settings
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
 from app.laptops.brand_model import LaptopBrand
 
-# WHY this model: text-embedding-004 produces exactly 768 dimensions,
-# which matches the Vector(768) column already defined in LaptopEmbedding.
-_embedder = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+# WHY gemini-embedding-001 with output_dimensionality=768: text-embedding-004
+# was retired by Google. gemini-embedding-001 defaults to 3072 dimensions, so
+# output_dimensionality pins it to 768 to match the existing Vector(768)
+# column in LaptopEmbedding without needing a schema migration.
+_embedder = GoogleGenerativeAIEmbeddings(
+    model="models/gemini-embedding-001",
+    google_api_key=settings.gemini_api_key,
+    output_dimensionality=768,
+)
 
 
 def build_laptop_embedding_text(laptop: Laptop, brand_name: str) -> str:
