@@ -3,7 +3,7 @@ from typing import Optional
 from rapidfuzz import process, fuzz
 
 _cache: dict[str, tuple[dict, float]] = {}
-CACHE_TTL = 300  # 5 minutes
+CACHE_TTL = 300
 CONFIDENCE_THRESHOLD = 0.6
 
 

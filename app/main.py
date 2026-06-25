@@ -8,7 +8,7 @@ from app.users.router import router as users_router
 from app.scraper.router import router as scraper_router
 from app.processor.router import router as processor_router
 from app.benchmark.router import router as benchmark_router
-from app.laptops.pickscore.router import router as pickscore_router
+from app.laptops.pickscore_router import router as pickscore_router
 
 app = FastAPI(
     title="PickWise v2 API",
