@@ -10,7 +10,7 @@ class RecommendationRequest(BaseModel):
     query: str
     budget_max: Optional[float] = None
     brand: Optional[str] = None
-    top_k: int = Field(default=5, ge=1, le=10)
+    top_k: int = Field(default=3, ge=1, le=10)
     candidate_pool_size: int = Field(default=15, ge=5, le=30)
 
 
