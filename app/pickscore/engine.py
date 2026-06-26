@@ -83,11 +83,14 @@ def _score_gpu(
     gpu_benchmarks: list[tuple[str, int]],
     cpu_score: float,
 ) -> tuple[float, bool]:
+    # Apple Silicon GPU lives on the same SoC as the CPU — PassMark has no
+    # separate GPU entries for ARM-based Apple chips, so any fuzzy match would
+    # be a false positive. Always proxy via CPU score for Apple.
+    if product.brand_name.lower() == "apple":
+        return cpu_score, True
     result = resolve_benchmark(product.gpu_model, gpu_benchmarks)
     if result["score"] is not None:
         return _normalize(float(result["score"]), ranges["gpu_mark"]["min"], ranges["gpu_mark"]["max"]), False
-    if product.brand_name.lower() == "apple":
-        return cpu_score, True  # proxy: unified chip architecture
     return 50.0, False
 
 
