@@ -26,4 +26,7 @@ test_file/
 /logs/
 
 CLAUDE.md
-Product Requirement Document.md
+PRD.md
+Deployment_Runbook.md
+RLHF_Data_Pipeline_Spec.md
+Technical_Spec.md
