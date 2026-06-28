@@ -11,6 +11,7 @@ from app.laptops.brand_model import LaptopBrand
 from app.users.models import User
 from app.scraper.models import ScrapeTarget
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
+from app.conversations.models import Conversation, Message, ConversationLaptop, PipelineEvalLog
 
 config = context.config
 
