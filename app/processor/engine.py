@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.config import settings
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
@@ -41,6 +42,7 @@ def process_raw_laptop_data(
     llm = ChatGoogleGenerativeAI(
         model="gemma-4-31b-it",
         temperature=0,
+        google_api_key=settings.gemini_api_key,
     )
 
     structured_llm = llm.with_structured_output(ExtractedLaptopFamily)
