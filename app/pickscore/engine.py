@@ -61,14 +61,21 @@ def _user_screen_bucket(screen_size_pref: str) -> int:
     return 2
 
 
-def _score_price(product: ScorableProduct, user_pref: Optional[LaptopUserPreference], ranges: dict, mode: str) -> float:
+def _score_price(
+    product: ScorableProduct,
+    user_pref: Optional[LaptopUserPreference],
+    ranges: dict,
+    mode: str,
+) -> tuple[float, Optional[str]]:
+    if product.price == 0.0:
+        return 50.0, "Price unavailable — factor skipped, scored as neutral (50)"
     if mode == "personalized" and user_pref and user_pref.budget:
         budget_max = float(user_pref.budget)
         if product.price <= budget_max:
-            return 100.0
+            return 100.0, None
         over_ratio = (product.price - budget_max) / budget_max
-        return max(0.0, 100.0 - DECAY_K * over_ratio * 100.0)
-    return _normalize(product.price, ranges["price"]["min"], ranges["price"]["max"], inverse=True)
+        return max(0.0, 100.0 - DECAY_K * over_ratio * 100.0), None
+    return _normalize(product.price, ranges["price"]["min"], ranges["price"]["max"], inverse=True), None
 
 
 def _score_cpu(product: ScorableProduct, ranges: dict, cpu_benchmarks: list[tuple[str, int]]) -> tuple[float, dict]:
@@ -172,9 +179,10 @@ def calculate_pick_score(
 
     cpu_score, _ = _score_cpu(product, ranges, cpu_benchmarks)
     gpu_score, gpu_is_proxy = _score_gpu(product, ranges, gpu_benchmarks, cpu_score)
+    price_score, price_note = _score_price(product, user_pref, ranges, mode)
 
     factor_scores = {
-        "price":       _score_price(product, user_pref, ranges, mode),
+        "price":       price_score,
         "cpu":         cpu_score,
         "gpu":         gpu_score,
         "ram_storage": _score_ram_storage(product, ranges),
@@ -182,6 +190,11 @@ def calculate_pick_score(
         "battery":     _score_battery(product, ranges),
         "screen_size": _score_screen_size(product, user_pref, mode),
         "brand":       _score_brand(product, user_pref, mode),
+    }
+
+    factor_notes: dict[str, Optional[str]] = {
+        "price": price_note,
+        "gpu":   "Apple Silicon GPU — proxied via CPU score (no PassMark data for ARM)" if gpu_is_proxy else None,
     }
 
     weights = _compute_weights(user_pref, mode)
@@ -197,6 +210,7 @@ def calculate_pick_score(
             raw_score=round(raw_score, 2),
             weight=round(w, 4),
             contribution=round(contribution, 2),
+            note=factor_notes.get(factor),
         ))
 
     return PickScoreResponse(
@@ -204,5 +218,8 @@ def calculate_pick_score(
         score=int(max(0, min(100, round(weighted_sum)))),
         mode=mode,
         breakdown=breakdown,
-        flags={"gpu_score_is_proxy": gpu_is_proxy},
+        flags={
+            "gpu_score_is_proxy": gpu_is_proxy,
+            "price_unavailable": product.price == 0.0,
+        },
     )

@@ -25,6 +25,7 @@ class FactorBreakdown(BaseModel):
     raw_score: float
     weight: float
     contribution: float
+    note: Optional[str] = None
 
 
 class PickScoreResponse(BaseModel):
