@@ -138,21 +138,74 @@ class LaptopPriceHistoryRead(SQLModel):
 
 
 class LaptopUpdate(SQLModel):
+    # Part 1: Core Identifiers & Categorization
     brand_id: Optional[uuid.UUID] = None
     model_code: Optional[str] = None
     product_name: Optional[str] = None
-    price_rm: Optional[float] = None
-    ram_gb: Optional[int] = None
-    ssd_gb: Optional[int] = None
-    weight_kg: Optional[float] = None
-    battery_wh: Optional[int] = None
-    display_size_inch: Optional[float] = None
-    display_refresh_rate_hz: Optional[int] = None
     release_year: Optional[int] = None
-    ai_ready: Optional[bool] = None
-    microsoft_office: Optional[bool] = None
-    os: Optional[str] = None
-    gpu_brand: Optional[str] = None
+    price_rm: Optional[float] = None
+
+    # Part 2: Processor & AI Engine
     processor_brand: Optional[str] = None
+    processor_model: Optional[str] = None
+    processor_ghz: Optional[str] = None
+    cpu_cores: Optional[int] = None
+    cpu_threads: Optional[int] = None
+    npu_model: Optional[str] = None
+    npu_tops: Optional[float] = None
+    ai_ready: Optional[bool] = None
+    ai_features: Optional[List[str]] = None
+
+    # Part 3: Graphics & Hardware Acceleration
+    gpu_brand: Optional[str] = None
+    gpu_model: Optional[str] = None
+    gpu_cores: Optional[int] = None
+    media_engine_details: Optional[str] = None
+
+    # Part 4: Memory & Storage
+    ram_gb: Optional[int] = None
+    ram_type: Optional[str] = None
+    ram_upgradable: Optional[bool] = None
+    max_ram_gb: Optional[int] = None
+    ssd_gb: Optional[int] = None
+    storage_type: Optional[str] = None
+    storage_upgradable: Optional[bool] = None
+    expansion_slots_summary: Optional[str] = None
+
+    # Part 5: Display & External Video
+    display_size_inch: Optional[float] = None
+    display_resolution: Optional[str] = None
+    display_type: Optional[str] = None
+    display_refresh_rate_hz: Optional[int] = None
+    display_brightness_nits: Optional[int] = None
+    touchscreen: Optional[bool] = None
+    external_display_support: Optional[str] = None
+
+    # Part 6: Build, Battery & Connectivity
+    weight_kg: Optional[float] = None
+    dimensions_cm: Optional[str] = None
+    battery_wh: Optional[float] = None
+    power_supply_details: Optional[str] = None
+    os: Optional[str] = None
+    colors: Optional[List[str]] = None
+    ports_summary: Optional[List[str]] = None
+    wifi_standard: Optional[str] = None
+    bluetooth_version: Optional[str] = None
+
+    # Part 7: Peripherals, Input & Audio
+    keyboard_touchpad_details: Optional[str] = None
+    audio_details: Optional[str] = None
+    camera_details: Optional[str] = None
+    facial_recognition: Optional[bool] = None
+    fingerprint_reader: Optional[bool] = None
+
+    # Part 8: Security, Certifications & Extras
+    security_features: Optional[str] = None
+    materials_and_certifications: Optional[str] = None
+    microsoft_office_included: Optional[bool] = None
+    bundled_accessories: Optional[str] = None
+    warranty_details: Optional[str] = None
+
+    # Part 9: External/Raw Assets
     raw_specs: Optional[Dict[str, Any]] = None
-    image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None

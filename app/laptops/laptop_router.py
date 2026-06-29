@@ -15,7 +15,7 @@ from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/laptops", tags=["Laptops"])
 
-@router.post("/", response_model=LaptopRead, status_code=201)
+@router.post("/", response_model=LaptopRead, status_code=201, dependencies=[Depends(get_current_admin)])
 def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session)):
     db_laptop = Laptop.model_validate(laptop)
     session.add(db_laptop)
@@ -80,7 +80,7 @@ def get_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Laptop not found")
     return laptop
 
-@router.put("/{laptop_id}", response_model=LaptopRead)
+@router.put("/{laptop_id}", response_model=LaptopRead, dependencies=[Depends(get_current_admin)])
 def update_laptop(
     laptop_id: UUID, 
     laptop_update: LaptopUpdate, 
@@ -119,7 +119,7 @@ def get_laptop_price_history(laptop_id: UUID, session: Session = Depends(get_ses
     )
     return session.exec(statement).all()
 
-@router.delete("/{laptop_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{laptop_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_admin)])
 def delete_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
     db_laptop = session.get(Laptop, laptop_id)
     if not db_laptop:
