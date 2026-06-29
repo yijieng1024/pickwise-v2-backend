@@ -118,27 +118,30 @@ async def scrape_url(
             status_code=400, detail=f"Currently, {brand.name} brand scraping is not supported."
         )
 
-    # 2. Always stamp last_scraped_at — regardless of success or failure.
+    # 3. Check if every variant failed
+    all_failed = all(v.get("status") == "failed" for v in variant_results)
+
+    # Stamp last_scraped_at and scrape_status regardless of outcome
+    outcome_status = "failed" if all_failed else "completed"
     scrape_target = session.exec(
         select(ScrapeTarget).where(ScrapeTarget.url == request.url)
     ).first()
 
     if scrape_target:
         scrape_target.last_scraped_at = datetime.now(timezone.utc)
+        scrape_target.scrape_status = outcome_status
         session.merge(scrape_target)
     else:
         new_target = ScrapeTarget(
             url=request.url,
             brand_id=request.brand_id,
             last_scraped_at=datetime.now(timezone.utc),
+            scrape_status=outcome_status,
         )
         session.add(new_target)
 
-    # Commit the timestamp regardless of scrape outcome
     session.commit()
 
-    # 3. Check if every variant failed
-    all_failed = all(v.get("status") == "failed" for v in variant_results)
     if all_failed:
         first_error = variant_results[0].get("error", "Unknown scraper error")
         raise HTTPException(status_code=500, detail=first_error)

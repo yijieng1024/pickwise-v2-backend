@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
@@ -113,9 +114,10 @@ async def _dispatch_scraper(brand_name: str, url: str, brand_id: UUID) -> list[d
         raise ValueError(f"Bulk scraping is not supported for brand: {brand_name}")
 
 
-def _stamp_last_scraped(session: Session, target: ScrapeTarget) -> None:
-    """Set last_scraped_at to now and persist the change."""
+def _update_target(session: Session, target: ScrapeTarget, scrape_status: str) -> None:
+    """Set last_scraped_at and scrape_status, then persist."""
     target.last_scraped_at = datetime.now(timezone.utc)
+    target.scrape_status = scrape_status
     session.merge(target)
     session.commit()
 
@@ -138,13 +140,16 @@ async def run_bulk_scrape(brand_id: UUID, session: Session) -> BulkScrapeReport:
     if brand is None:
         raise ValueError(f"Brand with id={brand_id} not found.")
 
-    # 2. Query pending URLs for this brand
+    # 2. Query pending + previously-failed URLs for this brand
     pending_targets: List[ScrapeTarget] = list(
         session.exec(
             select(ScrapeTarget).where(
                 ScrapeTarget.brand_id == brand_id,
-                ScrapeTarget.last_scraped_at == None,  # noqa: E711
                 ScrapeTarget.is_active == True,        # noqa: E712
+                or_(
+                    ScrapeTarget.last_scraped_at == None,  # noqa: E711
+                    ScrapeTarget.scrape_status == "failed",
+                ),
             )
         ).all()
     )
@@ -173,22 +178,19 @@ async def run_bulk_scrape(brand_id: UUID, session: Session) -> BulkScrapeReport:
         if already_scraped:
             report.skipped += 1
             report.results.append(UrlResult(url=url, status="skipped"))
-            _stamp_last_scraped(session, target)
+            _update_target(session, target, "skipped")
             continue
 
         # 3b. Dispatch to the brand scraper (returns list — one item per variant)
         try:
             variant_results = await _dispatch_scraper(brand.name, url, brand_id)
         except Exception as exc:
-            _stamp_last_scraped(session, target)
+            _update_target(session, target, "failed")
             report.failed += 1
             report.results.append(UrlResult(url=url, status="failed", error=str(exc)))
             continue
 
-        # 3c. Always stamp last_scraped_at regardless of outcome
-        _stamp_last_scraped(session, target)
-
-        # 3d. Process each variant result
+        # 3c. Process each variant result
         url_had_failure = False
         url_variants_saved = 0
 
@@ -217,6 +219,10 @@ async def run_bulk_scrape(brand_id: UUID, session: Session) -> BulkScrapeReport:
             session.add(raw_laptop)
             session.commit()
             url_variants_saved += 1
+
+        # 3d. Stamp status based on outcome
+        final_status = "completed" if url_variants_saved > 0 else "failed"
+        _update_target(session, target, final_status)
 
         if not url_had_failure:
             report.succeeded += 1

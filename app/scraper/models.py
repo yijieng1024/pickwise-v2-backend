@@ -20,6 +20,8 @@ class ScrapeTarget(SQLModel, table=True):
     )
     # status for the website
     is_active: bool = Field(default=True)
+    # States: 'pending', 'completed', 'failed', 'skipped'
+    scrape_status: str = Field(default="pending")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class RawScrapLaptop(SQLModel, table=True):
