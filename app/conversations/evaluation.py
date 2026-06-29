@@ -17,9 +17,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 import json
-import logging
 import uuid
-from pathlib import Path
 
 import numpy as np
 from sqlmodel import Session
@@ -28,18 +26,10 @@ from app.conversations.gating import GateResult, relevance_gate
 from app.conversations.relaxation import needs_relaxation, relax_and_retry
 from app.conversations.reranker import UserConstraints, rerank
 from app.conversations.retrieval import retrieve_candidates
-
-_LOG_DIR = Path("logs/eval")
-_LOG_DIR.mkdir(parents=True, exist_ok=True)
+from app.logger import get_eval_logger
 
 # Structured JSON-lines file — one entry per pipeline run, easy to grep in CI
-_eval_file_logger = logging.getLogger("pickwise.eval")
-_eval_file_logger.setLevel(logging.INFO)
-_eval_file_logger.propagate = False
-if not _eval_file_logger.handlers:
-    _fh = logging.FileHandler(_LOG_DIR / "pipeline_trace.jsonl", encoding="utf-8")
-    _fh.setFormatter(logging.Formatter("%(message)s"))
-    _eval_file_logger.addHandler(_fh)
+_eval_file_logger = get_eval_logger()
 
 
 # ── Core NDCG algorithm (from spec) ──────────────────────────────────────────

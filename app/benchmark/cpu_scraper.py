@@ -1,8 +1,8 @@
 import sys
 import os
-import logging
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 from playwright.sync_api import sync_playwright
 from sqlmodel import Session
 from sqlalchemy.dialects.postgresql import insert

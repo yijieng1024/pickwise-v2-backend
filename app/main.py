@@ -1,6 +1,7 @@
 
 
 from fastapi import FastAPI
+from app.logger import setup_logging
 from app.laptops.customization_router import router as customization_router
 from app.laptops.laptop_router import router as laptops_router
 from app.laptops.brand_router import router as brands_router
@@ -12,6 +13,8 @@ from app.laptops.pickscore_router import router as pickscore_router
 from app.embeddings.router import router as embedding_router
 from app.recommendation.router import router as recommendation_router
 from app.conversations.router import router as conversations_router
+
+setup_logging()
 
 app = FastAPI(
     title="PickWise v2 API",
