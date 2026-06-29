@@ -3,12 +3,11 @@ import json
 from typing import cast
 
 from sqlmodel import Session, select
-from sqlalchemy.exc import IntegrityError
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
 from app.processor.schemas import ExtractedLaptopFamily
@@ -40,7 +39,7 @@ def process_raw_laptop_data(
     brand_name = brand.name if brand else "Unknown"
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash",
+        model="gemma-4-31b-it",
         temperature=0,
     )
 
@@ -127,15 +126,13 @@ def process_raw_laptop_data(
         )
 
         saved_count = 0
+        updated_count = 0
 
-        # 5. Map the AI output to your SQLModel (Laptop) and save to DB
+        # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         for variant in extracted_data.variants:
-            if len(variant.unmapped_specs) > 0:
-                spec_or_unmapped = variant.unmapped_specs
-            else:
-                spec_or_unmapped = {"ai_extraction_source": raw_data.raw_specs_dump}
-            
-            new_laptop = Laptop(
+            spec_or_unmapped = variant.unmapped_specs if variant.unmapped_specs else {"ai_extraction_source": raw_data.raw_specs_dump}
+
+            laptop_data = dict(
                 # Part 1: Core Identifiers
                 brand_id=raw_data.brand_id,
                 model_code=variant.model_code.lower(),
@@ -200,21 +197,46 @@ def process_raw_laptop_data(
                 # Part 8: Security, Certifications & Extras
                 security_features=variant.security_features,
                 materials_and_certifications=variant.materials_and_certifications,
-                microsoft_office_included=variant.microsoft_office_included,  # Note: renamed from microsoft_office
+                microsoft_office_included=variant.microsoft_office_included,
                 bundled_accessories=variant.bundled_accessories,
                 warranty_details=variant.warranty_details,
 
                 # Part 9: External/Raw Assets
                 raw_specs=spec_or_unmapped,
-                image_urls=raw_data.image_urls
+                image_urls=raw_data.image_urls,
             )
-            #spec_or_unmapped
-            try:
+
+            existing = session.exec(
+                select(Laptop).where(Laptop.model_code == variant.model_code.lower())
+            ).first()
+
+            if existing:
+                # Price history: only record if price actually changed and is non-zero
+                price_changed = variant.price_rm > 0 and variant.price_rm != existing.price_rm
+
+                for key, value in laptop_data.items():
+                    if key != "model_code":  # model_code is the lookup key — never overwrite
+                        setattr(existing, key, value)
+
+                session.add(existing)
+                session.commit()
+
+                if price_changed:
+                    session.add(LaptopPriceHistory(laptop_id=existing.id, price_rm=variant.price_rm))
+                    session.commit()
+
+                updated_count += 1
+            else:
+                new_laptop = Laptop(**laptop_data)
                 session.add(new_laptop)
                 session.commit()
-            except IntegrityError:
-                session.rollback()
-                print(f"⚠️ Skipped duplicate SKU: {variant.model_code}")
+                session.refresh(new_laptop)
+
+                if new_laptop.price_rm > 0:
+                    session.add(LaptopPriceHistory(laptop_id=new_laptop.id, price_rm=new_laptop.price_rm))
+                    session.commit()
+
+                saved_count += 1
 
         raw_data.processing_status = "completed"
 
@@ -225,6 +247,7 @@ def process_raw_laptop_data(
             "status": "success",
             "variants_extracted": len(extracted_data.variants),
             "variants_saved": saved_count,
+            "variants_updated": updated_count,
         }
 
     except Exception as e:
