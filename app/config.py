@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -18,6 +20,9 @@ class Settings(BaseSettings):
 
     # Gemini API
     gemini_api_key: str
+
+    # YouTube Data API v3 — optional until key is obtained; discovery.py raises on None
+    youtube_api_key: Optional[str] = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -13,6 +13,8 @@ from app.laptops.pickscore_router import router as pickscore_router
 from app.embeddings.router import router as embedding_router
 from app.recommendation.router import router as recommendation_router
 from app.conversations.router import router as conversations_router
+from app.agent.router import router as agent_router
+from app.reviews.router import router as reviews_router
 
 setup_logging()
 
@@ -34,6 +36,8 @@ app.include_router(pickscore_router)
 app.include_router(embedding_router)
 app.include_router(recommendation_router)
 app.include_router(conversations_router)
+app.include_router(agent_router)
+app.include_router(reviews_router)
 
 
 @app.get("/")

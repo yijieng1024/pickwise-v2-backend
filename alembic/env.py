@@ -19,6 +19,12 @@ from app.conversations.models import (
     ConversationLaptop,
     PipelineEvalLog,
 )
+from app.reviews.models import (
+    YoutubeChannel,
+    RawYoutubeReview,
+    LaptopReviewChunk,
+    LaptopReviewSummary,
+)
 
 load_dotenv()
 
