@@ -19,7 +19,6 @@ alembic.ini
 Thumbs.db
 
 # Agent File
-Progress.md
 ./PROGRESS.md
 
 test_file/
