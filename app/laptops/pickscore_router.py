@@ -9,6 +9,7 @@ from app.database import get_session
 from app.laptops.laptop_models import Laptop
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.pickscore_adapter import laptop_to_scorable, get_laptop_ranges
+from app.users.auth import get_current_user
 from app.users.models import LaptopUserPreference
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.pickscore.engine import calculate_pick_score
@@ -48,7 +49,7 @@ def _resolve_laptop(session: Session, laptop_id: uuid.UUID) -> tuple[Laptop, str
     return laptop, brand.name if brand else ""
 
 
-@router.post("/calculate-score", response_model=PickScoreResponse)
+@router.post("/calculate-score", response_model=PickScoreResponse, dependencies=[Depends(get_current_user)])
 def calculate_score(
     body: LaptopPickScoreRequest,
     session: Session = Depends(get_session),
@@ -59,7 +60,7 @@ def calculate_score(
     return calculate_pick_score(product, user_pref, ranges, cpu_bm, gpu_bm)
 
 
-@router.post("/calculate-score/batch", response_model=BatchPickScoreResponse)
+@router.post("/calculate-score/batch", response_model=BatchPickScoreResponse, dependencies=[Depends(get_current_user)])
 def calculate_score_batch(
     body: BatchLaptopPickScoreRequest,
     session: Session = Depends(get_session),

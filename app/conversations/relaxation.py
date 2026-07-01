@@ -22,7 +22,7 @@ from app.conversations.retrieval import retrieve_candidates
 
 # A candidate is "viable" if its final_score clears this floor.
 # Below this, penalties are so heavy the result would be misleading to show.
-_MIN_VIABLE_SCORE = 0.30
+_MIN_VIABLE_SCORE = 0.25
 
 _RELAXATION_STEPS = [
     {"field": "weight_limit", "step": 0.2, "max_steps": 2},

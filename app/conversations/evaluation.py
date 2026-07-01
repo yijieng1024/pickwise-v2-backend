@@ -212,7 +212,19 @@ def build_sample_test_suite() -> list[TestCase]:
                 weight_limit=1.5,
                 purpose=["Office"],
             ),
-            ground_truth={},   # fill in after first run
+            ground_truth={
+                "807d1c28-392e-469e-bf39-e98dfd453984": 3,  # ExpertBook P1 RM3399 1.4kg
+                "615314c7-c246-424b-b17b-c627e25a9746": 3,  # ExpertBook P1 RM3399 1.4kg (680M)
+                "4bccb37c-2b49-4184-9e72-a90157428f0b": 1,  # ExpertBook BM1 1.4kg, price unknown
+                "7df2a1f6-bfa2-4d7a-97e1-6b3a505c5b99": 1,  # ExpertBook P3 1.4kg, price unknown
+                "38246257-e855-4528-a78d-7ca7fe07f1c9": 1,  # ExpertBook BM1 1.4kg, price unknown
+                "fdfcc655-d064-4ed8-afa8-e04b4c7142f2": 3,  # Vivobook 14 RM3399 1.5kg
+                "bd6ec516-2ef3-401f-8555-147b07830801": 1,  # Vivobook 14 Copilot+ 1.5kg, price unknown
+                "ee2f980b-0451-4cce-a00e-e3531dbffc54": 3,  # MacBook Neo RM2899 1.2kg 512GB
+                "abc2df6f-3150-4652-bbc5-c40e3f2c670d": 3,  # MacBook Neo RM2499 1.23kg 256GB
+                "b2db4709-7c1b-425c-b7a5-93a7345f9051": 1,  # Vivobook S14 1.4kg, price unknown
+                "8d422c74-066f-4c56-9448-0e03a1a68088": 1,  # ExpertBook B3 1.4kg, price unknown
+            },
             scenario_type="normal",
             description="Standard student query — should pass gate directly",
         ),
@@ -222,7 +234,25 @@ def build_sample_test_suite() -> list[TestCase]:
                 budget=6000,
                 purpose=["Gaming"],
             ),
-            ground_truth={},
+            ground_truth={
+                "e0d50667-eab3-4f4c-a259-ae341332af23": 1,  # Gaming V16 RTX 5060, price unknown
+                "8682ef7c-fb2d-4ce6-b162-3582a795b6de": 3,  # TUF F16 RTX 5060 RM5899
+                "515775ce-7329-44ce-9c17-03b74f336c21": 0,  # Gaming V16 RTX 4050, weaker GPU
+                "71be7e97-ac43-405a-88a6-6e1e8cedbca6": 3,  # TUF F16 RTX 5060 RM5899
+                "7f45dc93-e101-4896-a5c7-fda68448c721": 1,  # Gaming V16 RTX 5050, price unknown
+                "e534245d-2e6c-41da-8835-f485d170a539": 1,  # ROG Strix G18 RTX 5060, price unknown
+                "1b8d5dee-4984-4e1e-9bf3-94d082db8675": 3,  # TUF F16 RTX 5060 RM5899
+                "7dc36c93-1dff-46b0-b11a-f87722bc975d": 0,  # Gaming V16 RTX 3050, too weak
+                "5d141b2b-9758-4a90-909a-3f379264465e": 1,  # ROG Strix G18 2026 RTX 5060, price unknown
+                "9c0face8-9041-42f6-9bf5-db5e728f0958": 1,  # ProArt PX13 RTX 4060, price unknown
+                "ac65237e-eda0-4520-bda1-1dc3e812b5e3": 3,  # TUF F16 RTX 5070 RM5899, better than asked
+                "f45661fa-3e75-4f42-964f-04622eba6ffc": 1,  # TUF F16 RTX 5050 RM5899, slightly weaker
+                "d1d64e63-2561-4936-91b1-c2fd70839950": 1,  # TUF F16 RTX 5050 RM5899, slightly weaker
+                "f5b5e2c6-15a2-4cf3-b5bf-ad5d22b10caa": 0,  # Vivobook S16 Intel UHD, not gaming
+                "b1b3d46a-e177-43e9-bde0-4378c702ce74": 0,  # Vivobook S16 Intel UHD, not gaming
+                "61f1b315-8b3f-46ec-b972-fe6e20f3941c": 0,  # Vivobook S16 Intel, not gaming
+                "baa9afc7-b83b-40cb-b398-53bcfbe93679": 0,  # Vivobook S16 AMD Radeon, not gaming
+            },
             scenario_type="normal",
             description="Gaming query with realistic budget",
         ),
@@ -234,7 +264,22 @@ def build_sample_test_suite() -> list[TestCase]:
                 budget=3000,
                 purpose=["Gaming"],
             ),
-            ground_truth={},
+            ground_truth={
+                # Gaming laptops — right category but budget unverifiable (price_rm=0)
+                "7dc36c93-1dff-46b0-b11a-f87722bc975d": 1,  # Gaming V16 RTX 3050
+                "7f45dc93-e101-4896-a5c7-fda68448c721": 1,  # Gaming V16 RTX 5050
+                "e0d50667-eab3-4f4c-a259-ae341332af23": 1,  # Gaming V16 RTX 5060
+                "515775ce-7329-44ce-9c17-03b74f336c21": 1,  # Gaming V16 RTX 4050
+                "7e267236-042a-4f36-b181-905435c79b81": 1,  # ROG Strix G18 RTX 5070
+                "5d141b2b-9758-4a90-909a-3f379264465e": 1,  # ROG Strix G18 2026 RTX 5060
+                "e534245d-2e6c-41da-8835-f485d170a539": 1,  # ROG Strix G18 RTX 5060
+                "b95d8df4-ea51-4216-9afb-cbb24f82b1aa": 1,  # ROG Strix SCAR RTX 5090
+                "37aafc85-ccb8-4f09-b491-4e384d0d7d49": 1,  # ROG Strix G16 RTX 5060
+                "26efeeb2-50e6-4427-9eb2-a8b7a3144396": 1,  # ROG Strix G16 RTX 5080
+                # Non-gaming laptops with known prices that may surface after relaxation
+                "ee2f980b-0451-4cce-a00e-e3531dbffc54": 0,  # MacBook Neo — not gaming
+                "abc2df6f-3150-4652-bbc5-c40e3f2c670d": 0,  # MacBook Neo 256GB — not gaming
+            },
             scenario_type="relaxation",
             description="Gaming + RM 3000 has no match — triggers budget relaxation",
         ),
@@ -245,7 +290,19 @@ def build_sample_test_suite() -> list[TestCase]:
                 weight_limit=1.2,
                 purpose=["Programming"],
             ),
-            ground_truth={},
+            ground_truth={
+                # Labelled from previous run where gate passed; gated runs score 0 automatically
+                "cc100fd1-f426-49be-abbd-11b5a37dc54d": 3,  # ExpertBook Ultra 1.0kg
+                "e6151d48-97cb-407f-8d66-4f030b0d17e1": 3,  # Zenbook A16 1.2kg 48GB
+                "51d3868f-94e4-4896-b15b-2b290726a1de": 3,  # ExpertBook Ultra 1.0kg 16GB
+                "41113426-e913-45c6-803c-2283285a59b5": 3,  # ExpertBook Ultra 1.0kg 32GB
+                "2a26086b-1069-493b-9d03-358f716b13ad": 3,  # ExpertBook Ultra 1.0kg 64GB
+                "760370af-6837-43dc-a7ef-1b012a4e070f": 3,  # Zenbook A16 1.1kg 16GB
+                "667a0833-964c-4c02-9ce5-3841d6c7ac1e": 3,  # ExpertBook P5 1.2kg
+                "59b234f5-c4e6-4a37-bbd2-4c12643ecece": 3,  # ProArt PZ14 0.8kg
+                "615314c7-c246-424b-b17b-c627e25a9746": 1,  # ExpertBook P1 1.4kg (only after relaxation)
+                "807d1c28-392e-469e-bf39-e98dfd453984": 1,  # ExpertBook P1 1.4kg (only after relaxation)
+            },
             scenario_type="relaxation",
             description="1.2kg is very strict — triggers weight relaxation first",
         ),
@@ -257,7 +314,10 @@ def build_sample_test_suite() -> list[TestCase]:
                 budget=2000,
                 brand_preferences=["apple"],
             ),
-            ground_truth={},
+            ground_truth={
+                # All results are irrelevant — wrong brand, impossible spec
+                # ground_truth left empty intentionally: any returned laptop_id maps to 0
+            },
             scenario_type="gating",
             description="Impossible combo — gate should fire, NDCG expected 0.0",
         ),

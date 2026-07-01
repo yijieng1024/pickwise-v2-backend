@@ -12,23 +12,25 @@ Key rule: gating ≠ ending the conversation.
 A gated response always includes a constructive follow-up question that
 identifies the most likely bottleneck and asks the user to loosen it.
 """
+
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 from app.conversations.reranker import RankedCandidate
 
-# Placeholder — must be calibrated against Module 5's NDCG results once
-# a labeled test set exists. 0.45 is the spec's suggested starting point.
-RELEVANCE_THRESHOLD = 0.45
+# Calibrated via NDCG evaluation (run_ndcg.py). 0.40 stabilises borderline
+# relaxation cases (e.g. tight weight constraints) without letting truly
+# irrelevant results through. Raise if impossible queries start passing gate.
+RELEVANCE_THRESHOLD = 0.40
 
 
 @dataclass
 class GateResult:
     status: Literal["pass", "gated"]
     candidates: list[RankedCandidate] = field(default_factory=list)
-    message: Optional[str] = None       # shown in chat when gated
-    top_score: Optional[float] = None   # for diagnostics / Module 5 evaluation
-    bottleneck: Optional[str] = None    # "budget" | "weight_limit" | "general"
+    message: Optional[str] = None  # shown in chat when gated
+    top_score: Optional[float] = None  # for diagnostics / Module 5 evaluation
+    bottleneck: Optional[str] = None  # "budget" | "weight_limit" | "general"
 
 
 def _detect_bottleneck(candidates: list[RankedCandidate]) -> str:

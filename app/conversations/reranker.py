@@ -136,9 +136,12 @@ def _purpose_bonus(laptop, purpose: list[str]) -> tuple[float, list[str]]:
 
 
 def _brand_bonus(brand_name: str, brand_preferences: list[str]) -> tuple[float, list[str]]:
+    if not brand_preferences or "no preference" in brand_preferences:
+        return 0.0, []
     if brand_name.lower() in brand_preferences:
         return 0.05, [f"brand {brand_name} matches preference"]
-    return 0.0, []
+    # User explicitly named a brand — wrong brand is a real signal, not neutral
+    return -0.25, [f"brand {brand_name} does not match preference"]
 
 
 def rerank(
