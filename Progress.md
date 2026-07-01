@@ -526,6 +526,7 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | (auto)         | Create laptop_price_history table              | 2026-06-20 | ✅ Complete |
 | 74117c66e44c   | Add conversations, messages, conversation_laptops | 2026-06-29 | ✅ Complete |
 | 851c59e8102d   | Add pipeline_eval_logs                         | 2026-06-29 | ✅ Complete |
+| fe5716d7dbf4   | Add youtube review ingestion tables            | 2026-07-01 | ✅ Complete |
 
 ---
 
@@ -708,12 +709,10 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 
 #### DB Tables
 
-| Table                    | Description |
-| ------------------------ | ----------- |
-| `youtube_channels`       | Registered channels: `channel_id`, `channel_name`, `channel_img_url`, `trust_tier` (tier_1/tier_2), `active` |
-| `raw_youtube_reviews`    | One row per discovered video: `video_id`, `video_title`, `raw_transcript` (JSONB), `matched_laptop_id`, `match_confidence`, `status` (pending/matched/rejected) |
-| `laptop_review_chunks`   | One row per 45-second chunk: `chunk_text` (LLM summary), `embedding` (Vector 768), `sentiment_tag` (strength/weakness/neutral), `timestamp_start/end_seconds` |
-| `laptop_review_summary`  | Aggregated per laptop: `aggregated_strengths` + `aggregated_weaknesses` (top-5 each, JSONB), `review_count` |
+- **`youtube_channels`** — `channel_id`, `channel_name`, `channel_img_url`, `trust_tier` (tier_1/tier_2), `active`
+- **`raw_youtube_reviews`** — `video_id`, `video_title`, `raw_transcript` (JSONB), `matched_laptop_id`, `match_confidence`, `status` (pending/matched/rejected)
+- **`laptop_review_chunks`** — `chunk_text` (LLM summary), `embedding` (Vector 768), `sentiment_tag` (strength/weakness/neutral), `timestamp_start/end_seconds`
+- **`laptop_review_summary`** — `aggregated_strengths` + `aggregated_weaknesses` (JSONB top-5 each), `review_count`
 
 #### Ingest Pipeline Stages
 
@@ -866,9 +865,23 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 
 ### Agent (`/agent`)
 
-| Method | Endpoint    | Auth         | Purpose                                                 |
-| ------ | ----------- | ------------ | ------------------------------------------------------- |
-| POST   | /agent/chat | Bearer Token | LangGraph ReAct agent — search laptops + custom pricing |
+| Method | Endpoint    | Auth         | Purpose                                                    |
+| ------ | ----------- | ------------ | ---------------------------------------------------------- |
+| POST   | /agent/chat | Bearer Token | LangGraph ReAct agent — search + pricing + review evidence |
+
+### Reviews (`/reviews`)
+
+| Method | Endpoint                       | Auth       | Purpose                                      |
+| ------ | ------------------------------ | ---------- | -------------------------------------------- |
+| POST   | /reviews/channels              | Admin only | Resolve channel URL + create channel         |
+| GET    | /reviews/channels              | Admin only | List all channels                            |
+| PATCH  | /reviews/channels/{id}         | Admin only | Update channel metadata                      |
+| POST   | /reviews/ingest/{laptop_id}    | Admin only | Full discovery + transcript + match pipeline |
+| GET    | /reviews/raw                   | Admin only | List raw reviews (filterable by status)      |
+| PATCH  | /reviews/raw/{id}/match        | Admin only | Manually pair review to laptop               |
+| POST   | /reviews/rematch               | Admin only | Re-run auto-match on all pending reviews     |
+| POST   | /reviews/process/{review_id}   | Admin only | Chunk + embed a matched review               |
+| POST   | /reviews/aggregate/{laptop_id} | Admin only | Recompute laptop review summary              |
 
 ### Health Check
 
@@ -1014,8 +1027,18 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 - ✅ Intent detection via Gemini (related vs new_search) on every follow-up message
 - ✅ conversation_laptops pool replacement on new_search, reused on related follow-ups
 - ✅ Auto-title from first message (truncated to 60 chars)
-- ✅ LangGraph ReAct agent (`app/agent/`) — `search_laptops` + `calculate_custom_apple_price` tools, both query DB directly
+- ✅ LangGraph ReAct agent (`app/agent/`) — `search_laptops` + `calculate_custom_apple_price` + `get_review_evidence` tools, all query DB directly
 - ✅ Agent endpoint `POST /agent/chat` (auth required, 503 on agent error with diagnostic message)
+- ✅ YouTube channel management — URL-based resolution (handles `@handle`, `/channel/UCxx`, bare ID), `trust_tier`, `active` flag
+- ✅ YouTube video discovery — `search.list` per channel, top-5 per query, 100 quota units/channel
+- ✅ Transcript fetching — `youtube-transcript-api` v1.x instance API (`YouTubeTranscriptApi().fetch()`), no quota cost
+- ✅ Laptop-to-video fuzzy matching — compact match key (strips `-inch`/RAM/storage, extracts chip), `token_set_ratio` threshold 73
+- ✅ Review ingest retry logic — `rejected` rows re-attempted on next run; `matched`/`pending` skipped
+- ✅ `POST /reviews/rematch` — bulk re-run auto-matching on all pending rows after threshold/key changes
+- ✅ Review chunking — 45-second windows, Gemini summary + sentiment tag (`strength`/`weakness`/`neutral`)
+- ✅ Review embedding — `gemini-embedding-001` 768-dim, stored in `laptop_review_chunks`
+- ✅ Review aggregation — top-5 distinct strengths + weaknesses rolled up to `laptop_review_summary`
+- ✅ `get_review_evidence` agent tool — pgvector cosine search on chunks, returns top-3 with YouTube timestamp links
 
 ---
 
