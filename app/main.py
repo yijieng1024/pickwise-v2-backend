@@ -15,6 +15,9 @@ from app.recommendation.router import router as recommendation_router
 from app.rag.router import router as rag_router
 from app.agent.router import router as agent_router
 from app.reviews.router import router as reviews_router
+from app.taxonomy.product_type_router import router as product_type_router
+from app.taxonomy.category_router import router as category_router
+from app.users.questionnaire_router import router as questionnaire_router
 
 setup_logging()
 
@@ -38,6 +41,9 @@ app.include_router(recommendation_router)
 app.include_router(rag_router)
 app.include_router(agent_router)
 app.include_router(reviews_router)
+app.include_router(product_type_router)
+app.include_router(category_router)
+app.include_router(questionnaire_router)
 
 
 @app.get("/")

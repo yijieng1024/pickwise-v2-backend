@@ -10,7 +10,11 @@ from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopPriceHistor
 from app.scraper.models import RawScrapLaptop
 from app.laptops.customization_model import LaptopCustomization
 from app.laptops.brand_model import LaptopBrand
+from app.laptops.laptop_category_model import LaptopCategory
+from app.taxonomy.product_type_model import ProductType
+from app.taxonomy.category_model import Category
 from app.users.models import User
+from app.users.questionnaire_model import QuestionnaireQuestion
 from app.scraper.models import ScrapeTarget
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.rag.models import (
