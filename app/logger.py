@@ -11,7 +11,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     Call once at application startup (main.py).
     Configures the root logger with a console handler and a rotating file handler.
     The special pickwise.eval logger (JSON-lines) is left untouched — it manages
-    its own FileHandler in conversations/evaluation.py.
+    its own FileHandler in rag/evaluation.py.
     """
     global _configured
     if _configured:
@@ -43,6 +43,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     # Silence noisy third-party loggers
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("watchfiles.main").setLevel(logging.WARNING)  # "N changes detected" reload noise
 
     _configured = True
 
