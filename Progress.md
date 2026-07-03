@@ -815,6 +815,8 @@ Backend catalog for the PickWise v1 6-step preference survey (Budget, Purpose, P
 
 ## 📋 Complete API Endpoints Summary
 
+**All endpoints below are served under the `/api/v2` prefix** (e.g. `/auth/register` is actually `POST /api/v2/auth/register`), applied via `prefix="/api/v2"` on every `app.include_router(...)` call in `app/main.py`. The root health check (`GET /`) and the auto-generated `/docs`, `/redoc`, `/openapi.json` stay unprefixed. Tables below omit the prefix for brevity.
+
 ### Authentication (`/auth`)
 
 | Method | Endpoint              | Auth              | Purpose                 |

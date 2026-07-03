@@ -14,7 +14,7 @@ from app.config import settings
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # send credentials to get a token
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v2/auth/login")
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)

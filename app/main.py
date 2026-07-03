@@ -27,23 +27,25 @@ app = FastAPI(
     version="2.0",
 )
 
+API_PREFIX = "/api/v2"
+
 # declare routes before including routers to avoid circular imports
-app.include_router(users_router)
-app.include_router(laptops_router)
-app.include_router(brands_router)
-app.include_router(customization_router)
-app.include_router(scraper_router)
-app.include_router(processor_router)
-app.include_router(benchmark_router)
-app.include_router(pickscore_router)
-app.include_router(embedding_router)
-app.include_router(recommendation_router)
-app.include_router(rag_router)
-app.include_router(agent_router)
-app.include_router(reviews_router)
-app.include_router(product_type_router)
-app.include_router(category_router)
-app.include_router(questionnaire_router)
+app.include_router(users_router, prefix=API_PREFIX)
+app.include_router(laptops_router, prefix=API_PREFIX)
+app.include_router(brands_router, prefix=API_PREFIX)
+app.include_router(customization_router, prefix=API_PREFIX)
+app.include_router(scraper_router, prefix=API_PREFIX)
+app.include_router(processor_router, prefix=API_PREFIX)
+app.include_router(benchmark_router, prefix=API_PREFIX)
+app.include_router(pickscore_router, prefix=API_PREFIX)
+app.include_router(embedding_router, prefix=API_PREFIX)
+app.include_router(recommendation_router, prefix=API_PREFIX)
+app.include_router(rag_router, prefix=API_PREFIX)
+app.include_router(agent_router, prefix=API_PREFIX)
+app.include_router(reviews_router, prefix=API_PREFIX)
+app.include_router(product_type_router, prefix=API_PREFIX)
+app.include_router(category_router, prefix=API_PREFIX)
+app.include_router(questionnaire_router, prefix=API_PREFIX)
 
 
 @app.get("/")
