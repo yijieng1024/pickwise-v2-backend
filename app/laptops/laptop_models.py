@@ -6,8 +6,11 @@ from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSON, JSONB
 from pgvector.sqlalchemy import Vector
 
+from app.laptops.laptop_category_model import LaptopCategory
+
 if TYPE_CHECKING:
     from app.laptops.customization_model import LaptopCustomization
+    from app.taxonomy.category_model import Category
 
 # Base model for laptops, not tied to any specific database table
 class LaptopBase(SQLModel):
@@ -90,6 +93,7 @@ class Laptop(LaptopBase, table=True):
     __tablename__ = "laptops"  # type: ignore
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     customizations: List["LaptopCustomization"] = Relationship(back_populates="laptop")
+    categories: List["Category"] = Relationship(back_populates="laptops", link_model=LaptopCategory)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
