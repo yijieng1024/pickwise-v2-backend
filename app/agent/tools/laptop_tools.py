@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 
 from app.database import engine
 from app.embeddings.service import embed_text
+from app.taxonomy.category_model import Category  # noqa: F401 — must precede Laptop to register with SQLAlchemy mapper
 from app.laptops.customization_model import LaptopCustomization  # must precede Laptop import
 from app.laptops.laptop_models import Laptop
 from app.reviews.models import LaptopReviewChunk
@@ -41,7 +42,7 @@ def calculate_custom_apple_price(
         selected_addons = [
             {
                 "option_name": c.option_name,
-                "category": c.category,
+                "category": c.category.name if c.category else None,
                 "price_add_rm": c.price_add_rm,
             }
             for c in all_customizations

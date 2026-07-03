@@ -23,7 +23,7 @@ class CustomizationBulkCreateByPattern(CustomizationBase):
 
 class CustomizationUpdate(SQLModel):
     """Schema for updating an existing customization (all fields optional)"""
-    category: Optional[str] = None
+    category_id: Optional[uuid.UUID] = None
     option_name: Optional[str] = None
     price_add_rm: Optional[float] = None
     dependency_note: Optional[str] = None
