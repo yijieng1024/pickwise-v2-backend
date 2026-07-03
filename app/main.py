@@ -23,7 +23,8 @@ setup_logging()
 
 app = FastAPI(
     title="PickWise v2 API",
-    description="A Smart Recommendation System Backend",
+    description="Backend for PickWise v2 — a LangGraph ReAct agent that reasons over laptop search, " \
+    "PickScore ranking, and pricing to deliver conversational recommendations",
     version="2.0",
 )
 
