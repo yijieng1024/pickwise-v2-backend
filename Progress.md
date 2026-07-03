@@ -103,7 +103,7 @@ Core authentication features implemented for secure user registration, login, an
 - **Email Verification**: JWT-based token with configurable expiration (default: 1 hour), prevents login without verified email
 - **Login**: Validates credentials + verification status, generates JWT access token (default: 10080 min / 7 days)
 - **Profile Management**: Partial updates for birthday (date), gender (Male/Female/Other with validator), occupation
-- **Preferences System**: Dedicated `laptop_user_preference` table with budget, purpose, priorities (weighted 1-10), screen_size, portability, brand_preferences, tech_savviness (validated enum)
+- **Preferences System**: Dedicated `laptop_user_preference` table with budget (`{min, max}` JSON RM range — `max: null` means no upper limit), purpose, priorities (weighted 1-10), screen_size, portability, brand_preferences, tech_savviness (validated enum). Written via the existing `PUT /me/preferences`; the 6-step survey that populates these fields is now served dynamically via `GET /questionnaire` (see §15 below) instead of being hardcoded in the frontend.
 - **Password Reset**: JWT-based reset token (15 min expiry), safe messaging (doesn't reveal if user exists)
 - **Role-Based Access**: `get_current_user` and `get_current_admin` dependency functions for protected endpoints
 
@@ -201,11 +201,12 @@ Customization/upgrade tracking for laptops (e.g., RAM upgrades, storage options,
 ```
 - id: UUID (primary key)
 - laptop_id: UUID (foreign key → laptops.id, indexed)
-- category: str (e.g., "RAM", "Storage", "GPU")
+- category_id: UUID (foreign key → categories.id) — was a free-typed `category: str` string; migrated to a FK into the shared `categories` taxonomy table (see §15) to fix drift risk (typo'd/duplicate category names). Existing string values were backfilled into `categories` by distinct name during the migration.
 - option_name: str (e.g., "Upgrade to 24GB")
 - price_add_rm: float (additional cost in RM)
 - dependency_note: Optional[str] (e.g., "Requires M5 Pro chip")
 - laptop: Relationship → Laptop (back_populates="customizations")
+- category: Relationship → Category (back_populates="customizations")
 ```
 
 #### Endpoints Implemented:
@@ -435,13 +436,17 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | `laptop_user_preference` | UUID        | → users (FK: user_id)             |
 | `laptops`                | UUID        | → laptop_brands (FK: brand_id), → laptop_customizations (1:N), → laptop_embeddings (1:1), → laptop_price_history (1:N) |
 | `laptop_brands`          | UUID        | ← laptops, ← raw_scrap_laptops, ← laptop_scrape_urls |
-| `laptop_customizations`  | UUID        | → laptops (FK: laptop_id)         |
+| `laptop_customizations`  | UUID        | → laptops (FK: laptop_id), → categories (FK: category_id) |
 | `raw_scrap_laptops`      | UUID        | → laptop_brands (FK: brand_id)    |
 | `laptop_scrape_urls`     | UUID        | → laptop_brands (FK: brand_id)    |
 | `laptop_embeddings`      | UUID        | → laptops (FK: laptop_id, unique) — 768-dim pgvector |
 | `laptop_price_history`   | UUID        | → laptops (FK: laptop_id) — price snapshots on create + PUT change |
 | `cpu_benchmarks`         | UUID        | Standalone (unique cpu_name)      |
 | `gpu_benchmarks`         | UUID        | Standalone (unique gpu_name)      |
+| `product_types`          | UUID        | ← questionnaire_questions (FK: product_type_id) |
+| `categories`             | UUID        | ← laptop_categories (M:N with laptops), ← laptop_customizations (FK: category_id) |
+| `laptop_categories`      | (laptop_id, category_id) composite | → laptops, → categories — junction table |
+| `questionnaire_questions`| UUID        | → product_types (FK: product_type_id) |
 
 ### Request/Response Schemas
 
@@ -454,8 +459,11 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 - **ResetPasswordRequest**: token, new_password
 - **LaptopCreate/LaptopRead/LaptopUpdate**: Full 9-part laptop spec schemas
 - **BrandCreate/BrandRead/BrandUpdate**: Brand management schemas
-- **CustomizationBulkCreate/CustomizationRead/CustomizationUpdate**: Customization schemas
+- **CustomizationBulkCreate/CustomizationRead/CustomizationUpdate**: Customization schemas (`category_id` FK, not a free string)
 - **CustomizationBulkCreateByPattern**: Pattern-based bulk customization creation
+- **ProductTypeCreate/ProductTypeRead/ProductTypeUpdate**: Product type taxonomy schemas
+- **CategoryCreate/CategoryRead/CategoryUpdate**: Category (tag) taxonomy schemas
+- **QuestionnaireQuestionRead**: Questionnaire catalog read schema
 - **ExtractedLaptopVariant/ExtractedLaptopFamily**: AI extraction output schemas
 - **CPUBenchmarkCreate/CPUBenchmarkRead/CPUBenchmarkUpdate**: CPU benchmark schemas
 - **GPUBenchmarkCreate/GPUBenchmarkRead/GPUBenchmarkUpdate**: GPU benchmark schemas
@@ -527,6 +535,7 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | 74117c66e44c   | Add conversations, messages, conversation_laptops | 2026-06-29 | ✅ Complete |
 | 851c59e8102d   | Add pipeline_eval_logs                         | 2026-06-29 | ✅ Complete |
 | fe5716d7dbf4   | Add youtube review ingestion tables            | 2026-07-01 | ✅ Complete |
+| ffb4429867dd   | Add taxonomy (product_types, categories), questionnaire_questions, laptop_customizations.category→category_id FK, laptop_user_preference.budget→JSON range | 2026-07-04 | ✅ Complete |
 
 ---
 
@@ -749,6 +758,61 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 
 ---
 
+### 15. **Taxonomy — Product Types & Categories** (`app/taxonomy/`)
+
+Two small reference/lookup tables, both mirroring `app/laptops/brand_model.py` + `brand_router.py`'s exact CRUD shape (admin-only writes, public reads, 409 on duplicate name, 409 on delete if still referenced).
+
+#### Files
+- `app/taxonomy/product_type_model.py` — `ProductType` table (`id`, `name` unique, `is_active`, `created_at`) + Base/Create/Update/Read schemas. Scopes the questionnaire (§16) by product line — seeded with `"laptop"`; future product lines (phone, etc.) can be added without a new table.
+- `app/taxonomy/product_type_router.py` — CRUD, deletion blocked (409) if any `questionnaire_questions` row still references it.
+- `app/taxonomy/category_model.py` — `Category` table (`id`, `name` unique, `icon_url`, `is_active`, `created_at`) — marketing/use-case tags (Gaming, Business, Creator, etc.) for the frontend tag component. Two relationships: `laptops` (many-to-many via `laptop_categories` junction) and `customizations` (one-to-many, `LaptopCustomization.category_id`).
+- `app/taxonomy/category_router.py` — CRUD, deletion blocked (409) if still tagged on any laptop or referenced by any customization.
+- `app/laptops/laptop_category_model.py` — `LaptopCategory` junction table (`laptop_id`, `category_id` composite PK). Kept separate from the already-complex 200+ field `laptops` model — adding the `categories` relationship required no other changes to `Laptop`.
+
+#### Endpoints
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| POST | /product-types | Admin | Create product type |
+| GET | /product-types | None | List product types |
+| GET | /product-types/{id} | None | Get product type |
+| PUT | /product-types/{id} | Admin | Update product type |
+| DELETE | /product-types/{id} | Admin | Delete (409 if questions reference it) |
+| POST | /categories | Admin | Create category (tag) |
+| GET | /categories | None | List categories |
+| GET | /categories/{id} | None | Get category |
+| PUT | /categories/{id} | Admin | Update category |
+| DELETE | /categories/{id} | Admin | Delete (409 if tagged/referenced) |
+
+---
+
+### 16. **Questionnaire Catalog** (`app/users/questionnaire_*`)
+
+Backend catalog for the PickWise v1 6-step preference survey (Budget, Purpose, Priorities, Screen Size, Portability, Brand), so the frontend can render it dynamically instead of hardcoding questions/options. Catalog-only — no answer-submission endpoint; the frontend still writes final values via the existing `PUT /me/preferences`.
+
+#### Files
+- `app/users/questionnaire_model.py` — `QuestionnaireQuestion` table: `product_type_id` (FK), `step_order`, `question_text`, `question_type` (`single_choice` | `ranking`), `target_field` (which `LaptopUserPreference` field the answer populates), `options` (JSON list of `{value, label}`, `null` for the brand question), `help_text`, `is_active`.
+- `app/users/questionnaire_router.py` — `GET /questionnaire?product_type=laptop` (public) — active questions ordered by `step_order`.
+
+#### Seeded Questions
+
+| step | target_field | type | notes |
+|---|---|---|---|
+| 1 | `budget` | single_choice | options are `{min,max}` RM ranges; open-ended "> RM 5000" → `{min:5000,max:null}` |
+| 2 | `purpose` | single_choice | option values match `PURPOSE_MODIFIERS` keys in `app/pickscore/engine.py` exactly |
+| 3 | `priorities` | ranking | option values match `DEFAULT_PRIORITY` factor keys (`price`, `cpu`, `gpu`, `portability`, `battery`, `brand`) |
+| 4 | `screen_size` | single_choice | `13-14` / `15-16` / `17+` |
+| 5 | `portability` | single_choice | option values match `PORTABILITY_MULTIPLIERS` keys (`Yes`/`Neutral`/`No`) |
+| 6 | `brand_preferences` | single_choice | `options: null` — sourced dynamically from `GET /brands` rather than duplicating the brand list |
+
+#### Endpoint
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| GET | /questionnaire | None | Active questions for a product type, ordered by step |
+
+---
+
 ## 📋 Complete API Endpoints Summary
 
 ### Authentication (`/auth`)
@@ -856,17 +920,18 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 
 | Method | Endpoint                  | Auth         | Purpose                                              |
 | ------ | ------------------------- | ------------ | ---------------------------------------------------- |
-| POST   | /conversations/           | Bearer Token | Create new conversation                              |
+| POST   | /conversations/           | Bearer Token | Create new conversation thread                       |
 | GET    | /conversations/           | Bearer Token | List user's conversations (title + timestamps)       |
 | GET    | /conversations/{id}       | Bearer Token | Get conversation with full message history           |
-| POST   | /conversations/{id}/chat  | Bearer Token | Send message → intent detect → CRS pipeline → reply |
 | DELETE | /conversations/{id}       | Bearer Token | Delete conversation and all messages                 |
+
+Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed when its pipeline was absorbed into the agent's `search_laptops` tool.
 
 ### Agent (`/agent`)
 
-| Method | Endpoint    | Auth         | Purpose                                                    |
-| ------ | ----------- | ------------ | ---------------------------------------------------------- |
-| POST   | /agent/chat | Bearer Token | LangGraph ReAct agent — search + pricing + review evidence |
+| Method | Endpoint    | Auth         | Purpose                                                                     |
+| ------ | ----------- | ------------ | ---------------------------------------------------------------------------- |
+| POST   | /agent/chat | Bearer Token | LangGraph ReAct agent — search + pricing + review evidence + market links   |
 
 ### Reviews (`/reviews`)
 
@@ -881,6 +946,27 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 | POST   | /reviews/rematch               | Admin only | Re-run auto-match on all pending reviews     |
 | POST   | /reviews/process/{review_id}   | Admin only | Chunk + embed a matched review               |
 | POST   | /reviews/aggregate/{laptop_id} | Admin only | Recompute laptop review summary              |
+
+### Taxonomy (`/product-types`, `/categories`)
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| POST   | /product-types      | Admin only | Create product type |
+| GET    | /product-types      | None       | List product types |
+| GET    | /product-types/{id} | None       | Get product type |
+| PUT    | /product-types/{id} | Admin only | Update product type |
+| DELETE | /product-types/{id} | Admin only | Delete (409 if questionnaire questions reference it) |
+| POST   | /categories         | Admin only | Create category (tag) |
+| GET    | /categories         | None       | List categories |
+| GET    | /categories/{id}    | None       | Get category |
+| PUT    | /categories/{id}    | Admin only | Update category |
+| DELETE | /categories/{id}    | Admin only | Delete (409 if tagged/referenced) |
+
+### Questionnaire (`/questionnaire`)
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| GET | /questionnaire | None | Active questionnaire questions for a product type, ordered by step |
 
 ### Health Check
 
