@@ -12,7 +12,7 @@ from app.database import get_session
 from app.users.auth import get_current_user
 from app.users.models import User
 
-router = APIRouter(prefix="/agent", tags=["agent"])
+router = APIRouter(prefix="/agent", tags=["Agent"])
 
 
 class AgentChatRequest(BaseModel):

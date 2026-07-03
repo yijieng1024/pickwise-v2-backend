@@ -20,7 +20,7 @@ from app.reviews.processor import process_raw_review
 from app.reviews.service import ingest_for_laptop
 from app.users.auth import get_current_admin
 
-router = APIRouter(prefix="/reviews", tags=["reviews"])
+router = APIRouter(prefix="/reviews", tags=["Reviews"])
 logger = get_logger(__name__)
 
 
