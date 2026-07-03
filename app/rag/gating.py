@@ -16,7 +16,7 @@ identifies the most likely bottleneck and asks the user to loosen it.
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-from app.conversations.reranker import RankedCandidate
+from app.rag.reranker import RankedCandidate
 
 # Calibrated via NDCG evaluation (run_ndcg.py). 0.40 stabilises borderline
 # relaxation cases (e.g. tight weight constraints) without letting truly

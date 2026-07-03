@@ -17,8 +17,8 @@ from typing import Optional
 
 from sqlmodel import Session
 
-from app.conversations.reranker import RankedCandidate, UserConstraints, rerank
-from app.conversations.retrieval import retrieve_candidates
+from app.rag.reranker import RankedCandidate, UserConstraints, rerank
+from app.rag.retrieval import retrieve_candidates
 
 # A candidate is "viable" if its final_score clears this floor.
 # Below this, penalties are so heavy the result would be misleading to show.

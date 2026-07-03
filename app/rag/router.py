@@ -4,9 +4,8 @@ from typing import List
 from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
-from app.conversations import service
-from app.conversations.models import ConversationRead, ConversationSummary
-from app.conversations.schemas import ChatRequest, ChatResponse
+from app.rag import service
+from app.rag.models import ConversationRead, ConversationSummary
 from app.database import get_session
 from app.users.auth import get_current_user
 from app.users.models import User
@@ -37,21 +36,6 @@ def get_conversation(
     current_user: User = Depends(get_current_user),
 ):
     return service.get_conversation(conversation_id, current_user, session)
-
-
-@router.post("/{conversation_id}/chat", response_model=ChatResponse)
-def chat(
-    conversation_id: uuid.UUID,
-    request: ChatRequest,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    return service.handle_chat(
-        conversation_id=conversation_id,
-        message=request.message,
-        user=current_user,
-        session=session,
-    )
 
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -22,10 +22,10 @@ import uuid
 import numpy as np
 from sqlmodel import Session
 
-from app.conversations.gating import GateResult, relevance_gate
-from app.conversations.relaxation import needs_relaxation, relax_and_retry
-from app.conversations.reranker import UserConstraints, rerank
-from app.conversations.retrieval import retrieve_candidates
+from app.rag.gating import GateResult, relevance_gate
+from app.rag.relaxation import needs_relaxation, relax_and_retry
+from app.rag.reranker import UserConstraints, rerank
+from app.rag.retrieval import retrieve_candidates
 from app.logger import get_eval_logger
 
 # Structured JSON-lines file — one entry per pipeline run, easy to grep in CI
@@ -346,7 +346,7 @@ def log_pipeline_result(
     Never raises — logging failure must never break the user's response.
     """
     from datetime import datetime, timezone
-    from app.conversations.models import PipelineEvalLog
+    from app.rag.models import PipelineEvalLog
 
     result_ids = [c.laptop_id for c in gate.candidates] if gate.candidates else []
 

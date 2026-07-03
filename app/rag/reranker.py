@@ -13,7 +13,7 @@ Formula:
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.conversations.retrieval import RetrievalCandidate
+from app.rag.retrieval import RetrievalCandidate
 
 # Weight threshold used when the user explicitly wants a portable laptop.
 _PORTABILITY_WEIGHT_LIMIT_KG = 1.5

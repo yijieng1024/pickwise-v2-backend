@@ -625,20 +625,19 @@ Full pipeline: hybrid search → PickScore → Gemini LLM explanations.
 
 ---
 
-### 12. **Conversational Recommender System** (`app/conversations/`)
+### 12. **RAG pipeline + conversation threads** (`app/rag/`, renamed from `app/conversations/`)
 
-Full 5-module CRS pipeline built from `Conversational_RecSys_Spec.md`. Converts PickWise from a one-shot recommender into a multi-turn conversational system.
+**Consolidated into the agent (see §13) per `CRS_Agent_Consolidation_Spec.md`.** The 5-module retrieve → rerank → relax → gate → evaluate pipeline is retained as internal library logic — it is no longer driven by a standalone chat endpoint or intent-detection call. It is now consumed directly by the `search_laptops` agent tool (`app/agent/tools/search_laptops.py`). The folder also still owns conversation-thread persistence (`Conversation`/`Message`/`ConversationLaptop`), so the name covers both the RAG pipeline and the conversation-thread models it feeds.
 
 #### Files:
 - `retrieval.py` — Module 1: pgvector cosine similarity search (top-50 recall), 5-min in-process query cache, relational fallback on embedding API timeout
 - `reranker.py` — Module 2: constraint-aware reranking via penalty multipliers (budget, weight) + bonuses (purpose, brand). Decoupled `UserConstraints` dataclass independent of ORM
 - `relaxation.py` — Module 3: stepwise constraint relaxation when 0 viable candidates — weight first (+0.2kg × 2 steps), then budget (+RM 500 × 3 steps), brand never auto-relaxed
-- `gating.py` — Module 4: relevance threshold (0.45) intercepts low-confidence results; `_detect_bottleneck()` routes targeted clarification questions (budget / weight / general)
-- `evaluation.py` — Module 5: NDCG@10 offline evaluation + `log_pipeline_result()` writes to `pipeline_eval_logs` table and `logs/eval/pipeline_trace.jsonl` on every live user request
-- `models.py` — DB tables: `Conversation`, `Message`, `ConversationLaptop`, `PipelineEvalLog`
-- `schemas.py` — `ChatRequest`, `ChatResponse`, `RecommendedLaptopInChat`
-- `service.py` — Full orchestration: intent detection (Gemini) → CRS pipeline or follow-up context reuse → persist messages → update conversation_laptops pool
-- `router.py` — 5 FastAPI endpoints (all auth-required)
+- `gating.py` — Module 4: relevance threshold (calibrated `0.40`) intercepts low-confidence results; `_detect_bottleneck()` routes targeted clarification questions (budget / weight / general)
+- `evaluation.py` — Module 5: NDCG@10 offline evaluation + `log_pipeline_result()` writes to `pipeline_eval_logs` table and `logs/eval/pipeline_trace.jsonl` on every live `search_laptops` call
+- `models.py` — DB tables: `Conversation`, `Message`, `ConversationLaptop`, `PipelineEvalLog` — retained, now populated by `POST /agent/chat` (message history + shortlist pool) instead of the old CRS chat flow
+- `service.py` — Conversation-thread CRUD only (`create_conversation`, `list_conversations`, `get_conversation`, `delete_conversation`, `_generate_title`); reused by `app/agent/router.py`
+- `router.py` — 4 FastAPI endpoints (all auth-required): create/list/get/delete a conversation thread. **`POST /{id}/chat` has been removed** — chat now goes through `POST /agent/chat` (see §13)
 
 #### Reranking Formula:
 ```
@@ -655,41 +654,41 @@ final_score = similarity_score × penalty_multiplier + bonus
 | Purpose bonus | GPU/CPU signals match purpose | `+0.04` per match, capped at `+0.08` |
 | Brand bonus | Brand in preferences | `+0.05` |
 
-#### Intent Detection:
-Each follow-up message is classified by Gemini as `related` (answer using existing `conversation_laptops` pool) or `new_search` (run full CRS pipeline, replace pool).
-
 #### Live Quality Logging (`pipeline_eval_logs`):
-Every real user request logs: `gate_status`, `top_score`, `relaxed_field`, `bottleneck`, `candidate_count`, `result_laptop_ids`, `user_id`, `conversation_id`.
+Every live `search_laptops` tool call logs: `gate_status`, `top_score`, `relaxed_field`, `bottleneck`, `candidate_count`, `result_laptop_ids`, `user_id`, `conversation_id`.
 
 ---
 
 ### 13. **LangGraph Agent** (`app/agent/`)
 
-ReAct agent that reasons across three tools to answer free-form laptop buying questions.
+Sole conversational entry point (`POST /agent/chat`). A ReAct agent that reasons across four tools, absorbing the CRS pipeline's precision logic (retrieve → rerank → relax → gate) into `search_laptops` instead of running it as a fixed, separate pipeline. The agent — not a hardcoded step order — decides when to search, when to ask a clarifying question, and when it has enough to recommend.
 
 #### Files
 
-- `app/agent/tools.py` — Three `@tool` functions: `search_laptops` (filter by budget/brand/RAM, top 5), `calculate_custom_apple_price` (base price + customization add-ons), `get_review_evidence` (pgvector cosine search over review chunks, returns top-3 with YouTube timestamp links)
-- `app/agent/graph.py` — `run_agent(message)`: builds `create_react_agent` with Gemini `gemini-3.5-flash`, invokes with system prompt + user message
-- `app/agent/router.py` — `POST /agent/chat` (auth required); returns 503 with helpful message if agent errors
+- `app/agent/tools/search_laptops.py` — `search_laptops(user_query, budget_max, brand, purpose, top_k=10)`: runs the CRS `retrieve_candidates` → `rerank` → (`relax_and_retry` if 0 viable candidates) → `relevance_gate` pipeline. Returns `{results, confidence: "high"|"low", bottleneck, message, relaxation_notice}`. On low confidence, returns no laptops but a targeted clarification message — the agent (not the tool) decides how to use it. Logs every call to `pipeline_eval_logs` via `evaluation.log_pipeline_result()`.
+- `app/agent/tools/laptop_tools.py` — `calculate_custom_apple_price` (base price + customization add-ons), `get_review_evidence` (pgvector cosine search over review chunks, returns top-3 with YouTube timestamp links)
+- `app/agent/tools/market_price.py` — `search_malaysian_market_price(product_name, model_code)`: **stub** — returns direct Shopee/Lazada search URLs; live price scraping not yet implemented
+- `app/agent/graph.py` — `run_agent(message, history, conv_laptops, session)`: reconstructs conversation state from the `messages` table (last 12 turns) + the current `conversation_laptops` shortlist each call (no LangGraph checkpointer — state lives in Postgres via the existing conversation tables), builds `create_react_agent` with Gemini `gemini-3.5-flash`, and extracts the latest `search_laptops` tool result from the run so the caller can update the shortlist pool
+- `app/agent/router.py` — `POST /agent/chat` (auth required); accepts optional `conversation_id` (auto-creates a new conversation if omitted); persists user/assistant `Message` rows and replaces the `conversation_laptops` pool when `search_laptops` returns high confidence; returns 503 if the agent errors
 
 #### Architecture
 
 ```text
-POST /agent/chat
-  └── run_agent(message)
-        ├── search_laptops               → PostgreSQL (filter by budget/brand/RAM)
+POST /agent/chat  (conversation_id optional — auto-creates if omitted)
+  └── run_agent(message, history, conv_laptops, session)
+        ├── search_laptops               → retrieve → rerank → relax → gate (pgvector + CRS logic)
         ├── calculate_custom_apple_price → PostgreSQL (base price + sum of selected add-ons)
-        └── get_review_evidence          → pgvector cosine search on laptop_review_chunks
+        ├── get_review_evidence          → pgvector cosine search on laptop_review_chunks
+        └── search_malaysian_market_price → stub (Shopee/Lazada search URLs)
 ```
 
-No HTTP round-trips — all tools query the DB directly. LangGraph decides which tool(s) to call and in what order based on the user's message.
+No HTTP round-trips — all tools query the DB directly. LangGraph decides which tool(s) to call and in what order based on the user's message and replayed history; there is no separate intent-classification call.
 
 #### Endpoint
 
 | Method | Endpoint    | Auth         | Purpose                                                        |
 | ------ | ----------- | ------------ | -------------------------------------------------------------- |
-| POST   | /agent/chat | Bearer Token | LangGraph ReAct agent — search + pricing + review evidence     |
+| POST   | /agent/chat | Bearer Token | LangGraph ReAct agent — search + pricing + review evidence + market links |
 
 ---
 

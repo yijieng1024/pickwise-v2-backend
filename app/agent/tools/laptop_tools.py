@@ -1,5 +1,3 @@
-from typing import Optional
-
 from langchain_core.tools import tool
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
@@ -8,7 +6,6 @@ from app.database import engine
 from app.embeddings.service import embed_text
 from app.laptops.customization_model import LaptopCustomization  # must precede Laptop import
 from app.laptops.laptop_models import Laptop
-from app.laptops.brand_model import LaptopBrand
 from app.reviews.models import LaptopReviewChunk
 
 
@@ -69,55 +66,10 @@ def calculate_custom_apple_price(
 
 
 @tool
-def search_laptops(
-    budget_max: Optional[float] = None,
-    brand: Optional[str] = None,
-    min_ram_gb: Optional[int] = None,
-) -> str:
-    """
-    Search the PickWise laptop catalog by budget, brand, or minimum RAM.
-    Returns up to 5 matching laptops with key specs and prices in RM.
-
-    Args:
-        budget_max: Maximum price in RM (e.g. 5000.0).
-        brand: Brand name, case-insensitive partial match (e.g. "apple", "asus").
-        min_ram_gb: Minimum RAM in GB (e.g. 16).
-    """
-    with Session(engine) as session:
-        stmt = (
-            sa_select(Laptop, LaptopBrand.name)
-            .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
-        )
-        if budget_max is not None:
-            stmt = stmt.where(Laptop.price_rm <= budget_max)
-        if brand is not None:
-            stmt = stmt.where(LaptopBrand.name.ilike(f"%{brand}%"))
-        if min_ram_gb is not None:
-            stmt = stmt.where(Laptop.ram_gb >= min_ram_gb)
-
-        stmt = stmt.order_by(Laptop.price_rm.asc()).limit(5)
-        rows = session.execute(stmt).all()
-
-    if not rows:
-        return "No laptops found matching those criteria."
-
-    lines = []
-    for laptop, brand_name in rows:
-        lines.append(
-            f"• {brand_name} {laptop.product_name} | RM {laptop.price_rm:.0f} | "
-            f"CPU: {laptop.processor_model} | GPU: {laptop.gpu_model} | "
-            f"RAM: {laptop.ram_gb}GB | Storage: {laptop.ssd_gb}GB | "
-            f"Display: {laptop.display_size_inch}\" | Weight: {laptop.weight_kg}kg | "
-            f"Model code: {laptop.model_code}"
-        )
-    return "\n".join(lines)
-
-
-@tool
 def get_review_evidence(laptop_id: str, query_context: str) -> str:
     """
-    Retrieve real reviewer opinions for a specific laptop, ranked by relevance to the
-    user's stated priorities. Draws from ingested YouTube review transcripts.
+    Retrieve real reviewer opinions for a specific laptop, ranked by relevance to
+    the user's stated priorities. Draws from ingested YouTube review transcripts.
 
     Args:
         laptop_id: UUID string of the laptop (from search_laptops results).
