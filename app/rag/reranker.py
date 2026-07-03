@@ -15,9 +15,6 @@ from typing import Optional
 
 from app.rag.retrieval import RetrievalCandidate
 
-# Weight threshold used when the user explicitly wants a portable laptop.
-_PORTABILITY_WEIGHT_LIMIT_KG = 1.5
-
 # Purpose keyword signals for the bonus: maps purpose → gpu/cpu keywords that
 # indicate a strong match (checked against gpu_model / processor_model strings).
 _PURPOSE_GPU_SIGNALS: dict[str, list[str]] = {
@@ -40,19 +37,6 @@ class UserConstraints:
     weight_limit: Optional[float] = None   # None = no weight constraint
     purpose: list[str] = field(default_factory=list)
     brand_preferences: list[str] = field(default_factory=list)
-
-    @classmethod
-    def from_preference(cls, pref) -> "UserConstraints":
-        """Build from a LaptopUserPreference ORM object."""
-        weight_limit = (
-            _PORTABILITY_WEIGHT_LIMIT_KG if pref.portability == "Yes" else None
-        )
-        return cls(
-            budget=float(pref.budget) if pref.budget else None,
-            weight_limit=weight_limit,
-            purpose=pref.purpose or [],
-            brand_preferences=[b.lower() for b in (pref.brand_preferences or [])],
-        )
 
 
 @dataclass

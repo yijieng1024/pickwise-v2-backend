@@ -69,8 +69,8 @@ def _score_price(
 ) -> tuple[float, Optional[str]]:
     if product.price == 0.0:
         return 50.0, "Price unavailable — factor skipped, scored as neutral (50)"
-    if mode == "personalized" and user_pref and user_pref.budget:
-        budget_max = float(user_pref.budget)
+    if mode == "personalized" and user_pref and user_pref.budget and user_pref.budget.get("max") is not None:
+        budget_max = float(user_pref.budget["max"])
         if product.price <= budget_max:
             return 100.0, None
         over_ratio = (product.price - budget_max) / budget_max

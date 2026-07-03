@@ -32,7 +32,9 @@ class LaptopUserPreference(SQLModel, table=True):
     
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
-    budget: Optional[int] = Field(default=None, description="Maximum budget in RM")
+    budget: Optional[Dict[str, Optional[float]]] = Field(
+        default=None, sa_column=Column(JSON), description="{min, max} RM range; max=null means no upper limit"
+    )
     purpose: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))
     priorities: Optional[Dict[str, int]] = Field(default_factory=dict, sa_column=Column(JSON))
     screen_size: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))

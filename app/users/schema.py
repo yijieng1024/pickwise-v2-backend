@@ -39,7 +39,7 @@ class UserProfile(BaseModel):
         return v
 
 class UserPreferences(BaseModel):
-    budget: Optional[int] = Field(default=None, description="Maximum budget in RM")
+    budget: Optional[Dict[str, Optional[float]]] = Field(default=None, description="{min, max} RM range; max=null means no upper limit")
     purpose: Optional[List[str]] = Field(default_factory=list, description="e.g., ['Office', 'Gaming', 'Programming']")
     priorities: Optional[Dict[str, int]] = Field(default_factory=dict, description="Weighting from 1-10")
     screen_size: Optional[List[str]] = Field(default_factory=list, description="e.g., ['13-14', '15-16']")

@@ -129,8 +129,13 @@ def get_recommendations(
         user_pref.tech_savviness or "",
         _TECH_SAVVY_INSTRUCTION["Somewhat tech-savvy"],
     )
+    budget_text = "not set"
+    if user_pref.budget:
+        budget_min = user_pref.budget.get("min")
+        budget_max = user_pref.budget.get("max")
+        budget_text = f"{budget_min or 0:.0f}–{f'{budget_max:.0f}' if budget_max is not None else 'no limit'}"
     pref_context = (
-        f"Budget: RM {user_pref.budget or 'not set'} | "
+        f"Budget: RM {budget_text} | "
         f"Purpose: {', '.join(user_pref.purpose or ['not specified'])} | "
         f"Portability preference: {user_pref.portability or 'neutral'} | "
         f"Brand preferences: {', '.join(user_pref.brand_preferences or ['none'])}"
