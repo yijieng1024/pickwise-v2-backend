@@ -25,7 +25,6 @@ test_file/
 /logs/
 project notes/
 
-CLAUDE.md
 PRD.md
 Deployment_Runbook.md
 RLHF_Data_Pipeline_Spec.md
