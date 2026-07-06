@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
 
+    path-ignore:
+      - .github/workflows/deploy.yml
+      - CLAUDE.md
+      - .github/**
+      - README.md
+      - Progress.md
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}

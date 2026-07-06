@@ -47,9 +47,12 @@ SECRET_KEY=your-secret-key
 SMTP_USERNAME=your-gmail@gmail.com
 SMTP_PASSWORD=your-gmail-app-password
 GEMINI_API_KEY=your-gemini-api-key
+YOUTUBE_API_KEY=your-youtube-data-api-key   # optional — server starts without it
 ```
 
-`GEMINI_API_KEY` is a required setting (`app/config.py`) and is passed explicitly to the embedding client. Do **not** rely on the ambient `GOOGLE_API_KEY` / Application Default Credentials — that won't exist in Docker/production. (Note: `app/processor/engine.py`'s `ChatGoogleGenerativeAI` still falls back to ADC and should be migrated to `settings.gemini_api_key` too.)
+`GEMINI_API_KEY` is a required setting (`app/config.py`) and is passed explicitly (`google_api_key=settings.gemini_api_key`) to every Gemini client — embeddings, processor, recommendation, agent, and review processor. Do **not** rely on the ambient `GOOGLE_API_KEY` / Application Default Credentials — that won't exist in Docker/production.
+
+`YOUTUBE_API_KEY` is optional (`Optional[str] = None` in `app/config.py`) — the server starts without it; the review discovery/ingest endpoints raise 400 at call time if it's missing.
 
 The Docker Compose DB defaults: user=`postgres`, password=`password`, db=`pickwise_v2`.
 
@@ -63,7 +66,16 @@ Scrape URL / Bulk Scrape → raw_scrap_laptops (RawScrapLaptop, status: pending)
      ↓
 AI Processor (Gemma gemma-4-31b-it) → laptops (normalized, multi-variant)
      ↓
-Benchmark Scraper (PassMark) → cpu_benchmarks / gpu_benchmarks
+Embeddings (gemini-embedding-001, 768-dim) → laptop_embeddings
+```
+
+Independent of the flow above: Benchmark Scraper (PassMark) → `cpu_benchmarks` / `gpu_benchmarks` (consumed by PickScore), and the YouTube review ingestion pipeline (see `app/reviews/`):
+
+```
+discover_videos (YouTube Data API) → fetch_transcript → RapidFuzz match to laptop
+     → raw_youtube_reviews (matched/pending/rejected)
+     → process (45s chunks → Gemini summary + sentiment → embed) → laptop_review_chunks
+     → aggregate → laptop_review_summary
 ```
 
 ### Module Structure
@@ -80,6 +92,7 @@ Each domain module under `app/` follows a consistent pattern: `models.py` (SQLMo
 - **`app/recommendation/`** — `service.py` orchestrates the full recommendation pipeline (hybrid search → batch PickScore → Gemini LLM); `router.py` exposes `POST /recommendations/laptops` (auth required); `schemas.py` owns request/response models including internal `_LLMOutput` for structured Gemini output
 - **`app/rag/`** (renamed from `app/conversations/`) — RAG pipeline + conversation-thread persistence, now consumed as a library by the agent (see `app/agent/` below) rather than driven by its own chat endpoint. `retrieval.py` (Module 1), `reranker.py` (Module 2), `relaxation.py` (Module 3), `gating.py` (Module 4), `evaluation.py` (Module 5 + live logging, still writes `pipeline_eval_logs` on every `search_laptops` tool call). `service.py` is conversation-thread CRUD only (`create_conversation`, `list_conversations`, `get_conversation`, `delete_conversation`). `router.py` exposes 4 `/conversations/` endpoints (all auth-required, URL prefix unchanged) — create/list/get/delete a thread; **no `/chat` route** (removed, superseded by `POST /agent/chat`). `models.py` owns `Conversation`, `Message`, `ConversationLaptop`, `PipelineEvalLog` tables.
 - **`app/agent/`** — LangGraph ReAct agent, the sole conversational entry point (`POST /agent/chat`). `tools/search_laptops.py` absorbs the CRS retrieve→rerank→relax→gate pipeline as a tool; `tools/laptop_tools.py` owns `calculate_custom_apple_price` and `get_review_evidence`; `tools/market_price.py` owns `search_malaysian_market_price` (stub — returns Shopee/Lazada search URLs, no live scraping yet). `graph.py`'s `run_agent()` reconstructs conversation state from the `messages`/`conversation_laptops` tables each turn (no LangGraph checkpointer). `router.py` accepts an optional `conversation_id` (auto-creates if omitted) and persists messages + the laptop shortlist pool after each turn.
+- **`app/reviews/`** — YouTube review ingestion pipeline (all endpoints admin-only). `discovery.py` resolves channel URLs (4 formats) and discovers videos via YouTube Data API v3 (`search.list`, 100 quota units/channel, top 5 per channel); `transcript.py` fetches transcripts via `youtube-transcript-api` **v1.x instance API** (`YouTubeTranscriptApi().fetch()`, no quota cost); `matcher.py` fuzzy-matches video titles to catalog laptops (RapidFuzz `token_set_ratio`, threshold 73, compact match keys that strip `-inch`/RAM/storage and extract the chip from parens); `processor.py` chunks transcripts into 45-second windows → Gemini summary + sentiment tag (`strength`/`weakness`/`neutral`) → `gemini-embedding-001` embed (4s delay between Gemini calls); `aggregator.py` rolls up top-5 strengths/weaknesses into `laptop_review_summary`; `service.py`'s `ingest_for_laptop()` runs discovery → transcript → match end-to-end (retries `rejected` rows, skips `matched`/`pending`). Chunk processing and aggregation are manual admin steps (`POST /reviews/process/{id}`, `POST /reviews/aggregate/{laptop_id}`); `POST /reviews/rematch` re-runs auto-matching on all pending rows.
 - **`app/scraper/`** — Playwright-based crawlers for Apple (DOM) and Asus/ROG (`window.__NUXT__` JSON state)
 - **`app/processor/`** — LangChain + Gemini LLM extraction from raw scraped data into structured `Laptop` records
 - **`app/benchmark/`** — PassMark CPU/GPU scraping with PostgreSQL upsert (`ON CONFLICT DO UPDATE`)
@@ -95,7 +108,7 @@ Each domain module under `app/` follows a consistent pattern: `models.py` (SQLMo
 
 **Benchmark range calibration**: `get_laptop_ranges()` in `app/laptops/pickscore_adapter.py` derives CPU/GPU min/max by fuzzy-resolving models that are actually in the catalog (`laptops` table), not from the global PassMark tables. This prevents desktop/server CPU scores (200,000+) from collapsing all laptop scores toward zero. Falls back to the global PassMark table only if no catalog models resolve successfully.
 
-**Recommendation pipeline** (`app/recommendation/service.py`): hybrid vector search → batch PickScore → Gemini `gemini-1.5-flash` with `with_structured_output(_LLMOutput)`. Requires an existing `laptop_user_preference` row (returns 400 otherwise). Default `top_k = 3` (candidates pool = 15). LLM language level is driven by user's `tech_savviness` field.
+**Recommendation pipeline** (`app/recommendation/service.py`): hybrid vector search → batch PickScore → Gemini `gemini-3.5-flash` with `with_structured_output(_LLMOutput)`. Requires an existing `laptop_user_preference` row (returns 400 otherwise). Default `top_k = 3` (candidates pool = 15). LLM language level is driven by user's `tech_savviness` field.
 
 **CRS pipeline absorbed into the agent** (`app/rag/` + `app/agent/tools/search_laptops.py`): the 5-module pipeline — retrieve (top-50 pgvector) → rerank (`final_score = similarity × penalty + bonus`) → relax (stepwise: weight first, then budget) → gate (calibrated threshold `0.40`, bottleneck detection) — is called directly from the `search_laptops` agent tool instead of running as a separate, fixed-order chat pipeline. There is no standalone intent-detection call anymore; the LangGraph agent decides per turn, from full conversation context, whether to call `search_laptops` again or answer from the existing `conversation_laptops` pool. On a gated (low-confidence) result the tool returns no laptops plus a `bottleneck`/`message` pair, and the agent — not the tool — is responsible for turning that into a clarifying question rather than a dead end. Every `search_laptops` call still writes to `pipeline_eval_logs` (DB) and `logs/eval/pipeline_trace.jsonl`. `UserConstraints` is a decoupled dataclass — not tied to `LaptopUserPreference` — built directly from the tool's own args (`budget_max`, `brand`, `purpose`).
 
@@ -139,13 +152,19 @@ All tables use UUID primary keys. Key relationships:
 - `conversation_laptops` → `conversations` + `laptops`; the agent's current shortlist pool for a thread — replaced whenever `search_laptops` returns a high-confidence result, otherwise left as-is for follow-up context
 - `pipeline_eval_logs` → `users` + `conversations`; one row per live user request — `gate_status`, `top_score`, `relaxed_field`, `relaxed_from`, `relaxed_to`, `bottleneck`, `candidate_count`, `result_laptop_ids`
 
+**YouTube Reviews:**
+- `youtube_channels` — `channel_id`, `channel_name`, `channel_img_url`, `trust_tier` (`tier_1`/`tier_2`), `active`
+- `raw_youtube_reviews` → `laptops` (FK: `matched_laptop_id`, nullable); `video_id`, `raw_transcript` (JSONB), `match_confidence`, `status` (`pending`/`matched`/`rejected`)
+- `laptop_review_chunks` → `laptops` + `raw_youtube_reviews`; `chunk_text` (LLM summary), `embedding` (768-dim pgvector), `sentiment_tag`, `timestamp_start/end_seconds` (used for YouTube timestamp links in `get_review_evidence`)
+- `laptop_review_summary` → `laptops` (1:1); `aggregated_strengths`/`aggregated_weaknesses` (JSONB top-5 each), `review_count`
+
 ### API Access Control
 
 All routes are served under `/api/v2` (added via `prefix="/api/v2"` on every `app.include_router(...)` call in `app/main.py`, not on the individual routers themselves — e.g. `/laptops` in this doc means `GET /api/v2/laptops`). `GET /`, `/docs`, `/redoc`, `/openapi.json` are unprefixed. The OAuth2 password-flow `tokenUrl` in `app/users/auth.py` is `"api/v2/auth/login"` to match, for Swagger UI's Authorize button.
 
-- Public endpoints: GET laptops, GET brands, GET benchmarks, GET product-types, GET categories, GET questionnaire, auth registration/login/verify
-- Bearer token required: `/auth/me/*` profile and preferences endpoints; `POST /recommendations/laptops` (also requires an existing `laptop_user_preference` row — 400 if missing); `/conversations/` endpoints (create/list/get/delete a conversation thread only — no preference-row requirement); `POST /agent/chat` (no preference-row requirement — `search_laptops` args are passed directly by the LLM)
-- Admin only (`role == "admin"`): all write operations for brands, customizations, scraper, processor, benchmarks, product-types, categories; raw scrap data listing
+- Public endpoints: GET laptops (incl. `POST /laptops/hybrid-search` and `GET /laptops/{id}/price-history`), GET brands, GET benchmarks, GET product-types, GET categories, GET questionnaire, auth registration/login/verify
+- Bearer token required: `/auth/me/*` profile and preferences endpoints; `POST /laptops/calculate-score` and `/calculate-score/batch`; `POST /recommendations/laptops` (also requires an existing `laptop_user_preference` row — 400 if missing); `/conversations/` endpoints (create/list/get/delete a conversation thread only — no preference-row requirement); `POST /agent/chat` (no preference-row requirement — `search_laptops` args are passed directly by the LLM)
+- Admin only (`role == "admin"`): all write operations for laptops, brands, customizations, scraper, processor, benchmarks, embeddings, product-types, categories; raw scrap data listing; all `/reviews/*` endpoints (channels, ingest, raw listing, manual match, rematch, process, aggregate)
 
 ### PickScore Engine (`app/pickscore/`)
 
