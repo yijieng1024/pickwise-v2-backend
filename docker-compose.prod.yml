@@ -1,0 +1,15 @@
+version: '3.8'
+
+# Used on the VPS only. Pulls the prebuilt image from GHCR instead of
+# building from source — the VPS just needs this file + .env, not the repo.
+services:
+  app:
+    image: ghcr.io/yijieng1024/pickwise-v2-backend:latest
+    container_name: pickwise_api
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
