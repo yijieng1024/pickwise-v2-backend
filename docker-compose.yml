@@ -1,15 +1,13 @@
 version: '3.8'
 
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    container_name: pickwise_postgres
+  app:
+    build: .
+    container_name: pickwise_api
     restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: pickwise_v2
+    env_file:
+      - .env
     ports:
-      - "5432:5432"
+      - "8000:8000"
     volumes:
-      - ./postgres_data:/var/lib/postgresql/data
+      - ./logs:/app/logs

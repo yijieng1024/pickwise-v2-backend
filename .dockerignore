@@ -1,0 +1,21 @@
+venv/
+env/
+.env
+.env.example
+__pycache__/
+*.py[cod]
+*$py.class
+.git/
+.gitignore
+.vscode/
+.claude/
+postgres_data/
+logs/
+test_file/
+project notes/
+Progress.md
+PRD.md
+Deployment_Runbook.md
+RLHF_Data_Pipeline_Spec.md
+Technical_Spec.md
+CLAUDE.md
