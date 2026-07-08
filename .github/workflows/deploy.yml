@@ -46,10 +46,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-deploy:
+  deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Render Deploy
         run: |
-          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+          curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
