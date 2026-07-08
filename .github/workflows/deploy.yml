@@ -59,6 +59,7 @@ jobs:
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
             cd ${{ secrets.VPS_DEPLOY_PATH }}
+            mkdir -p logs
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker image prune -f

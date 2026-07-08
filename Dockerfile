@@ -18,6 +18,10 @@ COPY --chown=appuser:appuser app ./app
 COPY --chown=appuser:appuser alembic ./alembic
 COPY --chown=appuser:appuser alembic.ini .
 
+# WORKDIR /app itself is root-owned; the app writes logs/ (logger.py,
+# rag/evaluation.py, scraper failure logs) relative to it at runtime
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app/logs
+
 USER appuser
 
 EXPOSE 8000
