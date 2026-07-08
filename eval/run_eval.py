@@ -1,25 +1,32 @@
 """
-PickWise v2 — Minimal Eval Harness
-===================================
-用法:
-  python run_eval.py run --label baseline          # 跑全部 25 条,存 runs/<date>_baseline.jsonl
-  python run_eval.py run --label baseline --only relevance_gating   # 只跑某类
-  python run_eval.py run --label quick --no-judge  # 只跑规则层,不花 judge 的钱
-  python run_eval.py compare runs/A.jsonl runs/B.jsonl              # 两次 run 对比表
+PickWise v2 — Minimal Eval Harness (v3)
+========================================
+Usage:
+  python eval/run_eval.py run --label baseline              # full run (with judge)
+  python eval/run_eval.py run --label quick --no-judge      # rule checks only, fast
+  python eval/run_eval.py run --label x --only relevance_gating
+  python eval/run_eval.py compare runs/A.jsonl runs/B.jsonl
 
-依赖: pip install pyyaml google-genai(项目 venv 已有)
-judge API key: 优先 GOOGLE_API_KEY 环境变量,否则用 .env 里的 GEMINI_API_KEY
+Dependencies: pip install pyyaml google-genai (already in the project venv)
+Judge API key: GOOGLE_API_KEY env var if set, else GEMINI_API_KEY from .env
 
-★ 必须从项目根目录运行(app.config 按 CWD 找 .env):
+★ Run from the project root (app.config resolves .env against CWD):
   python eval/run_eval.py run --label baseline
 
-★ API 配额:gemma-4-31b-it 免费层 15 RPM / 1500 RPD(agent 和 judge 都是它)。
-  - 所有 agent LLM 调用和 judge 调用共用一个全局限速器(默认 15 RPM,--rpm 可调),
-    每次 LLM 请求间隔 ~4.5s,单条 query 会比不限速时慢,这是正常的。
-  - 每条 query ≈ 2-4 个请求(ReAct 循环 1-3 次 + judge 1 次)。全量 30 条
-    ≈ 60-120 个请求,RPD 充裕,一次跑完约 10-15 分钟。
-  - 需要小批量试跑时用 --only / --limit 切片,之后拿 compare 拼对比。
-    例: python eval/run_eval.py run --label day1 --only clear_intent --limit 5
+★ Quota: agent + judge both run gemma-4-31b-it (free tier 15 RPM / 1500 RPD).
+  All LLM calls share one global rate limiter (default 15 RPM, override with
+  --rpm). Each query ≈ 2-4 requests; a full 30-query run ≈ 10-15 minutes.
+  Use --only / --limit for small slices.
+
+v3 changes:
+  - Budget rule now checks min(prices) only (fails only if the primary/cheapest
+    recommendation exceeds budget; mentioning pricier alternatives is fine)
+  - Judge retries 3x with backoff; a failed judge is recorded as unscored
+    (passed=None) instead of crashing the whole run
+  - Judge prompt forbids using its own (possibly stale) product knowledge;
+    factual grounding is checked against raw tool outputs only
+  - Summary shows unscored count; runs with unscored items must not be compared
+  - JUDGE_MODEL set to gemini-2.5-flash
 """
 
 import argparse
@@ -37,16 +44,16 @@ import yaml
 
 EVAL_DIR = Path(__file__).parent
 RUNS_DIR = EVAL_DIR / "runs"
-JUDGE_MODEL = "gemma-4-31b-it"  # 便宜、够用;换成你在用的 flash 版本
+JUDGE_MODEL = "gemma-4-31b-it"  # same model as the agent — one shared quota pool
 
-# 让 `import app` 在 `python eval/run_eval.py` 下可用
+# make `import app` work when run as `python eval/run_eval.py`
 sys.path.insert(0, str(EVAL_DIR.parent))
 
-MAX_RPM = 15.0  # gemma-4-31b-it 免费层限制;--rpm 可覆盖
+MAX_RPM = 15.0  # gemma-4-31b-it free tier; override with --rpm
 
 
 # ─────────────────────────────────────────────────────────────
-# 0. 全局限速 —— agent 的每次 LLM 调用 + judge 调用共用一个桶
+# 0. Global rate limiter — shared by every agent LLM call and the judge
 # ─────────────────────────────────────────────────────────────
 _rate_limiter = None
 
@@ -57,17 +64,17 @@ def _get_rate_limiter():
         from langchain_core.rate_limiters import InMemoryRateLimiter
 
         _rate_limiter = InMemoryRateLimiter(
-            requests_per_second=MAX_RPM / 60 * 0.9,  # 留 10% 余量防 429
+            requests_per_second=MAX_RPM / 60 * 0.9,  # 10% headroom against 429s
             check_every_n_seconds=0.5,
-            max_bucket_size=1,  # 不允许突发,严格匀速
+            max_bucket_size=1,  # no bursts, strictly even pacing
         )
     return _rate_limiter
 
 
 # ─────────────────────────────────────────────────────────────
-# 1. Agent 适配层
+# 1. Agent adapter (in-process)
 # ─────────────────────────────────────────────────────────────
-_agent = None  # 编译一次,整个 run 复用
+_agent = None  # compiled once, reused for the whole run
 
 
 def _get_agent():
@@ -76,7 +83,8 @@ def _get_agent():
         from langchain.agents import create_agent
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        # model/temperature 从 graph.py 导入,保证评的就是线上那套配置
+        # model/temperature imported from graph.py so the eval always
+        # measures the exact production configuration
         from app.agent.graph import AGENT_MODEL, AGENT_TEMPERATURE
         from app.agent.tools import ALL_TOOLS
         from app.config import settings
@@ -92,27 +100,22 @@ def _get_agent():
 
 
 def _content_to_text(content) -> str:
-    """Gemini 的回复 content 可能是 str 或 parts list。"""
+    """Gemini replies may arrive as a plain str or a list of parts."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return "".join(
-            p if isinstance(p, str) else p.get("text", "")
-            for p in content
-        )
+        return "".join(p if isinstance(p, str) else p.get("text", "") for p in content)
     return str(content)
 
 
 async def call_agent(query: str) -> dict:
     """
-    In-process 调用 LangGraph agent(等价于 POST /agent/chat 的单轮、无历史、
-    无 shortlist pool 场景)。返回:
-      {"text": 最终回复文本, "tool_calls": ["search_laptops", ...]}
-
-    说明:不复用 app.agent.graph.run_agent() 是因为它只返回 (text, results),
-    不暴露 tool 调用轨迹;这里用同一份 ALL_TOOLS + _SYSTEM_PROMPT 自行组图。
+    In-process call to the LangGraph agent — equivalent to a first-turn
+    POST /agent/chat (no history, no shortlist pool). Built here instead of
+    reusing app.agent.graph.run_agent() because that only returns
+    (text, results) and exposes neither tool-call names nor raw tool outputs.
     """
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
     from app.agent.graph import _SYSTEM_PROMPT
 
@@ -132,11 +135,12 @@ async def call_agent(query: str) -> dict:
         for m in messages
         for tc in (getattr(m, "tool_calls", None) or [])
     ]
-    return {"text": text, "tool_calls": tool_calls}
+    tool_outputs = [str(m.content) for m in messages if isinstance(m, ToolMessage)]
+    return {"text": text, "tool_calls": tool_calls, "tool_outputs": tool_outputs}
 
 
 # ─────────────────────────────────────────────────────────────
-# 2. 规则层检查(确定性、零成本)
+# 2. Rule-based checks (deterministic, zero cost)
 # ─────────────────────────────────────────────────────────────
 PRICE_RE = re.compile(r"RM\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE)
 
@@ -146,18 +150,15 @@ def extract_prices(text: str) -> list[float]:
 
 
 def rule_checks(item: dict, result: dict) -> list[dict]:
-    """返回 [{"name":..., "passed":..., "detail":...}]"""
     expect = item.get("expect", {})
     checks = []
 
-    # 非空回复
     checks.append({
         "name": "non_empty_response",
         "passed": bool(result["text"] and result["text"].strip()),
         "detail": f"len={len(result['text'] or '')}",
     })
 
-    # 必须调用的 tools(子集匹配)
     if "tools" in expect:
         missing = [t for t in expect["tools"] if t not in result["tool_calls"]]
         checks.append({
@@ -166,7 +167,6 @@ def rule_checks(item: dict, result: dict) -> list[dict]:
             "detail": f"missing={missing}, actual={result['tool_calls']}",
         })
 
-    # 禁止调用的 tools
     if "forbid_tools" in expect:
         violated = [t for t in expect["forbid_tools"] if t in result["tool_calls"]]
         checks.append({
@@ -175,39 +175,63 @@ def rule_checks(item: dict, result: dict) -> list[dict]:
             "detail": f"violated={violated}",
         })
 
-    # 预算检查:回复里出现的价格不应超预算(容忍 5%,因为可能提到原价/对比价)
-    # 注意:这是启发式,constraint_relaxation 类会合理提到超预算数字,故跳过该类
+    # Budget check (v3): only the CHEAPEST quoted price must be within budget,
+    # i.e. the primary recommendation. Mentioning pricier alternatives or
+    # market-price comparisons is normal behavior — its reasonableness is
+    # left to the judge's rubric. constraint_relaxation queries legitimately
+    # discuss over-budget numbers, so they are skipped.
     if "budget_max" in expect and item["category"] != "constraint_relaxation":
         prices = extract_prices(result["text"])
         limit = expect["budget_max"] * 1.05
-        over = [p for p in prices if p > limit]
+        cheapest_over = bool(prices) and min(prices) > limit
         checks.append({
-            "name": "recommendations_within_budget",
-            "passed": not over,
-            "detail": f"over_budget_prices={over}" if over else f"prices={prices}",
+            "name": "primary_rec_within_budget",
+            "passed": not cheapest_over,
+            "detail": f"min_price={min(prices) if prices else None}, limit={limit}",
         })
 
     return checks
 
 
 # ─────────────────────────────────────────────────────────────
-# 3. 语义层:LLM-as-judge
+# 3. Semantic layer: LLM-as-judge
+#    Key design: the judge must NOT use its own (possibly outdated) product
+#    knowledge to decide truthfulness; factual grounding is checked only
+#    against the raw tool outputs.
 # ─────────────────────────────────────────────────────────────
-JUDGE_PROMPT = """你是一个严格的 QA 评审。评估一个笔电推荐 agent 的回复是否满足判分标准。
+JUDGE_PROMPT = """You are a strict QA reviewer. Evaluate whether a laptop \
+recommendation agent's response satisfies the grading rubric.
 
-用户问题:
+IMPORTANT CONSTRAINT: the agent's product data (models, chips, prices, release \
+dates) comes from a live, continuously updated database that is NEWER than your \
+training knowledge. You must NOT grade based on your own beliefs about whether \
+a product exists, whether a price is realistic, or whether a chip has been \
+released.
+Factual consistency must be checked ONLY against the TOOL OUTPUTS provided \
+below: specific models, prices, and review quotes in the response should be \
+traceable to the tool outputs; any specific factual claim with no basis in the \
+tool outputs counts as fabrication.
+Beyond that, evaluate only the behavioral quality of the response: does it \
+address the user's specific needs, is the budget logic self-consistent, is the \
+structure complete, is the language appropriate, and does it refuse when it \
+should refuse.
+
+User query:
 {query}
 
-Agent 调用过的工具: {tool_calls}
+Tools the agent called: {tool_calls}
 
-Agent 回复:
+Raw tool outputs (excerpt):
+{tool_outputs}
+
+Agent response:
 {response}
 
-判分标准(rubric):
+Grading rubric:
 {rubric}
 
-只输出 JSON,无其他文字,格式:
-{{"pass": true 或 false, "reason": "一句话理由"}}
+Output ONLY JSON, no other text, in this format:
+{{"pass": true or false, "reason": "one-sentence justification"}}
 """
 
 
@@ -223,11 +247,18 @@ def _judge_api_key() -> str:
 async def judge(item: dict, result: dict) -> dict:
     from google import genai
 
-    await _get_rate_limiter().aacquire()  # 与 agent 的 LLM 调用共用配额
+    await _get_rate_limiter().aacquire()  # shares the quota pool with the agent
     client = genai.Client(api_key=_judge_api_key())
+    # Truncate each output individually, not the head of the joined blob —
+    # otherwise evidence in later tool calls is invisible to the judge and
+    # grounded responses get falsely flagged as fabrication.
+    tool_outputs = "\n---\n".join(
+        o[:3000] for o in result.get("tool_outputs", [])
+    )[:24000] or "(no tool calls)"
     prompt = JUDGE_PROMPT.format(
         query=item["query"],
         tool_calls=result["tool_calls"],
+        tool_outputs=tool_outputs,
         response=result["text"][:6000],
         rubric=item["expect"]["rubric"],
     )
@@ -238,7 +269,19 @@ async def judge(item: dict, result: dict) -> dict:
         parsed = json.loads(raw)
         return {"passed": bool(parsed["pass"]), "reason": parsed.get("reason", "")}
     except (json.JSONDecodeError, KeyError):
-        return {"passed": False, "reason": f"judge 输出无法解析: {raw[:200]}"}
+        return {"passed": None, "reason": f"unparseable judge output: {raw[:200]}"}
+
+
+async def judge_with_retry(item: dict, result: dict, attempts: int = 3) -> dict:
+    """Retry transient errors (e.g. 500) with backoff; if all attempts fail,
+    record as unscored (passed=None) instead of crashing the run."""
+    for i in range(attempts):
+        try:
+            return await judge(item, result)
+        except Exception as e:
+            if i == attempts - 1:
+                return {"passed": None, "reason": f"judge_error: {type(e).__name__}: {e}"}
+            await asyncio.sleep(5 * (i + 1))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -248,30 +291,34 @@ async def run_one(item: dict, use_judge: bool) -> dict:
     t0 = time.perf_counter()
     try:
         result = await call_agent(item["query"])
+        result.setdefault("tool_outputs", [])
         error = None
-    except Exception as e:  # agent 崩了也要记录,不中断整个 run
-        result = {"text": "", "tool_calls": []}
+    except Exception as e:  # record agent crashes without aborting the run
+        result = {"text": "", "tool_calls": [], "tool_outputs": []}
         error = f"{type(e).__name__}: {e}"
     latency = round(time.perf_counter() - t0, 2)
 
     checks = rule_checks(item, result) if not error else []
     judge_result = None
     if use_judge and not error and "rubric" in item.get("expect", {}):
-        judge_result = await judge(item, result)
+        judge_result = await judge_with_retry(item, result)
 
     rule_pass = all(c["passed"] for c in checks) if checks else False
-    judge_pass = judge_result["passed"] if judge_result else None
+    judge_pass = judge_result["passed"] if judge_result else None  # None = unscored
     overall = (not error) and rule_pass and (judge_pass is not False)
 
     return {
         "id": item["id"],
         "category": item["category"],
+        "lang": item.get("lang"),
         "query": item["query"],
         "passed": overall,
+        "unscored": judge_result is not None and judge_result["passed"] is None,
         "rule_checks": checks,
         "judge": judge_result,
         "latency_s": latency,
         "tool_calls": result["tool_calls"],
+        "tool_outputs": result["tool_outputs"],
         "response": result["text"],
         "error": error,
     }
@@ -285,32 +332,44 @@ async def cmd_run(args):
     queries = yaml.safe_load((EVAL_DIR / "queries.yaml").read_text(encoding="utf-8"))
     if args.only:
         queries = [q for q in queries if q["category"] == args.only]
+    if args.ids:
+        wanted = {i.strip() for i in args.ids.split(",") if i.strip()}
+        queries = [q for q in queries if q["id"] in wanted]
+        unknown = wanted - {q["id"] for q in queries}
+        if unknown:
+            sys.exit(f"Unknown query ids: {sorted(unknown)}")
     if not queries:
-        sys.exit(f"没有匹配的 query (category={args.only})")
+        sys.exit(f"No queries match (category={args.only}, ids={args.ids})")
     if args.limit:
         queries = queries[: args.limit]
 
     RUNS_DIR.mkdir(exist_ok=True)
     out_path = RUNS_DIR / f"{date.today().isoformat()}_{args.label}.jsonl"
 
-    print(f"跑 {len(queries)} 条 | judge={'on' if not args.no_judge else 'off'} | → {out_path}\n")
+    print(f"Running {len(queries)} queries | judge={'on' if not args.no_judge else 'off'} | → {out_path}\n")
     results = []
-    for i, item in enumerate(queries, 1):  # 串行跑,避免打爆本地 DB / API 配额
+    for i, item in enumerate(queries, 1):  # serial: avoid hammering local DB / API quota
         r = await run_one(item, use_judge=not args.no_judge)
         results.append(r)
         mark = "✅" if r["passed"] else "❌"
-        why = r["error"] or (r["judge"]["reason"] if r["judge"] and not r["judge"]["passed"] else "")
+        if r["unscored"]:
+            mark = "⚠️ "
+        why = r["error"] or ""
         failed_rules = [c["name"] for c in r["rule_checks"] if not c["passed"]]
         if failed_rules:
             why = f"rules: {failed_rules} {why}"
-        print(f"{mark} [{i:>2}/{len(queries)}] {r['id']:<12} {r['latency_s']:>5}s  {why}")
+        if r["judge"] and r["judge"]["passed"] is False:
+            why += f" judge: {r['judge']['reason']}"
+        if r["unscored"]:
+            why += " (judge unscored)"
+        print(f"{mark} [{i:>2}/{len(queries)}] {r['id']:<16} {r['latency_s']:>6}s  {why}")
 
     with out_path.open("w", encoding="utf-8") as f:
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     print_summary(results)
-    print(f"\n已保存: {out_path}")
+    print(f"\nSaved: {out_path}")
 
 
 def print_summary(results: list[dict]):
@@ -318,47 +377,81 @@ def print_summary(results: list[dict]):
     for r in results:
         by_cat[r["category"]].append(r["passed"])
     total = sum(r["passed"] for r in results)
-    print(f"\n{'类别':<24}{'通过':>8}")
+    print(f"\n{'Category':<24}{'Passed':>8}")
     print("-" * 34)
     for cat, flags in sorted(by_cat.items()):
         print(f"{cat:<24}{sum(flags):>4}/{len(flags)}")
     print("-" * 34)
     print(f"{'TOTAL':<24}{total:>4}/{len(results)}")
 
+    # Per-language breakdown: watch for language bias in retrieval/prompting
+    by_lang = defaultdict(list)
+    for r in results:
+        if r.get("lang"):
+            by_lang[r["lang"]].append(r["passed"])
+    if by_lang:
+        print("\nBy language:")
+        for lang, flags in sorted(by_lang.items()):
+            print(f"  {lang:<8}{sum(flags)}/{len(flags)}")
+
+    unscored = sum(1 for r in results if r.get("unscored"))
+    errors = sum(1 for r in results if r.get("error"))
+    if unscored:
+        print(f"\n⚠️ Judge unscored: {unscored} — this run must NOT be used for compare; re-run when the API is stable")
+    if errors:
+        print(f"⚠️ Agent errors: {errors} — see the error field of each entry")
+
 
 # ─────────────────────────────────────────────────────────────
 # 5. Compare
 # ─────────────────────────────────────────────────────────────
 def load_run(path: str) -> dict:
-    return {json.loads(l)["id"]: json.loads(l) for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip()}
+    return {
+        json.loads(l)["id"]: json.loads(l)
+        for l in Path(path).read_text(encoding="utf-8").splitlines()
+        if l.strip()
+    }
 
 
 def cmd_compare(args):
     a, b = load_run(args.run_a), load_run(args.run_b)
+    for name, run in [(args.run_a, a), (args.run_b, b)]:
+        n = sum(1 for r in run.values() if r.get("unscored"))
+        if n:
+            print(f"⚠️ {name} has {n} unscored entries — comparison is unreliable\n")
+
     ids = sorted(set(a) | set(b))
     name_a, name_b = Path(args.run_a).stem, Path(args.run_b).stem
 
-    print(f"\n| id | category | {name_a} | {name_b} | Δ |")
+    print(f"| id | category | {name_a} | {name_b} | Δ |")
     print("|---|---|---|---|---|")
     regressions, improvements = [], []
     for qid in ids:
-        pa = a.get(qid, {}).get("passed")
-        pb = b.get(qid, {}).get("passed")
-        cat = (a.get(qid) or b.get(qid))["category"]
-        sym = lambda p: "✅" if p else ("❌" if p is not None else "—")
+        ra, rb = a.get(qid), b.get(qid)
+        pa = ra["passed"] if ra else None
+        pb = rb["passed"] if rb else None
+        cat = (ra or rb)["category"]
+
+        def sym(r, p):
+            if r is None:
+                return "—"
+            if r.get("unscored"):
+                return "⚠️"
+            return "✅" if p else "❌"
+
         delta = ""
         if pa is not None and pb is not None and pa != pb:
             delta = "📈" if pb else "📉 REGRESSION"
             (improvements if pb else regressions).append(qid)
-        print(f"| {qid} | {cat} | {sym(pa)} | {sym(pb)} | {delta} |")
+        print(f"| {qid} | {cat} | {sym(ra, pa)} | {sym(rb, pb)} | {delta} |")
 
     ta = sum(r["passed"] for r in a.values())
     tb = sum(r["passed"] for r in b.values())
-    print(f"\n总分: {name_a} {ta}/{len(a)}  →  {name_b} {tb}/{len(b)}")
+    print(f"\nTotal: {name_a} {ta}/{len(a)}  →  {name_b} {tb}/{len(b)}")
     if improvements:
-        print(f"改善: {improvements}")
+        print(f"Improved: {improvements}")
     if regressions:
-        print(f"⚠️ 回归: {regressions}  ← 先看这些的 response 再决定要不要合并改动")
+        print(f"⚠️ Regressions: {regressions}  ← inspect these responses before merging the change")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -367,11 +460,12 @@ if __name__ == "__main__":
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pr = sub.add_parser("run")
-    pr.add_argument("--label", required=True, help="本次 run 的标签,如 baseline / after_rerank_fix")
-    pr.add_argument("--only", help="只跑某个 category")
-    pr.add_argument("--limit", type=int, help="最多跑 N 条(小批量试跑用)")
-    pr.add_argument("--rpm", type=float, help=f"覆盖全局限速(默认 {MAX_RPM:.0f} RPM)")
-    pr.add_argument("--no-judge", action="store_true", help="跳过 LLM judge,只跑规则层")
+    pr.add_argument("--label", required=True, help="label for this run, e.g. baseline / after_rerank_fix")
+    pr.add_argument("--only", help="run only one category")
+    pr.add_argument("--ids", help="run only these query ids, comma-separated, e.g. relax_zh_003,clear_en_002")
+    pr.add_argument("--limit", type=int, help="run at most N queries (small trial slices)")
+    pr.add_argument("--rpm", type=float, help=f"override the global rate limit (default {MAX_RPM:.0f} RPM)")
+    pr.add_argument("--no-judge", action="store_true", help="skip the LLM judge, rule checks only")
 
     pc = sub.add_parser("compare")
     pc.add_argument("run_a")

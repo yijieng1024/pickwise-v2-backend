@@ -125,7 +125,7 @@
 - id: relax_zh_003
   category: constraint_relaxation
   lang: zh
-  query: "预算 RM3000,想要 MacBook Pro M4"
+  query: "预算 RM3000,想要 MacBook Pro M5"
   expect:
     tools: [search_laptops]
     rubric: "指出预算与目标机型的差距,给出具体替代:MacBook Air 旧款/需要加多少预算/同价位 Windows 替代品"
@@ -144,7 +144,7 @@
   query: "I want a MacBook but my budget is RM2500 max"
   expect:
     tools: [search_laptops]
-    rubric: "States honestly that no new MacBook fits RM2500, offers paths: budget increase amount, refurb/older gen note, or comparable Windows ultrabooks"
+    rubric: "If the database/catalog contains a matching MacBook within budget, recommends it honestly; if no match is found in the tools output, clearly states that no new MacBook fits RM2500 and offers alternative paths (budget increase, older generations, or Windows ultrabooks)."
 
 - id: relax_en_003
   category: constraint_relaxation
