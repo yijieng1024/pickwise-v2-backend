@@ -1,9 +1,9 @@
 import json
 from typing import Optional
 
+from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.prebuilt import create_react_agent
 from sqlmodel import Session
 
 from app.agent.tools import ALL_TOOLS
@@ -17,6 +17,11 @@ from app.laptops.laptop_models import Laptop
 # CRS_Agent_Consolidation_Spec.md and the migration plan for why.
 _HISTORY_WINDOW = 12
 
+# Single source of truth for the agent LLM config — eval/run_eval.py imports
+# these so offline evals always measure the same setup production runs.
+AGENT_MODEL = "gemma-4-31b-it"
+AGENT_TEMPERATURE = 0.3
+
 _SYSTEM_PROMPT = (
     "You are PickWise Agent, an expert laptop buying consultant. You have "
     "access to four tools:\n"
@@ -27,9 +32,11 @@ _SYSTEM_PROMPT = (
     "laptop with selected upgrade options (e.g. more RAM, larger SSD).\n"
     "3. get_review_evidence — retrieve real YouTube reviewer opinions for a "
     "laptop, ranked by relevance to the user's stated priorities.\n"
-    "4. search_malaysian_market_price — get direct Shopee/Lazada search links "
-    "for a laptop so the user can check live listings (not yet a live price "
-    "lookup).\n\n"
+    "4. search_malaysian_market_price — look up live Malaysian market prices "
+    "for a laptop across local retailers (Shopee, Lazada, etc.). Cite the "
+    "store name with each price, present prices as indicative, and if the "
+    "lookup returns no live data, share the marketplace search links it "
+    "provides instead of guessing prices.\n\n"
     "IMPORTANT — handling search_laptops results:\n"
     "- If confidence is \"high\", present the results and explain why they fit.\n"
     "- If confidence is \"low\", you MUST NOT simply say no laptops were found "
@@ -108,8 +115,8 @@ async def run_agent(
     session: Session,
 ) -> tuple[str, Optional[list[dict]]]:
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash",
-        temperature=0.3,
+        model=AGENT_MODEL,
+        temperature=AGENT_TEMPERATURE,
         google_api_key=settings.gemini_api_key,
     )
 
@@ -122,7 +129,7 @@ async def run_agent(
     langchain_messages.extend(_build_message_history(history))
     langchain_messages.append(HumanMessage(content=message))
 
-    agent = create_react_agent(llm, ALL_TOOLS)
+    agent = create_agent(llm, ALL_TOOLS)
     result = await agent.ainvoke({"messages": langchain_messages})
 
     reply_text = result["messages"][-1].content
