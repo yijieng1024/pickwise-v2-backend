@@ -51,4 +51,9 @@ app.include_router(questionnaire_router, prefix=API_PREFIX)
 
 @app.get("/")
 def root():
-    return {"status": "healthy", "project": "PickWise v2 Backend"}
+    return {
+        "status": "healthy",
+        "version": "2.0.0",
+        "service": "pickwise-v2-api",
+        "project": "PickWise v2 Backend"
+    }
