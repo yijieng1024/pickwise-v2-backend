@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # YouTube Data API v3 — optional until key is obtained; discovery.py raises on None
     youtube_api_key: Optional[str] = None
 
+    # parse.bot iPrice Malaysia API — optional; search_malaysian_market_price
+    # falls back to returning Shopee/Lazada search links when unset
+    parsebot_api_key: Optional[str] = None
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings() # type: ignore
