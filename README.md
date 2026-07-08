@@ -6,7 +6,8 @@ Built with **FastAPI + SQLModel + PostgreSQL (pgvector)**, powered by **Google G
 
 ## Features
 
-- **Conversational agent** (`POST /api/v2/agent/chat`) — LangGraph ReAct agent with tools for laptop search, custom Apple pricing, review evidence, and Malaysian market price lookup. Conversation threads and the per-thread laptop shortlist are persisted.
+- **Conversational agent** (`POST /api/v2/agent/chat`) — ReAct agent with tools for laptop search, custom Apple pricing, review evidence, and Malaysian market price lookup. Conversation threads and the per-thread laptop shortlist are persisted. The system prompt enforces strict scope (laptop topics only) and factual grounding (every price cited must come from tool output, never model memory).
+- **Market price lookup** — two-layer tool: official catalog price + price history from the own DB, and live Malaysian retail listings (Shopee, Lazada, senQ, …) via Google Shopping, with accessory filtering, per-store diversity caps, and honest fallbacks when data is missing.
 - **CRS retrieval pipeline** — retrieve (pgvector top-50) → rerank → stepwise constraint relaxation → confidence gating, exposed to the agent as the `search_laptops` tool. Every call is logged for evaluation (`pipeline_eval_logs` + JSONL traces).
 - **PickScore engine** — deterministic, product-agnostic 8-factor scoring (price, CPU, GPU, RAM/storage, portability, battery, screen size, brand) with a 3-layer weighting pipeline; personalized via user preferences or general mode. No LLM involved — its structured breakdown feeds the LLM's explanations.
 - **Recommendations** (`POST /api/v2/recommendations/laptops`) — hybrid vector search → batch PickScore → Gemini structured output, adapted to the user's tech-savviness.
@@ -14,6 +15,7 @@ Built with **FastAPI + SQLModel + PostgreSQL (pgvector)**, powered by **Google G
 - **YouTube review ingestion** — channel discovery (YouTube Data API v3) → transcript fetch → RapidFuzz title matching → 45s chunk summarization + sentiment tagging + embedding → per-laptop strengths/weaknesses aggregation.
 - **Benchmarks** — PassMark CPU/GPU scraping with PostgreSQL upsert, consumed by PickScore via fuzzy model matching.
 - **Auth** — JWT (scoped tokens for email verification / password reset / access), bcrypt, role-based admin access, user preference questionnaire.
+- **Agent eval harness** (`eval/`) — 30 bilingual (中文/English/Manglish) test queries across 5 behavior categories, graded by deterministic rule checks plus an LLM judge that verifies factual grounding against raw tool outputs; run-to-run comparison for regression catching.
 
 ## Architecture
 
@@ -101,6 +103,7 @@ See `.env.example` and `app/config.py`:
 | `SMTP_SERVER` / `SMTP_PORT` | — | Default `smtp.gmail.com:465` |
 | `GEMINI_API_KEY` | ✅ | Google Gemini API key (embeddings, processor, agent, reviews) |
 | `YOUTUBE_API_KEY` | optional | YouTube Data API v3 key — server starts without it; review discovery endpoints return 400 until set |
+| `SERPER_API_KEY` | optional | Serper.dev key for the market-price tool's live-listings layer (Google Shopping, Malaysia) — without it the tool answers from the catalog layer + marketplace search links |
 
 ### Database migrations
 
@@ -130,13 +133,28 @@ docker compose up -d --build
 
 Builds the image from source and runs the API on port 8000 (`.env` is loaded via `env_file`; the container runs `alembic upgrade head` before starting Uvicorn). The database is not part of the compose stack — point `DATABASE_URL` at your own Postgres instance.
 
-**CI/CD:** pushing to `main` triggers `.github/workflows/deploy.yml`, which builds and pushes the image to GHCR (`ghcr.io/yijieng1024/pickwise-v2-backend`), then SSHes into the VPS and runs `docker compose -f docker-compose.prod.yml pull && up -d`. The VPS only needs `docker-compose.prod.yml` + `.env` — not the repo.
+**CI/CD:** pushing to `main` (documentation-only changes are excluded) triggers `.github/workflows/deploy.yml`, which builds the image with a GitHub Actions layer cache and pushes it to GHCR (`ghcr.io/yijieng1024/pickwise-v2-backend`), then fires the Render deploy hook to roll out the new image. `docker-compose.prod.yml` remains available as a self-hosted (VPS) alternative that pulls the same GHCR image — the host only needs that file + `.env`, not the repo.
+
+## Agent evaluation
+
+`eval/queries.yaml` defines 30 bilingual queries across 5 behavior categories — clear intent, vague intent, constraint relaxation, relevance gating (scope/refusals), and tool routing. Each case declares required/forbidden tools, budget caps, and a grading rubric.
+
+```bash
+# from the project root
+python eval/run_eval.py run --label baseline                   # full run with LLM judge
+python eval/run_eval.py run --label quick --no-judge           # rule checks only (free)
+python eval/run_eval.py run --label x --only relevance_gating  # one category
+python eval/run_eval.py run --label x --ids relax_zh_003       # specific cases
+python eval/run_eval.py compare eval/runs/A.jsonl eval/runs/B.jsonl   # regression diff
+```
+
+The harness calls the agent in-process with the exact production model and system prompt, applies deterministic rule checks (tools called, budget respected, non-empty reply), then an LLM judge that grades the rubric **against the raw tool outputs only** — the judge is forbidden from using its own product knowledge, so honest answers about catalog data never get marked wrong by a stale model. All LLM calls share a rate limiter tuned to the Gemini free tier. Results are saved as JSONL per run for `compare`.
 
 ## Tech stack
 
 - **API:** FastAPI, Uvicorn, SQLModel/SQLAlchemy, Alembic, Pydantic v2
 - **Database:** PostgreSQL + pgvector (768-dim embeddings, cosine distance)
-- **AI:** LangChain + LangGraph, Google Gemini (chat, structured extraction, `gemini-embedding-001`)
+- **AI:** LangChain + LangGraph, Google Gemini/Gemma (agent + extraction: `gemma-4-31b-it`; embeddings: `gemini-embedding-001`)
 - **Scraping:** Playwright (Chromium), youtube-transcript-api, YouTube Data API v3
 - **Matching:** RapidFuzz (benchmark lookup, review-to-laptop matching)
 - **Auth:** PyJWT (scoped tokens), bcrypt via passlib
@@ -144,7 +162,7 @@ Builds the image from source and runs the API on port 8000 (`.env` is loaded via
 ## Development notes
 
 - **Windows + Playwright:** async Playwright calls run on a dedicated worker thread with its own `ProactorEventLoop` (`app/scraper/playwright_utils.py`) to avoid conflicts with Uvicorn's `SelectorEventLoop`.
-- **Logging:** `app/logger.py` sets up console + rotating file logs (`logs/app.log`); pipeline evaluation traces go to `logs/eval/pipeline_trace.jsonl`.
+- **Logging:** `app/logger.py` sets up console + rotating file logs (`logs/app.log`); pipeline evaluation traces go to `logs/eval/pipeline_trace.jsonl`. File logging is best-effort — if `logs/` isn't writable (read-only container fs), it falls back to console instead of crashing startup.
 - **Standalone scripts:** import `LaptopCustomization` before `LaptopUserPreference` to satisfy SQLAlchemy mapper resolution (the server handles this via `main.py` importing all routers).
 
 For deeper architectural details (PickScore factor logic, scraping status flow, key design decisions), see [CLAUDE.md](CLAUDE.md).

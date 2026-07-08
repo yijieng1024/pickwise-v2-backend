@@ -4,10 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-**Start the database (required before running the server):**
-```bash
-docker compose up -d
-```
+**Database**: `DATABASE_URL` points at a hosted Supabase Postgres — no local DB needs to be started. `docker compose up -d` only exists as a local-Postgres alternative if you deliberately point `DATABASE_URL` at localhost.
 
 **Run the development server:**
 ```bash
@@ -37,6 +34,15 @@ alembic downgrade -1
 playwright install chromium
 ```
 
+**Run the agent eval harness (from project root — `.env` resolves against CWD):**
+```bash
+python eval/run_eval.py run --label baseline                 # all 30 queries, with LLM judge
+python eval/run_eval.py run --label quick --no-judge         # rule checks only
+python eval/run_eval.py run --label x --only relevance_gating  # one category
+python eval/run_eval.py run --label x --ids relax_zh_003,clear_en_002  # specific cases
+python eval/run_eval.py compare eval/runs/A.jsonl eval/runs/B.jsonl
+```
+
 ## Environment Variables
 
 Create a `.env` file in the project root. Required variables (see `app/config.py`):
@@ -48,7 +54,7 @@ SMTP_USERNAME=your-gmail@gmail.com
 SMTP_PASSWORD=your-gmail-app-password
 GEMINI_API_KEY=your-gemini-api-key
 YOUTUBE_API_KEY=your-youtube-data-api-key   # optional — server starts without it
-PARSEBOT_API_KEY=your-parse-bot-api-key     # optional — market price tool falls back to search links without it
+SERPER_API_KEY=your-serper-dev-api-key      # optional — market price tool's live-listings layer; catalog layer works without it
 ```
 
 `GEMINI_API_KEY` is a required setting (`app/config.py`) and is passed explicitly (`google_api_key=settings.gemini_api_key`) to every Gemini client — embeddings, processor, recommendation, agent, and review processor. Do **not** rely on the ambient `GOOGLE_API_KEY` / Application Default Credentials — that won't exist in Docker/production.
@@ -92,14 +98,15 @@ Each domain module under `app/` follows a consistent pattern: `models.py` (SQLMo
 - **`app/embeddings/`** — `service.py` builds a natural-language document per laptop and embeds it via `gemini-embedding-001` (`output_dimensionality=768` to match the `Vector(768)` column); `router.py` exposes admin-only generate-all / generate-single / status endpoints
 - **`app/recommendation/`** — `service.py` orchestrates the full recommendation pipeline (hybrid search → batch PickScore → Gemini LLM); `router.py` exposes `POST /recommendations/laptops` (auth required); `schemas.py` owns request/response models including internal `_LLMOutput` for structured Gemini output
 - **`app/rag/`** (renamed from `app/conversations/`) — RAG pipeline + conversation-thread persistence, now consumed as a library by the agent (see `app/agent/` below) rather than driven by its own chat endpoint. `retrieval.py` (Module 1), `reranker.py` (Module 2), `relaxation.py` (Module 3), `gating.py` (Module 4), `evaluation.py` (Module 5 + live logging, still writes `pipeline_eval_logs` on every `search_laptops` tool call). `service.py` is conversation-thread CRUD only (`create_conversation`, `list_conversations`, `get_conversation`, `delete_conversation`). `router.py` exposes 4 `/conversations/` endpoints (all auth-required, URL prefix unchanged) — create/list/get/delete a thread; **no `/chat` route** (removed, superseded by `POST /agent/chat`). `models.py` owns `Conversation`, `Message`, `ConversationLaptop`, `PipelineEvalLog` tables.
-- **`app/agent/`** — LangGraph ReAct agent, the sole conversational entry point (`POST /agent/chat`). `tools/search_laptops.py` absorbs the CRS retrieve→rerank→relax→gate pipeline as a tool; `tools/laptop_tools.py` owns `calculate_custom_apple_price` and `get_review_evidence`; `tools/market_price.py` owns `search_malaysian_market_price` — live price lookup via the parse.bot iPrice Malaysia aggregator (`PARSEBOT_API_KEY`, optional; free tier 100 credits/month + 5 req/min, hence a 6-hour in-process cache and RapidFuzz title-relevance filtering; falls back to Shopee/Lazada search links when the key is missing or the API errors). `graph.py`'s `run_agent()` reconstructs conversation state from the `messages`/`conversation_laptops` tables each turn (no LangGraph checkpointer). `router.py` accepts an optional `conversation_id` (auto-creates if omitted) and persists messages + the laptop shortlist pool after each turn.
+- **`app/agent/`** — ReAct agent built with `langchain.agents.create_agent` (migrated off the deprecated `langgraph.prebuilt.create_react_agent`), the sole conversational entry point (`POST /agent/chat`). `graph.py` owns `AGENT_MODEL = "gemma-4-31b-it"` / `AGENT_TEMPERATURE = 0.3` — the single source of truth for the agent LLM config; `eval/run_eval.py` imports these (and `_SYSTEM_PROMPT`) so offline evals always measure the production setup. The system prompt contains two enforcement blocks added after eval failures: **SCOPE ENFORCEMENT** (refuse all non-laptop tasks — fixed the agent doing unrelated tasks like letter-writing when asked in Chinese) and **FACTUAL GROUNDING** (never quote prices from memory — call `search_malaysian_market_price` for real numbers; work with returned `search_laptops` results before suggesting anything from memory; treat `0.0`/"unrecognized" tool values as unavailable, never borrow numbers from a different configuration). `tools/search_laptops.py` absorbs the CRS retrieve→rerank→relax→gate pipeline as a tool; `tools/laptop_tools.py` owns `calculate_custom_apple_price` and `get_review_evidence`; `tools/market_price.py` owns `search_malaysian_market_price` — two-layer price lookup: (1) catalog layer from own DB (official `price_rm` + last 5 `laptop_price_history` snapshots; `model_code` exact match first, else RapidFuzz `token_set_ratio ≥ 75` on `product_name`, fuzzy hits carry a "closest match — verify chip generation/size" note), and (2) live-listings layer via Serper.dev Google Shopping geo-targeted to Malaysia (`SERPER_API_KEY`, optional — replaced the parse.bot iPrice integration, which lacked laptop coverage). Live-listings hygiene: RapidFuzz title-relevance ≥ 60 **plus** an accessory-keyword blocklist and a RM 800 price floor (token_set_ratio scores 100 for "<laptop name> skin/battery/…" titles, so relevance alone is not enough), max 2 listings per store so the price range reflects the market, 6-hour in-process cache on successful lookups only. Shopee/Lazada search links are always included as the last-resort fallback. `graph.py`'s `run_agent()` reconstructs conversation state from the `messages`/`conversation_laptops` tables each turn (no LangGraph checkpointer). `router.py` accepts an optional `conversation_id` (auto-creates if omitted) and persists messages + the laptop shortlist pool after each turn.
 - **`app/reviews/`** — YouTube review ingestion pipeline (all endpoints admin-only). `discovery.py` resolves channel URLs (4 formats) and discovers videos via YouTube Data API v3 (`search.list`, 100 quota units/channel, top 5 per channel); `transcript.py` fetches transcripts via `youtube-transcript-api` **v1.x instance API** (`YouTubeTranscriptApi().fetch()`, no quota cost); `matcher.py` fuzzy-matches video titles to catalog laptops (RapidFuzz `token_set_ratio`, threshold 73, compact match keys that strip `-inch`/RAM/storage and extract the chip from parens); `processor.py` chunks transcripts into 45-second windows → Gemini summary + sentiment tag (`strength`/`weakness`/`neutral`) → `gemini-embedding-001` embed (4s delay between Gemini calls); `aggregator.py` rolls up top-5 strengths/weaknesses into `laptop_review_summary`; `service.py`'s `ingest_for_laptop()` runs discovery → transcript → match end-to-end (retries `rejected` rows, skips `matched`/`pending`). Chunk processing and aggregation are manual admin steps (`POST /reviews/process/{id}`, `POST /reviews/aggregate/{laptop_id}`); `POST /reviews/rematch` re-runs auto-matching on all pending rows.
 - **`app/scraper/`** — Playwright-based crawlers for Apple (DOM) and Asus/ROG (`window.__NUXT__` JSON state)
 - **`app/processor/`** — LangChain + Gemini LLM extraction from raw scraped data into structured `Laptop` records
 - **`app/benchmark/`** — PassMark CPU/GPU scraping with PostgreSQL upsert (`ON CONFLICT DO UPDATE`)
-- **`app/logger.py`** — Centralized logging service. `setup_logging()` called once in `main.py` (console + 5 MB rotating `logs/app.log`). `get_logger(__name__)` is the drop-in for all modules. `get_eval_logger()` returns the special `pickwise.eval` JSON-lines logger used by `rag/evaluation.py`.
+- **`app/logger.py`** — Centralized logging service. `setup_logging()` called once in `main.py` (console + 5 MB rotating `logs/app.log`). `get_logger(__name__)` is the drop-in for all modules. `get_eval_logger()` returns the special `pickwise.eval` JSON-lines logger used by `rag/evaluation.py`. File logging is **best-effort**: if `logs/` isn't writable (container with non-root user / read-only fs), both loggers warn and fall back to console/stdout instead of crashing startup — a root-owned `WORKDIR` once took down the whole deploy via `PermissionError` in `mkdir`.
 - **`app/config.py`** — `pydantic-settings` loading from `.env`
 - **`app/database.py`** — SQLModel engine, `get_session()` dependency, pgvector extension init
+- **`eval/`** — offline agent eval harness (not part of the server). `queries.yaml`: 30 bilingual queries (zh/en/mixed-Manglish) across 5 categories — clear_intent, vague_intent, constraint_relaxation, relevance_gating, tool_routing — each with expected tools / forbidden tools / budget cap / judge rubric. `run_eval.py`: runs each query through the agent in-process (same `AGENT_MODEL`/`_SYSTEM_PROMPT` as production, single-turn, no history), applies deterministic rule checks, then an LLM judge (`gemma-4-31b-it`) that grades **only against the raw tool outputs** — never its own product knowledge (the catalog is newer than any model's training data). Results land in `eval/runs/<date>_<label>.jsonl`; `compare` diffs two runs and flags regressions. All agent + judge LLM calls share one global rate limiter (default 15 RPM = gemma free tier; `--rpm` to override). Judge failures after 3 retries mark the entry ⚠️ unscored — runs with unscored entries must not be used for compares. Tool outputs are truncated per-output (3,000 chars each, 24,000 total) — never head-truncate the joined blob, or evidence in later tool calls becomes invisible and grounded responses get falsely judged as fabrication.
 
 ### Key Design Decisions
 
@@ -225,3 +232,12 @@ Purpose modifiers (capped at ×1.3): Gaming→GPU×1.3/CPU×1.1, Creative→GPU�
 **`RawScrapLaptop.processing_status`** (`raw_scrap_laptops` table): `pending` → `processing` → `completed` / `failed`
 
 Bulk scrape queries `is_active=True` AND (`last_scraped_at IS NULL` OR `scrape_status = 'failed'`). Returns HTTP 207 on partial failures; writes timestamped failure logs to `logs/scraper/`.
+
+### Deployment
+
+`.github/workflows/deploy.yml` on push to `main` (doc-only changes excluded via `paths-ignore` — note the key is `paths-ignore`, **not** `path-ignore`, which GitHub silently ignores):
+
+1. **build-and-push** — builds the Dockerfile and pushes to GHCR (`:latest` + `:sha`). `docker/setup-buildx-action` is required before the build step: the `type=gha` layer cache only works with the docker-container buildx driver, and the build fails without it.
+2. **deploy** — hits the Render deploy hook (`secrets.RENDER_DEPLOY_HOOK`); Render pulls the image and restarts.
+
+Dockerfile runs as non-root `appuser`; `WORKDIR /app` itself stays root-owned, so any runtime-writable directory must be created and chowned explicitly before `USER appuser` (currently `/app/logs`). The container startup command runs `alembic upgrade head` before uvicorn, and binds `${PORT:-8000}` (Render injects `PORT`). `docker-compose.prod.yml` is a VPS alternative that pulls the GHCR image; its `./logs:/app/logs` bind mount requires the host dir to exist and be writable by UID 1000, or file logging falls back to console.
