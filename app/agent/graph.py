@@ -169,7 +169,33 @@ async def run_agent(
     agent = create_agent(llm, ALL_TOOLS)
     result = await agent.ainvoke({"messages": langchain_messages})
 
-    reply_text = result["messages"][-1].content
+    reply_text = _content_to_text(result["messages"][-1].content)
     tool_results = _extract_search_results(result["messages"])
 
     return reply_text, tool_results
+
+
+def _content_to_text(content) -> str:
+    """Flatten LangChain message content to plain text.
+
+    Gemini can return `content` as a list of typed blocks (e.g. a `thinking`
+    block followed by a `text` block) instead of a plain string. The messages
+    table and the API response both need a str, so join the text blocks and
+    drop the thinking ones. Fall back to the thinking blocks only if the model
+    produced no text block at all, so the reply is never silently empty.
+    """
+    if isinstance(content, str):
+        return content
+
+    text_parts: list[str] = []
+    thinking_parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            text_parts.append(block)
+        elif isinstance(block, dict):
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif block.get("type") == "thinking":
+                thinking_parts.append(block.get("thinking", ""))
+
+    return "".join(text_parts) or "".join(thinking_parts)
