@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 from app.rag import service
 from app.rag.models import ConversationLaptop, Message, MessageRole
 from app.database import get_session
+from app.laptops.laptop_models import Laptop
 from app.users.auth import get_current_user
 from app.users.models import User
 
@@ -20,9 +21,21 @@ class AgentChatRequest(BaseModel):
     conversation_id: Optional[uuid.UUID] = None
 
 
+class AgentLaptopCard(BaseModel):
+    laptop_id: uuid.UUID
+    product_name: str
+    price_rm: Optional[float] = None
+    pick_score: Optional[int] = None
+    similarity_score: Optional[float] = None
+
+
 class AgentChatResponse(BaseModel):
     response: str
     conversation_id: uuid.UUID
+    # The conversation's current laptop shortlist — fresh search results when
+    # search_laptops ran this turn, otherwise the persisted pool, so the
+    # frontend can keep rendering score badges on follow-up turns too.
+    laptops: list[AgentLaptopCard] = []
 
 
 @router.post("/chat")
@@ -79,10 +92,40 @@ async def agent_chat(
             session.add(ConversationLaptop(
                 conversation_id=conv.id,
                 laptop_id=r["laptop_id"],
+                pick_score=r.get("pick_score"),
                 similarity_score=r.get("similarity_score"),
             ))
 
     conv.updated_at = datetime.now(timezone.utc)
     session.commit()
 
-    return AgentChatResponse(response=reply_text, conversation_id=conv.id)
+    if tool_results is not None:
+        laptop_cards = [AgentLaptopCard(
+            laptop_id=r["laptop_id"],
+            product_name=r["product_name"],
+            price_rm=r.get("price_rm"),
+            pick_score=r.get("pick_score"),
+            similarity_score=r.get("similarity_score"),
+        ) for r in tool_results]
+    else:
+        # No new search this turn — return the persisted shortlist pool so the
+        # frontend keeps its cards on follow-up questions.
+        pool_rows = session.exec(
+            select(ConversationLaptop, Laptop)
+            .join(Laptop, ConversationLaptop.laptop_id == Laptop.id)  # type: ignore[arg-type]
+            .where(ConversationLaptop.conversation_id == conv.id)
+            .order_by(ConversationLaptop.similarity_score.desc().nullslast())  # type: ignore[union-attr]
+        ).all()
+        laptop_cards = [AgentLaptopCard(
+            laptop_id=cl.laptop_id,
+            product_name=laptop.product_name,
+            price_rm=laptop.price_rm,
+            pick_score=cl.pick_score,
+            similarity_score=cl.similarity_score,
+        ) for cl, laptop in pool_rows]
+
+    return AgentChatResponse(
+        response=reply_text,
+        conversation_id=conv.id,
+        laptops=laptop_cards,
+    )

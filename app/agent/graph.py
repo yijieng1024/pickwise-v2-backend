@@ -23,7 +23,7 @@ AGENT_MODEL = "gemma-4-31b-it"
 AGENT_TEMPERATURE = 0.3
 
 _SYSTEM_PROMPT = (
-    "You are PickWise Agent, an expert laptop buying consultant. You have "
+    "You are Pico, an expert laptop buying consultant. You have "
     "access to four tools:\n"
     "1. search_laptops — search the catalog using semantic search corrected "
     "against explicit constraints (budget, brand, purpose). Use this whenever "
@@ -76,6 +76,12 @@ _SYSTEM_PROMPT = (
     "model, size, or configuration.\n\n"
     "IMPORTANT — handling search_laptops results:\n"
     "- If confidence is \"high\", present the results and explain why they fit.\n"
+    "- Each result includes pick_score (0-100): PickWise's deterministic "
+    "hardware-and-value score computed from real benchmarks, RAM/storage, "
+    "portability, battery, screen size, and price — it is data, not opinion. "
+    "When presenting a laptop, cite it as \"PickScore N/100\" and use "
+    "pick_score_top_factors to explain what drives the score. If pick_score "
+    "is missing for a result, simply omit it — never invent a score.\n"
     "- If confidence is \"low\", you MUST NOT simply say no laptops were found "
     "and stop. The tool intentionally withholds a forced, poorly-matching "
     "recommendation — it is now your job to keep the conversation productive. "
@@ -169,7 +175,33 @@ async def run_agent(
     agent = create_agent(llm, ALL_TOOLS)
     result = await agent.ainvoke({"messages": langchain_messages})
 
-    reply_text = result["messages"][-1].content
+    reply_text = _content_to_text(result["messages"][-1].content)
     tool_results = _extract_search_results(result["messages"])
 
     return reply_text, tool_results
+
+
+def _content_to_text(content) -> str:
+    """Flatten LangChain message content to plain text.
+
+    Gemini can return `content` as a list of typed blocks (e.g. a `thinking`
+    block followed by a `text` block) instead of a plain string. The messages
+    table and the API response both need a str, so join the text blocks and
+    drop the thinking ones. Fall back to the thinking blocks only if the model
+    produced no text block at all, so the reply is never silently empty.
+    """
+    if isinstance(content, str):
+        return content
+
+    text_parts: list[str] = []
+    thinking_parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            text_parts.append(block)
+        elif isinstance(block, dict):
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif block.get("type") == "thinking":
+                thinking_parts.append(block.get("thinking", ""))
+
+    return "".join(text_parts) or "".join(thinking_parts)

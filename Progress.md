@@ -16,9 +16,9 @@ A FastAPI-based backend for a laptop recommendation system with user authenticat
 - **Password Hashing**: bcrypt (via passlib)
 - **Email**: SMTP (Gmail SSL, port 465) with background tasks
 - **Web Scraping**: Playwright (Chromium headless)
-- **AI/LLM Processing**: LangChain + Google Gemini (`gemini-3.5-flash`)
+- **AI/LLM Processing**: LangChain + Google Gemini/Gemma (agent + extraction: `gemma-4-31b-it`; recommendation: `gemini-3.5-flash`; embeddings: `gemini-embedding-001`)
 - **Vector Storage**: pgvector (768-dimension embeddings)
-- **Agentic Orchestration**: LangGraph (`create_react_agent`)
+- **Agentic Orchestration**: `langchain.agents.create_agent` (migrated off the deprecated `langgraph.prebuilt.create_react_agent`)
 - **YouTube Ingest**: `google-api-python-client` (YouTube Data API v3) + `youtube-transcript-api` v1.x
 - **Validation**: Pydantic v2 with custom field validators
 - **Settings**: pydantic-settings with `.env` file
@@ -42,9 +42,9 @@ pickwise-v2-backend/
 │
 ├── 📂 app/                          # Main application package
 │   ├── 📂 benchmark/               # CPU & GPU benchmark scoring module (PassMark scrapers)
-│   ├── 📂 agent/                    # LangGraph agentic layer (search_laptops + calculate_custom_apple_price + get_review_evidence tools)
+│   ├── 📂 agent/                    # Agentic layer — 4 tools: search_laptops (+ PickScore), apple price, review evidence, market price
 │   ├── 📂 reviews/                  # YouTube review ingestion pipeline (discovery → transcript → match → chunk → embed)
-│   ├── 📂 conversations/           # Conversational Recommender System (CRS) — 5-module pipeline
+│   ├── 📂 rag/                      # CRS pipeline library (retrieve/rerank/relax/gate/evaluate) + conversation-thread models (renamed from conversations/)
 │   ├── 📂 laptops/                  # Laptop catalog, brands & customizations module
 │   ├── 📂 processor/               # AI-powered data processor (LLM extraction via Gemini)
 │   ├── 📂 scraper/                  # Playwright web scraping pipeline (Apple & Asus specs)
@@ -58,6 +58,11 @@ pickwise-v2-backend/
 │   ├── 📄 config.py                 # Application settings and environment variables loader
 │   ├── 📄 database.py              # SQLModel engine setup and database session generators
 │   └── 📄 main.py                   # FastAPI application initialization and routing
+│
+├── 📂 eval/                         # Offline agent eval harness (not part of the server)
+│   ├── 📄 queries.yaml              # 30 bilingual test queries × 5 behavior categories
+│   ├── 📄 run_eval.py               # Rule checks + grounded LLM judge; run/compare commands
+│   └── 📂 runs/                     # JSONL results per labeled run
 │
 ├── 📂 logs/                         # Runtime logs
 │   ├── 📂 scraper/                  # Timestamped bulk scrape failure logs
@@ -668,36 +673,36 @@ Every live `search_laptops` tool call logs: `gate_status`, `top_score`, `relaxed
 
 ---
 
-### 13. **LangGraph Agent** (`app/agent/`)
+### 13. **ReAct Agent** (`app/agent/`, via `langchain.agents.create_agent`)
 
 Sole conversational entry point (`POST /agent/chat`). A ReAct agent that reasons across four tools, absorbing the CRS pipeline's precision logic (retrieve → rerank → relax → gate) into `search_laptops` instead of running it as a fixed, separate pipeline. The agent — not a hardcoded step order — decides when to search, when to ask a clarifying question, and when it has enough to recommend.
 
 #### Files
 
-- `app/agent/tools/search_laptops.py` — `search_laptops(user_query, budget_max, brand, purpose, top_k=10)`: runs the CRS `retrieve_candidates` → `rerank` → (`relax_and_retry` if 0 viable candidates) → `relevance_gate` pipeline. Returns `{results, confidence: "high"|"low", bottleneck, message, relaxation_notice}`. On low confidence, returns no laptops but a targeted clarification message — the agent (not the tool) decides how to use it. Logs every call to `pipeline_eval_logs` via `evaluation.log_pipeline_result()`.
+- `app/agent/tools/search_laptops.py` — `search_laptops(user_query, budget_max, brand, purpose, top_k=10)`: runs the CRS `retrieve_candidates` → `rerank` → (`relax_and_retry` if 0 viable candidates) → `relevance_gate` pipeline. Returns `{results, confidence: "high"|"low", bottleneck, message, relaxation_notice}`. Each result carries **`pick_score`** (0–100, general-mode PickScore batch-computed on the gated top-k — ranges + benchmark tuples fetched once, same pattern as the recommendation service) plus a compact `pick_score_top_factors` summary (top-3 factors only; the full 8-factor breakdown would bloat LLM context and overflow eval-judge truncation). PickScore failure is non-fatal — results go out unscored. On low confidence, returns no laptops but a targeted clarification message — the agent (not the tool) decides how to use it. Logs every call to `pipeline_eval_logs` via `evaluation.log_pipeline_result()`.
 - `app/agent/tools/laptop_tools.py` — `calculate_custom_apple_price` (base price + customization add-ons), `get_review_evidence` (pgvector cosine search over review chunks, returns top-3 with YouTube timestamp links)
-- `app/agent/tools/market_price.py` — `search_malaysian_market_price(product_name, model_code)`: **stub** — returns direct Shopee/Lazada search URLs; live price scraping not yet implemented
-- `app/agent/graph.py` — `run_agent(message, history, conv_laptops, session)`: reconstructs conversation state from the `messages` table (last 12 turns) + the current `conversation_laptops` shortlist each call (no LangGraph checkpointer — state lives in Postgres via the existing conversation tables), builds `create_react_agent` with Gemini `gemini-3.5-flash`, and extracts the latest `search_laptops` tool result from the run so the caller can update the shortlist pool
-- `app/agent/router.py` — `POST /agent/chat` (auth required); accepts optional `conversation_id` (auto-creates a new conversation if omitted); persists user/assistant `Message` rows and replaces the `conversation_laptops` pool when `search_laptops` returns high confidence; returns 503 if the agent errors
+- `app/agent/tools/market_price.py` — `search_malaysian_market_price(product_name, model_code)`: two-layer price lookup — (1) catalog layer from own DB (official `price_rm` + last 5 price-history snapshots; `model_code` exact match, else RapidFuzz fuzzy match on `product_name`), and (2) live Malaysian retail listings via Serper.dev Google Shopping (`SERPER_API_KEY`, optional) with accessory-keyword blocklist, RM 800 price floor, max 2 listings per store, and a 6-hour in-process cache. Shopee/Lazada search links always included as last-resort fallback
+- `app/agent/graph.py` — `run_agent(message, history, conv_laptops, session)`: reconstructs conversation state from the `messages` table (last 12 turns) + the current `conversation_laptops` shortlist each call (no LangGraph checkpointer — state lives in Postgres via the existing conversation tables), builds the agent via `langchain.agents.create_agent` with `AGENT_MODEL = "gemma-4-31b-it"` (single source of truth, imported by the eval harness), and extracts the latest `search_laptops` tool result from the run so the caller can update the shortlist pool. The reply passes through `_content_to_text()` — Gemini can return content as a list of typed blocks (`thinking` + `text`) instead of a plain string, which crashed the `messages` insert (`psycopg2 can't adapt type 'dict'`); text blocks are joined, thinking blocks dropped (fallback-only so the reply is never empty)
+- `app/agent/router.py` — `POST /agent/chat` (auth required); accepts optional `conversation_id` (auto-creates a new conversation if omitted); persists user/assistant `Message` rows and replaces the `conversation_laptops` pool (with `pick_score` + `similarity_score` snapshots) when `search_laptops` returns high confidence; returns 503 if the agent errors. The response includes a structured **`laptops` field** (`AgentLaptopCard`: laptop_id, product_name, price_rm, pick_score, similarity_score) for frontend score badges — fresh search results when a search ran this turn, otherwise the persisted pool joined to `laptops` (similarity DESC, NULLS LAST) so follow-up turns keep their cards
 
 #### Architecture
 
 ```text
 POST /agent/chat  (conversation_id optional — auto-creates if omitted)
   └── run_agent(message, history, conv_laptops, session)
-        ├── search_laptops               → retrieve → rerank → relax → gate (pgvector + CRS logic)
+        ├── search_laptops               → retrieve → rerank → relax → gate + general-mode PickScore on top-k
         ├── calculate_custom_apple_price → PostgreSQL (base price + sum of selected add-ons)
         ├── get_review_evidence          → pgvector cosine search on laptop_review_chunks
-        └── search_malaysian_market_price → stub (Shopee/Lazada search URLs)
+        └── search_malaysian_market_price → catalog price + history, live listings (Serper Google Shopping)
 ```
 
-No HTTP round-trips — all tools query the DB directly. LangGraph decides which tool(s) to call and in what order based on the user's message and replayed history; there is no separate intent-classification call.
+No HTTP round-trips — all tools query the DB directly. The agent decides which tool(s) to call and in what order based on the user's message and replayed history; there is no separate intent-classification call.
 
 #### Endpoint
 
 | Method | Endpoint    | Auth         | Purpose                                                        |
 | ------ | ----------- | ------------ | -------------------------------------------------------------- |
-| POST   | /agent/chat | Bearer Token | LangGraph ReAct agent — search + pricing + review evidence + market links |
+| POST   | /agent/chat | Bearer Token | ReAct agent — search (with PickScore) + pricing + review evidence + market prices; returns text reply + structured `laptops` shortlist |
 
 ---
 
@@ -933,7 +938,7 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 
 | Method | Endpoint    | Auth         | Purpose                                                                     |
 | ------ | ----------- | ------------ | ---------------------------------------------------------------------------- |
-| POST   | /agent/chat | Bearer Token | LangGraph ReAct agent — search + pricing + review evidence + market links   |
+| POST   | /agent/chat | Bearer Token | ReAct agent — search (with PickScore) + pricing + review evidence + market prices; returns text reply + structured `laptops` shortlist |
 
 ### Reviews (`/reviews`)
 
@@ -1114,8 +1119,15 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ Intent detection via Gemini (related vs new_search) on every follow-up message
 - ✅ conversation_laptops pool replacement on new_search, reused on related follow-ups
 - ✅ Auto-title from first message (truncated to 60 chars)
-- ✅ LangGraph ReAct agent (`app/agent/`) — `search_laptops` + `calculate_custom_apple_price` + `get_review_evidence` tools, all query DB directly
+- ✅ ReAct agent (`app/agent/`) — `search_laptops` + `calculate_custom_apple_price` + `get_review_evidence` + `search_malaysian_market_price` tools, all query DB directly
 - ✅ Agent endpoint `POST /agent/chat` (auth required, 503 on agent error with diagnostic message)
+- ✅ Two-layer Malaysian market price tool — catalog price + history from own DB, live listings via Serper Google Shopping (accessory blocklist, RM 800 floor, per-store cap, 6h cache)
+- ✅ General-mode PickScore attached to agent search results (`pick_score` 0–100 + top-3 factor summary, batch-computed on gated top-k; non-fatal on failure)
+- ✅ Structured `laptops` shortlist in `/agent/chat` response (`AgentLaptopCard`) for frontend score badges — fresh results or persisted pool on follow-up turns
+- ✅ `pick_score` persisted to `conversation_laptops` alongside `similarity_score`
+- ✅ System prompt enforcement blocks — scope (laptop-only), factual grounding (no prices from memory), PickScore citation ("PickScore N/100", never invent scores)
+- ✅ Gemini list-of-blocks reply flattening (`_content_to_text`) — fixed `psycopg2 can't adapt type 'dict'` crash on message persistence
+- ✅ Agent eval harness (`eval/`) — 30 bilingual queries × 5 categories, deterministic rule checks + grounded LLM judge, JSONL runs + `compare` regression diff (latest run: 28/30, 0 unscored)
 - ✅ YouTube channel management — URL-based resolution (handles `@handle`, `/channel/UCxx`, bare ID), `trust_tier`, `active` flag
 - ✅ YouTube video discovery — `search.list` per channel, top-5 per query, 100 quota units/channel
 - ✅ Transcript fetching — `youtube-transcript-api` v1.x instance API (`YouTubeTranscriptApi().fetch()`), no quota cost

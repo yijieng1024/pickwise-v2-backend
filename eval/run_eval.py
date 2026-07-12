@@ -251,10 +251,14 @@ async def judge(item: dict, result: dict) -> dict:
     client = genai.Client(api_key=_judge_api_key())
     # Truncate each output individually, not the head of the joined blob —
     # otherwise evidence in later tool calls is invisible to the judge and
-    # grounded responses get falsely flagged as fabrication.
+    # grounded responses get falsely flagged as fabrication. 4,500 per output
+    # fits a full 5-result search_laptops payload (~3,400 chars now that each
+    # result carries pick_score fields); at 3,000 the tail results' scores
+    # were cut off and the judge flagged legitimately-cited PickScores as
+    # fabricated.
     tool_outputs = "\n---\n".join(
-        o[:3000] for o in result.get("tool_outputs", [])
-    )[:24000] or "(no tool calls)"
+        o[:4500] for o in result.get("tool_outputs", [])
+    )[:27000] or "(no tool calls)"
     prompt = JUDGE_PROMPT.format(
         query=item["query"],
         tool_calls=result["tool_calls"],
