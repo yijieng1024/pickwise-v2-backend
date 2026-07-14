@@ -12,7 +12,7 @@ A FastAPI-based backend for a laptop recommendation system with user authenticat
 - **Database**: PostgreSQL 16 with pgvector extension (via Docker)
 - **ORM**: SQLModel (SQLAlchemy + Pydantic hybrid)
 - **Migrations**: Alembic
-- **Authentication**: JWT (PyJWT) with OAuth2 PasswordBearer
+- **Authentication**: JWT (PyJWT) with OAuth2 PasswordBearer (username-or-email login) + Google Sign-In (ID-token verification via `google-auth`)
 - **Password Hashing**: bcrypt (via passlib)
 - **Email**: SMTP (Gmail SSL, port 465) with background tasks
 - **Web Scraping**: Playwright (Chromium headless)
@@ -95,7 +95,8 @@ Core authentication features implemented for secure user registration, login, an
 | ------ | --------------------- | ----------------- | ------ | ------------------------- |
 | POST   | /auth/register        | None              | 201    | Register new user         |
 | GET    | /auth/verify-email    | Query param token | 200    | Verify email address      |
-| POST   | /auth/login           | OAuth2 form       | 200    | Get JWT token             |
+| POST   | /auth/login           | OAuth2 form       | 200    | Get JWT token (username **or email** + password) |
+| POST   | /auth/google          | Google ID token   | 200    | Sign in with Google (find-or-create + link by email) |
 | GET    | /auth/me/profile      | Bearer Token      | 200    | Get user profile          |
 | PUT    | /auth/me/profile      | Bearer Token      | 200    | Update user profile       |
 | GET    | /auth/me/preferences  | Bearer Token      | 200    | Get laptop preferences    |
@@ -104,9 +105,10 @@ Core authentication features implemented for secure user registration, login, an
 | POST   | /auth/reset-password  | Token in body     | 200    | Complete password reset   |
 
 #### Key Features:
-- **Registration**: Validates unique username/email, hashes password (bcrypt), sends verification email via background task
+- **Registration**: Validates unique username/email, hashes password (bcrypt), sends verification email via background task. Usernames must not contain `@` (or be blank) — prevents a username from shadowing another user's email in the shared login lookup
 - **Email Verification**: JWT-based token with configurable expiration (default: 1 hour), prevents login without verified email
-- **Login**: Validates credentials + verification status, generates JWT access token (default: 10080 min / 7 days)
+- **Login**: Single identifier field accepts **username or email** (`(username == x) | (email == x)` on two unique indexed columns); validates credentials + verification status, generates JWT access token (default: 10080 min / 7 days). Guards `password IS NULL` (Google-only accounts can't log in with an empty password)
+- **Google Sign-In** (`POST /auth/google`): frontend obtains an ID token via Google Identity Services and posts `{id_token}`; backend verifies signature/expiry/audience with `google-auth` against `GOOGLE_OAUTH_CLIENT_ID` (optional setting — endpoint 400s if unset). Resolution order: returning user by `provider_sub` (Google's stable `sub`) → existing local account by email (linked + marked verified, keeps its password) → new account (unique username generated from email prefix, `password=None`, `auth_provider="google"`, `is_verified=True` — no SMTP verification needed). Returns the same `Token` as `/auth/login`. Google-only users can later gain a password via the existing forgot-password flow
 - **Profile Management**: Partial updates for birthday (date), gender (Male/Female/Other with validator), occupation
 - **Preferences System**: Dedicated `laptop_user_preference` table with budget (`{min, max}` JSON RM range — `max: null` means no upper limit), purpose, priorities (weighted 1-10), screen_size, portability, brand_preferences, tech_savviness (validated enum). Written via the existing `PUT /me/preferences`; the 6-step survey that populates these fields is now served dynamically via `GET /questionnaire` (see §15 below) instead of being hardcoded in the frontend.
 - **Password Reset**: JWT-based reset token (15 min expiry), safe messaging (doesn't reveal if user exists)
@@ -313,7 +315,7 @@ Automated web scraping system using Playwright for extracting laptop specs from 
 
 #### Apple Scraper Implementation (`apple_scraper.py`):
 - **`crawl_apple_specs_links()`**: Discovers spec page URLs from Apple's Mac product pages
-- **`_extract_apple_specs()`**: Extracts product name, OG images, product images, and raw spec text from `.techspecs-section` elements
+- **`_extract_apple_specs()`**: Extracts product name, product images, and raw spec text from `.techspecs-section` elements. Image hygiene: no longer collects the `og:image` meta tag, and drops any `<img>` URL containing `icon`, `logo`, `/meta/`, or `_og.` (social-preview cards are not product shots). The raw row keeps the full family image set (e.g. both 13″ and 15″) — the per-variant size split happens in the AI processor, where `display_size_inch` exists
 - **`scrape_official_website()`**: Orchestrates the full scrape-and-extract flow per URL
 
 #### Asus Scraper Implementation (`asus_scraper.py`) — Dual Extraction Paths:
@@ -373,7 +375,7 @@ LLM-powered engine that transforms raw scraped laptop data into structured, norm
    - Apple-specific inference (macOS, Apple GPU/CPU, ai_ready=true)
    - Catches unmapped specs in `unmapped_specs` field
 4. Invokes Google Gemini (`gemini-3.5-flash`, temperature=0) with structured output
-5. Maps each `ExtractedLaptopVariant` to a `Laptop` DB record
+5. Maps each `ExtractedLaptopVariant` to a `Laptop` DB record. **Per-variant image filtering** (`_filter_variant_images`): one raw scrape can cover a whole family (MacBook Air 13″ + 15″ share a specs page), so each variant only keeps image URLs whose `NN-inch`/`NN_inch` path token matches its own `display_size_inch` (13.6 → `13`); size-agnostic URLs (shared shots) are kept, and `/meta/…_og.png` social-preview cards still in older raw rows are dropped. Re-processing a raw row overwrites `image_urls` with the filtered set
 6. Handles duplicate SKUs via `IntegrityError` catch + rollback
 7. Updates `processing_status` on the raw record (sets to 'completed')
 
@@ -455,7 +457,8 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 
 ### Request/Response Schemas
 
-- **UserRegisterRequest**: username, email, password (with complexity validator)
+- **UserRegisterRequest**: username (no `@`, non-blank validator), email, password (with complexity validator)
+- **GoogleLoginRequest**: id_token (Google ID token JWT from Google Identity Services)
 - **UserRead**: User profile for read operations (excludes password)
 - **UserProfile**: birthday, gender (validated enum), occupation
 - **UserPreferences**: All preference fields with validators
@@ -485,6 +488,12 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 ### Password Management
 - Hashing: bcrypt algorithm with salt (via passlib)
 - Complexity requirements: Min 8 chars, 1 uppercase, 1 lowercase, 1 number
+- Nullable for Google-created accounts (no local password); password login guards `password IS NULL`
+
+### Google Sign-In
+- ID-token verification flow (no server-side OAuth redirect): `google-auth` checks signature, expiry, issuer, and audience (`GOOGLE_OAUTH_CLIENT_ID`)
+- Requires `email_verified` claim from Google; accounts matched by stable `provider_sub` first, then linked by email
+- Google-created/linked accounts are auto-verified (provider already verified the email)
 
 ### Email Verification
 - JWT tokens with configurable expiration (default: 1 hour)
@@ -504,6 +513,7 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 
 ### Data Validation
 - Email format validation (EmailStr from pydantic)
+- Username validation (non-blank, no `@` — can't shadow an email in the username-or-email login lookup)
 - Gender enum enforcement (Male, Female, Other)
 - Tech-savviness enum enforcement (Very tech-savvy, Somewhat tech-savvy, Not very tech-savvy)
 - Partial update support with `exclude_unset`
@@ -541,6 +551,7 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | 851c59e8102d   | Add pipeline_eval_logs                         | 2026-06-29 | ✅ Complete |
 | fe5716d7dbf4   | Add youtube review ingestion tables            | 2026-07-01 | ✅ Complete |
 | ffb4429867dd   | Add taxonomy (product_types, categories), questionnaire_questions, laptop_customizations.category→category_id FK, laptop_user_preference.budget→JSON range | 2026-07-04 | ✅ Complete |
+| b3d91a4c72e0   | Google login fields on users: password→nullable, auth_provider (default 'local'), provider_sub (unique index) | 2026-07-14 | ✅ Complete |
 
 ---
 
@@ -828,7 +839,8 @@ Backend catalog for the PickWise v1 6-step preference survey (Budget, Purpose, P
 | ------ | --------------------- | ----------------- | ----------------------- |
 | POST   | /auth/register        | None              | Register new user       |
 | GET    | /auth/verify-email    | Query param       | Verify email            |
-| POST   | /auth/login           | OAuth2 form       | Get JWT token           |
+| POST   | /auth/login           | OAuth2 form       | Get JWT token (username or email) |
+| POST   | /auth/google          | Google ID token   | Sign in with Google     |
 | GET    | /auth/me/profile      | Bearer Token      | Get user profile        |
 | PUT    | /auth/me/profile      | Bearer Token      | Update user profile     |
 | GET    | /auth/me/preferences  | Bearer Token      | Get preferences         |
@@ -1055,6 +1067,8 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ User registration with strong password requirements
 - ✅ Email verification system (JWT-scoped, SMTP/SSL)
 - ✅ JWT-based authentication (configurable 7-day expiry)
+- ✅ Login with username **or** email (single OR query on two unique indexed columns)
+- ✅ Google Sign-In (`POST /auth/google`) — ID-token verification, find-or-create + email linking, auto-verified, nullable password
 - ✅ Password reset via email (15-min token expiry)
 - ✅ User profile management (birthday, gender, occupation)
 - ✅ Laptop preference system with multiple criteria
@@ -1138,13 +1152,15 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ Review embedding — `gemini-embedding-001` 768-dim, stored in `laptop_review_chunks`
 - ✅ Review aggregation — top-5 distinct strengths + weaknesses rolled up to `laptop_review_summary`
 - ✅ `get_review_evidence` agent tool — pgvector cosine search on chunks, returns top-3 with YouTube timestamp links
+- ✅ Apple scraper image hygiene — og:image/`/meta/`/`_og.` social-preview cards excluded at scrape time
+- ✅ Per-variant image filtering in AI processor — each Laptop variant keeps only its own screen size's images (`NN-inch` URL token vs `display_size_inch`) plus size-agnostic shots
 
 ---
 
 ## 📝 Notes
 
-- All passwords are hashed using bcrypt before storage
-- Email verification is required before login
+- All passwords are hashed using bcrypt before storage (nullable for Google-created accounts)
+- Email verification is required before login (Google accounts are auto-verified by the provider)
 - JWT tokens expire after configured duration (default: 7 days)
 - Password reset tokens expire after 15 minutes
 - Database uses UUID for all primary keys across all tables
