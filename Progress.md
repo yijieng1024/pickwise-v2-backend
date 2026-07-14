@@ -552,6 +552,7 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | fe5716d7dbf4   | Add youtube review ingestion tables            | 2026-07-01 | ✅ Complete |
 | ffb4429867dd   | Add taxonomy (product_types, categories), questionnaire_questions, laptop_customizations.category→category_id FK, laptop_user_preference.budget→JSON range | 2026-07-04 | ✅ Complete |
 | b3d91a4c72e0   | Google login fields on users: password→nullable, auth_provider (default 'local'), provider_sub (unique index) | 2026-07-14 | ✅ Complete |
+| c8f24d1e9a37   | Add MULTIPLE_CHOICE to questiontype Postgres enum | 2026-07-14 | ✅ Complete |
 
 ---
 
@@ -807,8 +808,8 @@ Two small reference/lookup tables, both mirroring `app/laptops/brand_model.py` +
 Backend catalog for the PickWise v1 6-step preference survey (Budget, Purpose, Priorities, Screen Size, Portability, Brand), so the frontend can render it dynamically instead of hardcoding questions/options. Catalog-only — no answer-submission endpoint; the frontend still writes final values via the existing `PUT /me/preferences`.
 
 #### Files
-- `app/users/questionnaire_model.py` — `QuestionnaireQuestion` table: `product_type_id` (FK), `step_order`, `question_text`, `question_type` (`single_choice` | `ranking`), `target_field` (which `LaptopUserPreference` field the answer populates), `options` (JSON list of `{value, label}`, `null` for the brand question), `help_text`, `is_active`.
-- `app/users/questionnaire_router.py` — `GET /questionnaire?product_type=laptop` (public) — active questions ordered by `step_order`.
+- `app/users/questionnaire_model.py` — `QuestionnaireQuestion` table: `product_type_id` (FK), `step_order`, `question_text`, `question_type` (`single_choice` | `multiple_choice` | `ranking` — native Postgres enum `questiontype`), `target_field` (which `LaptopUserPreference` field the answer populates), `options` (JSON list of `{value, label}`, `null` for the brand question), `help_text`, `is_active`. Plus `Create`/`Update`/`Read` schemas (Read includes `is_active` + `created_at`).
+- `app/users/questionnaire_router.py` — full CRUD mirroring the brand/category shape: public reads (`GET /questionnaire?product_type=laptop`, `include_inactive=true` for admin management views; `GET /questionnaire/{id}`), admin-only writes (POST/PUT/DELETE). Create/update validate the `product_type_id` exists (404) and return 409 if another **active** question already occupies the same `step_order` for that product type. Delete is hard — setting `is_active=false` is the preferred way to retire a question.
 
 #### Seeded Questions
 
@@ -985,7 +986,11 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 
 | Method | Endpoint | Auth | Purpose |
 |---|---|---|---|
-| GET | /questionnaire | None | Active questionnaire questions for a product type, ordered by step |
+| POST | /questionnaire | Admin only | Create question (404 unknown product type, 409 active step conflict) |
+| GET | /questionnaire | None | Questions for a product type ordered by step (active only unless `include_inactive=true`) |
+| GET | /questionnaire/{id} | None | Get specific question |
+| PUT | /questionnaire/{id} | Admin only | Update question (same 404/409 checks) |
+| DELETE | /questionnaire/{id} | Admin only | Hard delete (prefer `is_active=false` to retire) |
 
 ### Health Check
 
