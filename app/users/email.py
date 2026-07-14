@@ -12,7 +12,7 @@ def send_verification_email(to_email: str, token: str):
     message["To"] = to_email
     
     # change this to your frontend URL once you have it set up
-    verify_link = f"http://127.0.0.1:8000/auth/verify-email?token={token}"
+    verify_link = f"https://pickwise-v2-backend.onrender.com//auth/verify-email?token={token}"
     
     html = f"""\
     <html>

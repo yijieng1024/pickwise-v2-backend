@@ -101,6 +101,9 @@ Core authentication features implemented for secure user registration, login, an
 | PUT    | /auth/me/profile      | Bearer Token      | 200    | Update user profile       |
 | GET    | /auth/me/preferences  | Bearer Token      | 200    | Get laptop preferences    |
 | PUT    | /auth/me/preferences  | Bearer Token      | 200    | Create/update preferences |
+| PUT    | /auth/me/avatar       | Bearer Token      | 200    | Upload/replace avatar (JPEG/PNG/WebP ≤ 2 MB) |
+| GET    | /auth/avatar/{user_id}| None              | 200    | Serve avatar image bytes  |
+| DELETE | /auth/me/avatar       | Bearer Token      | 204    | Remove avatar             |
 | POST   | /auth/forgot-password | None              | 202    | Request password reset    |
 | POST   | /auth/reset-password  | Token in body     | 200    | Complete password reset   |
 
@@ -112,6 +115,7 @@ Core authentication features implemented for secure user registration, login, an
 - **Profile Management**: Partial updates for birthday (date), gender (Male/Female/Other with validator), occupation
 - **Preferences System**: Dedicated `laptop_user_preference` table with budget (`{min, max}` JSON RM range — `max: null` means no upper limit), purpose, priorities (weighted 1-10), screen_size, portability, brand_preferences, tech_savviness (validated enum). Written via the existing `PUT /me/preferences`; the 6-step survey that populates these fields is now served dynamically via `GET /questionnaire` (see §15 below) instead of being hardcoded in the frontend.
 - **Password Reset**: JWT-based reset token (15 min expiry), safe messaging (doesn't reveal if user exists)
+- **Avatar Gateway** (`user_avatars` table, 1:1 with users): image bytes stored as Postgres `bytea` — Render's filesystem is ephemeral so disk storage would be wiped every deploy, and no external object storage is configured. Separate table (not a column on `users`) so the blob is never loaded by the per-request `get_current_user` lookup. Upload validates by **magic bytes** (JPEG/PNG/WebP signatures — client Content-Type header is not trusted), 2 MB cap (413), unsupported type → 415. `GET /auth/avatar/{user_id}` is public (frontend uses it directly as `<img src>`) with `Cache-Control: public, max-age=300`
 - **Role-Based Access**: `get_current_user` and `get_current_admin` dependency functions for protected endpoints
 
 ---
@@ -553,6 +557,7 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | ffb4429867dd   | Add taxonomy (product_types, categories), questionnaire_questions, laptop_customizations.category→category_id FK, laptop_user_preference.budget→JSON range | 2026-07-04 | ✅ Complete |
 | b3d91a4c72e0   | Google login fields on users: password→nullable, auth_provider (default 'local'), provider_sub (unique index) | 2026-07-14 | ✅ Complete |
 | c8f24d1e9a37   | Add MULTIPLE_CHOICE to questiontype Postgres enum | 2026-07-14 | ✅ Complete |
+| e5a7c093b1d4   | Add user_avatars table (bytea, 1:1 users, unique user_id index) | 2026-07-14 | ✅ Complete |
 
 ---
 
@@ -842,6 +847,9 @@ Backend catalog for the PickWise v1 6-step preference survey (Budget, Purpose, P
 | GET    | /auth/verify-email    | Query param       | Verify email            |
 | POST   | /auth/login           | OAuth2 form       | Get JWT token (username or email) |
 | POST   | /auth/google          | Google ID token   | Sign in with Google     |
+| PUT    | /auth/me/avatar       | Bearer Token      | Upload/replace avatar   |
+| GET    | /auth/avatar/{user_id}| None              | Serve avatar image      |
+| DELETE | /auth/me/avatar       | Bearer Token      | Remove avatar           |
 | GET    | /auth/me/profile      | Bearer Token      | Get user profile        |
 | PUT    | /auth/me/profile      | Bearer Token      | Update user profile     |
 | GET    | /auth/me/preferences  | Bearer Token      | Get preferences         |
@@ -1076,6 +1084,7 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ Google Sign-In (`POST /auth/google`) — ID-token verification, find-or-create + email linking, auto-verified, nullable password
 - ✅ Password reset via email (15-min token expiry)
 - ✅ User profile management (birthday, gender, occupation)
+- ✅ User avatar gateway — bytea storage in `user_avatars`, magic-byte validation (JPEG/PNG/WebP), 2 MB cap, public serve endpoint with cache headers
 - ✅ Laptop preference system with multiple criteria
 - ✅ Tech-savviness level tracking (validated enum)
 - ✅ Partial update support (profile, preferences, brands, customizations, benchmarks)

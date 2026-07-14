@@ -1,6 +1,8 @@
 
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.config import settings
 from app.logger import setup_logging
 from app.laptops.customization_router import router as customization_router
 from app.laptops.laptop_router import router as laptops_router
@@ -29,6 +31,15 @@ app = FastAPI(
 )
 
 API_PREFIX = "/api/v2"
+
+# Browser clients (the Next.js frontend) need CORS headers; requests are
+# authenticated with bearer tokens, not cookies, so no credentials needed.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # declare routes before including routers to avoid circular imports
 app.include_router(users_router, prefix=API_PREFIX)

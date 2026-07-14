@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     gemini_api_key: str
 
     # Google Sign-In (OAuth web client ID) — optional; POST /auth/google
-    # returns 400 when unset. Used only as the audience check when verifying
     # Google ID tokens sent by the frontend.
     google_oauth_client_id: Optional[str] = None
 
@@ -33,6 +32,10 @@ class Settings(BaseSettings):
     # of search_malaysian_market_price reports "unavailable" when unset and
     # the tool answers from the catalog layer + marketplace search links
     serper_api_key: Optional[str] = None
+
+    # Comma-separated origins allowed to call the API from a browser
+    # (CORS). Add the deployed frontend origin here in production.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

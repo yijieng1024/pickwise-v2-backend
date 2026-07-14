@@ -1,6 +1,7 @@
 import re
 from datetime import timedelta, datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
@@ -9,6 +10,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.config import settings
 from app.users.models import User, UserRead, Token, LaptopUserPreference
+from app.users.avatar_model import UserAvatar
 from app.users.auth import (
     create_password_reset_token,
     get_password_hash,
@@ -309,6 +311,108 @@ def update_my_preferences(
         brand_preferences=updated_pref.brand_preferences or [], #type: ignore
         tech_savviness=updated_pref.tech_savviness #type: ignore
     )
+
+# --- Avatar gateway -------------------------------------------------------
+# Bytes live in the user_avatars table (Render's filesystem is ephemeral, so
+# disk storage would be wiped on every deploy). Serve URL is public so the
+# frontend can point <img src> straight at it.
+
+MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2 MB
+
+# magic-byte signatures — don't trust the client's Content-Type header alone
+_IMAGE_SIGNATURES = [
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+]
+
+
+def _sniff_image_type(data: bytes) -> str | None:
+    for magic, content_type in _IMAGE_SIGNATURES:
+        if data.startswith(magic):
+            return content_type
+    # WEBP: RIFF....WEBP
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+@router.put("/me/avatar")
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Upload or replace the current user's avatar (JPEG/PNG/WebP, max 2 MB)."""
+    data = await file.read(MAX_AVATAR_BYTES + 1)
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Avatar must be 2 MB or smaller",
+        )
+
+    content_type = _sniff_image_type(data)
+    if not content_type:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Avatar must be a JPEG, PNG, or WebP image",
+        )
+
+    avatar = session.exec(
+        select(UserAvatar).where(UserAvatar.user_id == current_user.id)
+    ).first()
+
+    if avatar:
+        avatar.data = data
+        avatar.content_type = content_type
+        avatar.updated_at = datetime.now(timezone.utc)
+    else:
+        avatar = UserAvatar(user_id=current_user.id, content_type=content_type, data=data)
+
+    session.add(avatar)
+    session.commit()
+
+    return {
+        "message": "Avatar updated successfully",
+        "avatar_url": f"/api/v2/auth/avatar/{current_user.id}",
+        "content_type": content_type,
+        "size_bytes": len(data),
+    }
+
+
+@router.get("/avatar/{user_id}")
+def get_avatar(user_id: UUID, session: Session = Depends(get_session)):
+    """Public — serve a user's avatar image bytes."""
+    avatar = session.exec(
+        select(UserAvatar).where(UserAvatar.user_id == user_id)
+    ).first()
+
+    if not avatar:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Avatar not found")
+
+    return Response(
+        content=avatar.data,
+        media_type=avatar.content_type,
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@router.delete("/me/avatar", status_code=status.HTTP_204_NO_CONTENT)
+def delete_my_avatar(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Remove the current user's avatar."""
+    avatar = session.exec(
+        select(UserAvatar).where(UserAvatar.user_id == current_user.id)
+    ).first()
+
+    if not avatar:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Avatar not found")
+
+    session.delete(avatar)
+    session.commit()
+    return None
+
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
 def forgot_password(
