@@ -1,5 +1,7 @@
 import re
+import requests
 from datetime import timedelta, datetime, timezone
+from typing import Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Response
 from fastapi.security import OAuth2PasswordRequestForm
@@ -169,6 +171,31 @@ def _generate_unique_username(session: Session, email: str) -> str:
     return candidate
 
 
+def _import_google_avatar(session: Session, user: User, picture_url: Optional[str]) -> None:
+    """Best-effort copy of the Google profile photo into user_avatars, so the
+    frontend serves every avatar from the same gateway URL. Only runs when the
+    user has no avatar yet (never overwrites an uploaded or deleted one), and
+    never fails the login."""
+    if not picture_url:
+        return
+    try:
+        if session.exec(select(UserAvatar).where(UserAvatar.user_id == user.id)).first():
+            return
+        # Google serves 96px by default; ask for 256px for retina displays
+        resp = requests.get(picture_url.replace("=s96-c", "=s256-c"), timeout=5)
+        resp.raise_for_status()
+        data = resp.content
+        if len(data) > MAX_AVATAR_BYTES:
+            return
+        content_type = _sniff_image_type(data)
+        if not content_type:
+            return
+        session.add(UserAvatar(user_id=user.id, content_type=content_type, data=data))
+        session.commit()
+    except Exception:
+        session.rollback()  # avatar import is cosmetic — never block login
+
+
 @router.post("/google", response_model=Token)
 def google_login(request: GoogleLoginRequest, session: Session = Depends(get_session)):
     """
@@ -217,6 +244,7 @@ def google_login(request: GoogleLoginRequest, session: Session = Depends(get_ses
         session.add(user)
         session.commit()
         session.refresh(user)
+        _import_google_avatar(session, user, claims.get("picture"))
         return _issue_access_token(user)
 
     # 3. First visit — create a new account (no local password)
@@ -231,6 +259,7 @@ def google_login(request: GoogleLoginRequest, session: Session = Depends(get_ses
     session.add(user)
     session.commit()
     session.refresh(user)
+    _import_google_avatar(session, user, claims.get("picture"))
     return _issue_access_token(user)
 
 
