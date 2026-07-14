@@ -4,9 +4,21 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Optional, Dict
 
 class UserRegisterRequest(BaseModel):
-    username: str 
+    username: str
     email: EmailStr
     password: str = Field(min_length=8, description="Must be at least 8 characters")
+
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        """Usernames must not look like email addresses — login accepts either,
+        so an '@' in a username could shadow another user's email."""
+        v = v.strip()
+        if not v:
+            raise ValueError("Username must not be empty.")
+        if "@" in v:
+            raise ValueError("Username must not contain '@'.")
+        return v
 
     @field_validator('password')
     @classmethod
@@ -54,6 +66,9 @@ class UserPreferences(BaseModel):
         if v is not None and v not in ["Very tech-savvy", "Somewhat tech-savvy", "Not very tech-savvy"]:
             raise ValueError("Tech-savviness must be 'Very tech-savvy', 'Somewhat tech-savvy', or 'Not very tech-savvy'")
         return v
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str = Field(description="Google ID token (JWT) obtained by the frontend via Google Identity Services")
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr

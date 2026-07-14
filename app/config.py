@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     # Gemini API
     gemini_api_key: str
 
+    # Google Sign-In (OAuth web client ID) — optional; POST /auth/google
+    # returns 400 when unset. Used only as the audience check when verifying
+    # Google ID tokens sent by the frontend.
+    google_oauth_client_id: Optional[str] = None
+
     # YouTube Data API v3 — optional until key is obtained; discovery.py raises on None
     youtube_api_key: Optional[str] = None
 

@@ -75,20 +75,18 @@ async def _extract_apple_specs(page) -> dict:
 
     extracted_images = []
     try:
-        meta_image = page.locator('meta[property="og:image"]').first
-        if await meta_image.count() > 0:
-            content = await meta_image.get_attribute("content")
-            if content:
-                extracted_images.append(content)
-
         all_imgs = await page.locator("img").evaluate_all("imgs => imgs.map(i => i.src)")
         for src in all_imgs:
             if not src:
                 continue
             src_lower = src.lower()
-            if any(ext in src_lower for ext in [".png", ".jpg", ".jpeg", ".webp"]) and "icon" not in src_lower and "logo" not in src_lower:
-                if src not in extracted_images:
-                    extracted_images.append(src)
+            if not any(ext in src_lower for ext in [".png", ".jpg", ".jpeg", ".webp"]):
+                continue
+            # icons/logos and the /meta/…_og.png social-preview card are not product shots
+            if any(bad in src_lower for bad in ["icon", "logo", "/meta/", "_og."]):
+                continue
+            if src not in extracted_images:
+                extracted_images.append(src)
     except Exception as e:
         print(f"⚠️ Image error: {e}")
 

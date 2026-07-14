@@ -16,8 +16,10 @@ class User(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     username: str = Field(unique=True, index=True)
     email: str = Field(unique=True, index=True)
-    password: str
+    password: Optional[str] = Field(default=None, description="bcrypt hash; None for social-login accounts with no local password")
     role: str = Field(default="user")
+    auth_provider: str = Field(default="local", description="How the account was created: 'local' or 'google'")
+    provider_sub: Optional[str] = Field(default=None, unique=True, index=True, description="Stable OAuth subject ID from the provider (Google 'sub')")
     is_verified: bool = Field(default=False)
     birthday: Optional[date] = Field(default=None, description="User's date of birth")
     gender: Optional[str] = Field(default=None, description="User's gender (Male, Female, Other)")
