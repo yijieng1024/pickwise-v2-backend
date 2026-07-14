@@ -114,15 +114,17 @@ def update_my_profile(
 
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
-    # search user by username
-    statement = select(User).where(User.username == form_data.username)
+    # search user by username or email
+    statement = select(User).where(
+        (User.username == form_data.username) | (User.email == form_data.username)
+    )
     user = session.exec(statement).first()
-    
+
     # verify password
     if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect username/email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
         
