@@ -1,6 +1,7 @@
 from datetime import datetime
 import json
-from typing import cast
+import re
+from typing import List, Optional, cast
 
 from sqlmodel import Session, select
 
@@ -12,6 +13,33 @@ from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
 from app.processor.schemas import ExtractedLaptopFamily
+
+# Screen-size token in an image URL path, e.g. ".../macbook_air_13-inch_..." or "15_inch"
+_SIZE_TOKEN_RE = re.compile(r"(\d{2})[-_]inch")
+
+
+def _filter_variant_images(
+    image_urls: Optional[List[str]], display_size_inch: Optional[float]
+) -> List[str]:
+    """
+    One raw scrape can cover a whole family (e.g. MacBook Air 13" + 15"), but
+    each Laptop variant should only carry its own size's images. Keep URLs
+    whose size token matches the variant's display_size_inch (13.6 → "13"),
+    keep size-agnostic URLs, and drop /meta/…_og.png social-preview cards
+    still present in older raw rows.
+    """
+    size_token = str(int(display_size_inch)) if display_size_inch else None
+    filtered = []
+    for url in image_urls or []:
+        url_lower = url.lower()
+        if "/meta/" in url_lower or "_og." in url_lower:
+            continue
+        sizes_in_url = _SIZE_TOKEN_RE.findall(url_lower)
+        if sizes_in_url and size_token and size_token not in sizes_in_url:
+            continue
+        filtered.append(url)
+    return filtered
+
 
 def process_raw_laptop_data(
     raw_laptop_id: str,
@@ -205,7 +233,9 @@ def process_raw_laptop_data(
 
                 # Part 9: External/Raw Assets
                 raw_specs=spec_or_unmapped,
-                image_urls=raw_data.image_urls,
+                image_urls=_filter_variant_images(
+                    raw_data.image_urls, variant.display_size_inch
+                ),
             )
 
             existing = session.exec(
