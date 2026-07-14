@@ -7,6 +7,7 @@ from sqlmodel import SQLModel, Field, Column, JSON
 
 class QuestionType(str, Enum):
     SINGLE_CHOICE = "single_choice"
+    MULTIPLE_CHOICE = "multiple_choice"
     RANKING = "ranking"
 
 
@@ -34,3 +35,27 @@ class QuestionnaireQuestionRead(SQLModel):
     target_field: str
     options: Optional[List[dict]]
     help_text: Optional[str]
+    is_active: bool
+    created_at: datetime
+
+
+class QuestionnaireQuestionCreate(SQLModel):
+    product_type_id: uuid.UUID
+    step_order: int
+    question_text: str
+    question_type: QuestionType
+    target_field: str
+    options: Optional[List[dict]] = None
+    help_text: Optional[str] = None
+    is_active: bool = True
+
+
+class QuestionnaireQuestionUpdate(SQLModel):
+    product_type_id: Optional[uuid.UUID] = None
+    step_order: Optional[int] = None
+    question_text: Optional[str] = None
+    question_type: Optional[QuestionType] = None
+    target_field: Optional[str] = None
+    options: Optional[List[dict]] = None
+    help_text: Optional[str] = None
+    is_active: Optional[bool] = None
