@@ -67,6 +67,9 @@ class UserPreferences(BaseModel):
             raise ValueError("Tech-savviness must be 'Very tech-savvy', 'Somewhat tech-savvy', or 'Not very tech-savvy'")
         return v
 
+class GoogleLoginRequest(BaseModel):
+    id_token: str = Field(description="Google ID token (JWT) obtained by the frontend via Google Identity Services")
+
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 

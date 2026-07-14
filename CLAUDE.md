@@ -55,6 +55,7 @@ SMTP_PASSWORD=your-gmail-app-password
 GEMINI_API_KEY=your-gemini-api-key
 YOUTUBE_API_KEY=your-youtube-data-api-key   # optional — server starts without it
 SERPER_API_KEY=your-serper-dev-api-key      # optional — market price tool's live-listings layer; catalog layer works without it
+GOOGLE_OAUTH_CLIENT_ID=xxx.apps.googleusercontent.com  # optional — Sign in with Google; POST /auth/google returns 400 without it
 ```
 
 `GEMINI_API_KEY` is a required setting (`app/config.py`) and is passed explicitly (`google_api_key=settings.gemini_api_key`) to every Gemini client — embeddings, processor, recommendation, agent, and review processor. Do **not** rely on the ambient `GOOGLE_API_KEY` / Application Default Credentials — that won't exist in Docker/production.

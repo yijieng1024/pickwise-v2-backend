@@ -1,6 +1,9 @@
+import re
 from datetime import timedelta, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 from sqlmodel import Session, select
 
 from app.database import get_session
@@ -17,7 +20,7 @@ from app.users.auth import (
 )
 
 from app.users.email import send_password_reset_email, send_verification_email
-from app.users.schema import ForgotPasswordRequest, ResetPasswordRequest, UserPreferences, UserRegisterRequest, UserProfile
+from app.users.schema import ForgotPasswordRequest, GoogleLoginRequest, ResetPasswordRequest, UserPreferences, UserRegisterRequest, UserProfile
 from app.users.auth import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -120,8 +123,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = D
     )
     user = session.exec(statement).first()
 
-    # verify password
-    if not user or not verify_password(form_data.password, user.password):
+    # verify password (social-login accounts have no local password)
+    if not user or not user.password or not verify_password(form_data.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username/email or password",
@@ -141,8 +144,93 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = D
         data={"sub": str(user.id)},
         expires_delta=access_token_expires
     )
-    
+
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+def _issue_access_token(user: User) -> dict:
+    access_token = create_access_token(
+        data={"sub": str(user.id)},
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+def _generate_unique_username(session: Session, email: str) -> str:
+    """Derive a unique username from the email prefix (no '@' allowed in usernames)."""
+    base = re.sub(r"[^a-zA-Z0-9._-]", "", email.split("@")[0]) or "user"
+    candidate = base
+    suffix = 0
+    while session.exec(select(User).where(User.username == candidate)).first():
+        suffix += 1
+        candidate = f"{base}{suffix}"
+    return candidate
+
+
+@router.post("/google", response_model=Token)
+def google_login(request: GoogleLoginRequest, session: Session = Depends(get_session)):
+    """
+    Sign in with Google. The frontend obtains an ID token via Google Identity
+    Services and posts it here; we verify it against our OAuth client ID and
+    find-or-create the user, linking by Google 'sub' first, then by email.
+    """
+    if not settings.google_oauth_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google login is not configured on this server."
+        )
+
+    try:
+        # verifies signature, expiry, issuer, and audience (our client ID)
+        claims = google_id_token.verify_oauth2_token(
+            request.id_token,
+            google_requests.Request(),
+            settings.google_oauth_client_id,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google token"
+        )
+
+    email = claims.get("email")
+    if not email or not claims.get("email_verified"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google account has no verified email"
+        )
+    google_sub = claims["sub"]
+
+    # 1. Returning Google user — matched by stable Google subject ID
+    user = session.exec(select(User).where(User.provider_sub == google_sub)).first()
+    if user:
+        return _issue_access_token(user)
+
+    # 2. Existing local account with the same email — link it to Google.
+    #    Google has verified the email, so the account counts as verified too.
+    user = session.exec(select(User).where(User.email == email)).first()
+    if user:
+        user.provider_sub = google_sub
+        user.is_verified = True
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return _issue_access_token(user)
+
+    # 3. First visit — create a new account (no local password)
+    user = User(
+        username=_generate_unique_username(session, email),
+        email=email,
+        password=None,
+        auth_provider="google",
+        provider_sub=google_sub,
+        is_verified=True,
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return _issue_access_token(user)
+
 
 @router.get("/me/preferences", response_model=UserPreferences)
 def get_my_preferences(
