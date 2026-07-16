@@ -18,10 +18,15 @@ from typing import Literal, Optional
 
 from app.rag.reranker import RankedCandidate
 
-# Calibrated via NDCG evaluation (run_ndcg.py). 0.40 stabilises borderline
-# relaxation cases (e.g. tight weight constraints) without letting truly
-# irrelevant results through. Raise if impossible queries start passing gate.
-RELEVANCE_THRESHOLD = 0.40
+# THIS VALUE IS EMBEDDING-MODEL-SPECIFIC. 0.40 was calibrated via NDCG
+# evaluation (run_ndcg.py) for gemini-embedding-001, whose good matches
+# scored ~0.6-0.75. The switch to nvidia/llama-nemotron-embed-vl-1b-v2
+# (OpenRouter) compressed the similarity scale: measured spot-check on the
+# live catalog put clearly-relevant tops at 0.23-0.42 and clearly-irrelevant
+# (guitar, washing machine, phone) at 0.14-0.19, so 0.20 keeps the same
+# proportional strictness. Re-run the NDCG calibration for a proper tune,
+# and re-derive this whenever the embedding model changes again.
+RELEVANCE_THRESHOLD = 0.20
 
 
 @dataclass

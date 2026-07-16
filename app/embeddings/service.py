@@ -18,13 +18,17 @@ from app.laptops.brand_model import LaptopBrand
 # /embeddings/generate-all must be re-run or similarity scores are garbage.
 # check_embedding_ctx_length=False is required on non-OpenAI backends:
 # without it langchain-openai pre-tokenizes with tiktoken and sends
-# token-ID arrays that OpenRouter cannot decode.
+# token-ID arrays that OpenRouter cannot decode. encoding_format="float"
+# is equally required: the OpenAI SDK defaults to requesting base64, which
+# this provider answers with HTTP 200 and an empty data array
+# ("No embedding data received").
 _embedder = OpenAIEmbeddings(
     model="nvidia/llama-nemotron-embed-vl-1b-v2:free",
     api_key=settings.openrouter_api_key,
     base_url="https://openrouter.ai/api/v1",
     dimensions=768,
     check_embedding_ctx_length=False,
+    model_kwargs={"encoding_format": "float"},
 )
 
 
@@ -75,8 +79,21 @@ def embed_text(text: str) -> list[float]:
     WHY a thin wrapper:
     Centralises the embedding API call so every caller (laptop, future phone)
     uses the same model and can be swapped in one place if the model changes.
+
+    WHY the retry: OpenRouter's :free embeddings endpoint occasionally answers
+    HTTP 200 with an empty data array (observed under bursty request rates),
+    which surfaces from langchain-openai as TypeError/ValueError rather than a
+    retryable API error. Brief backoff clears it; callers with their own
+    fallback (rag/retrieval.py) still get an exception if all attempts fail.
     """
-    return _embedder.embed_query(text)
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            return _embedder.embed_query(text)
+        except (TypeError, ValueError) as e:
+            last_exc = e
+            time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"Embedding call returned no data after 3 attempts: {last_exc}") from last_exc
 
 
 def upsert_laptop_embedding(session: Session, laptop_id: UUID, vector: list[float]) -> None:

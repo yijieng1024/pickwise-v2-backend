@@ -14,6 +14,17 @@ class ExtractedLaptopVariant(BaseModel):
         )
     )
     product_name: str = Field(description="Full variant name, e.g., '14-inch MacBook Pro (M5 Pro, 16GB RAM, 512GB SSD)'")
+    categories: List[str] = Field(
+        default_factory=list,
+        description=(
+            "1-3 use-case tags describing who this laptop is for, judged from its specs "
+            "(e.g. a dedicated RTX GPU + high refresh rate → 'Gaming'; light weight + long "
+            "battery → 'Business'). STRONGLY prefer exact names from the [AVAILABLE CATEGORIES] "
+            "list in the prompt. Only invent a new tag when none of the available ones fit; a new "
+            "tag must be a short Title Case use-case word (like 'Workstation'), never a spec, "
+            "chip, or brand name."
+        ),
+    )
     release_year: Optional[int] = Field(description="Estimate the release year based on the processor generation. If completely unknown, use the 'Current System Year' provided in the prompt.")
     price_rm: float = Field(description="Price in Malaysian Ringgit (RM). Extract only the number. If unknown, output 0.0")
 
@@ -92,3 +103,18 @@ class ExtractedLaptopVariant(BaseModel):
 
 class ExtractedLaptopFamily(BaseModel):
     variants: List[ExtractedLaptopVariant]
+
+
+class ExtractedLaptopCategories(BaseModel):
+    """Instructions for the AI to tag one existing laptop with use-case categories."""
+
+    categories: List[str] = Field(
+        description=(
+            "1-3 use-case tags describing who this laptop is for, judged from its specs "
+            "(e.g. a dedicated RTX GPU + high refresh rate → 'Gaming'; light weight + long "
+            "battery → 'Business'). STRONGLY prefer exact names from the [AVAILABLE CATEGORIES] "
+            "list in the prompt. Only invent a new tag when none of the available ones fit; a new "
+            "tag must be a short Title Case use-case word (like 'Workstation'), never a spec, "
+            "chip, or brand name."
+        ),
+    )
