@@ -3,7 +3,8 @@ from typing import Optional
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.rate_limiters import BaseRateLimiter
+from langchain_openai import ChatOpenAI
 from sqlmodel import Session
 
 from app.agent.tools import ALL_TOOLS
@@ -18,9 +19,23 @@ from app.laptops.laptop_models import Laptop
 _HISTORY_WINDOW = 12
 
 # Single source of truth for the agent LLM config — eval/run_eval.py imports
-# these so offline evals always measure the same setup production runs.
-AGENT_MODEL = "gemma-4-31b-it"
+# build_agent_llm() so offline evals always measure the same setup
+# production runs. Served via OpenRouter's OpenAI-compatible API.
+AGENT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 AGENT_TEMPERATURE = 0.3
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def build_agent_llm(rate_limiter: Optional[BaseRateLimiter] = None) -> ChatOpenAI:
+    """Construct the agent LLM. The optional rate_limiter is for the eval
+    harness, which shares one global limiter across agent + judge calls."""
+    return ChatOpenAI(
+        model=AGENT_MODEL,
+        temperature=AGENT_TEMPERATURE,
+        api_key=settings.openrouter_api_key,
+        base_url=_OPENROUTER_BASE_URL,
+        rate_limiter=rate_limiter,
+    )
 
 _SYSTEM_PROMPT = (
     "You are Pico, an expert laptop buying consultant. You have "
@@ -157,11 +172,7 @@ async def run_agent(
     conv_laptops: list[ConversationLaptop],
     session: Session,
 ) -> tuple[str, Optional[list[dict]]]:
-    llm = ChatGoogleGenerativeAI(
-        model=AGENT_MODEL,
-        temperature=AGENT_TEMPERATURE,
-        google_api_key=settings.gemini_api_key,
-    )
+    llm = build_agent_llm()
 
     langchain_messages = [SystemMessage(content=_SYSTEM_PROMPT)]
 

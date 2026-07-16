@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Gemini API
     gemini_api_key: str
 
+    # OpenRouter — agent LLM only (embeddings/processor/recommendation stay on Gemini)
+    openrouter_api_key: str
+
     # Google Sign-In (OAuth web client ID) — optional; POST /auth/google
     # Google ID tokens sent by the frontend.
     google_oauth_client_id: Optional[str] = None
@@ -33,6 +36,9 @@ class Settings(BaseSettings):
     # the tool answers from the catalog layer + marketplace search links
     serper_api_key: Optional[str] = None
 
+    # OpenRouter API Key for LLMs
+    openrouter_api_key: str
+    
     # Comma-separated origins allowed to call the API from a browser
     # (CORS). Add the deployed frontend origin here in production.
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"

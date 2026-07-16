@@ -81,20 +81,13 @@ def _get_agent():
     global _agent
     if _agent is None:
         from langchain.agents import create_agent
-        from langchain_google_genai import ChatGoogleGenerativeAI
 
-        # model/temperature imported from graph.py so the eval always
+        # the LLM is built by graph.py's factory so the eval always
         # measures the exact production configuration
-        from app.agent.graph import AGENT_MODEL, AGENT_TEMPERATURE
+        from app.agent.graph import build_agent_llm
         from app.agent.tools import ALL_TOOLS
-        from app.config import settings
 
-        llm = ChatGoogleGenerativeAI(
-            model=AGENT_MODEL,
-            temperature=AGENT_TEMPERATURE,
-            google_api_key=settings.gemini_api_key,
-            rate_limiter=_get_rate_limiter(),
-        )
+        llm = build_agent_llm(rate_limiter=_get_rate_limiter())
         _agent = create_agent(llm, ALL_TOOLS)
     return _agent
 

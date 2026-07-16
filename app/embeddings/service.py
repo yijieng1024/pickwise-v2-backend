@@ -2,21 +2,29 @@ import time
 from datetime import datetime, timezone
 from uuid import UUID
 
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from sqlmodel import Session, select
 
 from app.config import settings
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
 from app.laptops.brand_model import LaptopBrand
 
-# WHY gemini-embedding-001 with output_dimensionality=768: text-embedding-004
-# was retired by Google. gemini-embedding-001 defaults to 3072 dimensions, so
-# output_dimensionality pins it to 768 to match the existing Vector(768)
-# column in LaptopEmbedding without needing a schema migration.
-_embedder = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-001",
-    google_api_key=settings.gemini_api_key,
-    output_dimensionality=768,
+# WHY llama-nemotron-embed with dimensions=768: served via OpenRouter's
+# OpenAI-compatible /embeddings endpoint (replaced gemini-embedding-001).
+# The model natively outputs 2048 dims but is Matryoshka-trained, so
+# dimensions=768 keeps the existing Vector(768) columns without a schema
+# migration. Vectors from this model live in a different embedding space
+# than the old Gemini ones — after any model change, POST
+# /embeddings/generate-all must be re-run or similarity scores are garbage.
+# check_embedding_ctx_length=False is required on non-OpenAI backends:
+# without it langchain-openai pre-tokenizes with tiktoken and sends
+# token-ID arrays that OpenRouter cannot decode.
+_embedder = OpenAIEmbeddings(
+    model="nvidia/llama-nemotron-embed-vl-1b-v2:free",
+    api_key=settings.openrouter_api_key,
+    base_url="https://openrouter.ai/api/v1",
+    dimensions=768,
+    check_embedding_ctx_length=False,
 )
 
 
@@ -124,7 +132,7 @@ def generate_all_laptop_embeddings(session: Session) -> dict:
             vector = embed_text(text)
             upsert_laptop_embedding(session, laptop.id, vector)
             succeeded += 1
-            time.sleep(0.3)  # respect Gemini rate limits
+            time.sleep(3.5)  # OpenRouter :free models allow ~20 requests/min
         except Exception as e:
             failed += 1
             errors.append({"laptop_id": str(laptop.id), "error": str(e)})
