@@ -33,7 +33,11 @@ def get_laptop_ranges(session: Session) -> dict:
 
     laptop_row = session.execute(
         sa_select(
-            func.min(Laptop.price_rm),  func.max(Laptop.price_rm),
+            # price_rm = 0 means "price unknown" (scored neutral 50 by the
+            # engine) — it must not drag the min down or every real price
+            # normalizes against a fictional free laptop.
+            func.min(Laptop.price_rm).filter(Laptop.price_rm > 0),
+            func.max(Laptop.price_rm),
             func.min(Laptop.ram_gb),    func.max(Laptop.ram_gb),
             func.min(Laptop.ssd_gb),    func.max(Laptop.ssd_gb),
             func.min(Laptop.weight_kg), func.max(Laptop.weight_kg),

@@ -20,29 +20,37 @@ from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop
 from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
-from app.pickscore.engine import DEFAULT_PRIORITY, calculate_pick_score
+from app.pickscore.engine import calculate_pick_score
 
-# Use-case weight profiles (same 1-10 scale as DEFAULT_PRIORITY's N-i rule).
-# Keys are the API slugs the frontend sends/receives. screen_size and brand
-# always score a neutral 50 in general mode, so their weights stay minimal.
+# Use-case weight profiles (1-10 base-weight scale; normalized to sum 1 in
+# calculate_pick_score). Keys are the API slugs the frontend sends/receives.
+# screen_size and brand always score a neutral 50 in general mode, so their
+# weights stay low. general_use deliberately does NOT reuse the engine's
+# N-i DEFAULT_PRIORITY: that rule gave GPU ~17% weight for daily use — an
+# explicit all-rounder profile (price-sensitive, GPU minimal) is more
+# defensible.
 USE_CASE_PRIORITIES: dict[str, dict[str, float]] = {
     "office_study": {  # basic tasks: cheap, portable, all-day battery
         "price": 9, "cpu": 6, "gpu": 2, "ram_storage": 5,
         "portability": 7, "battery": 8, "screen_size": 2, "brand": 1,
     },
-    "programming": {  # compile/IDE workloads: CPU + RAM first, still mobile
-        "price": 6, "cpu": 9, "gpu": 4, "ram_storage": 9,
-        "portability": 6, "battery": 7, "screen_size": 2, "brand": 1,
+    "programming": {  # compile/IDE workloads: CPU + RAM + screen real estate
+        # over extreme ultra-portability
+        "price": 6, "cpu": 9, "gpu": 3, "ram_storage": 9,
+        "portability": 4, "battery": 6, "screen_size": 3, "brand": 1,
     },
-    "gaming": {  # GPU-bound, usually plugged in and stationary
+    "gaming": {  # portable desktop: raw GPU/CPU is all that matters
         "price": 5, "cpu": 8, "gpu": 10, "ram_storage": 7,
-        "portability": 1, "battery": 2, "screen_size": 3, "brand": 1,
+        "portability": 1, "battery": 1, "screen_size": 3, "brand": 1,
     },
     "creative_work": {  # design/video/3D: GPU + RAM heavy, bigger screens help
         "price": 4, "cpu": 8, "gpu": 9, "ram_storage": 8,
-        "portability": 3, "battery": 3, "screen_size": 3, "brand": 1,
+        "portability": 3, "battery": 3, "screen_size": 4, "brand": 1,
     },
-    "general_use": dict(DEFAULT_PRIORITY),  # mixed/casual: balanced N-i rule
+    "general_use": {  # balanced all-rounder: price-first, GPU minimal
+        "price": 9, "cpu": 7, "gpu": 2, "ram_storage": 7,
+        "portability": 6, "battery": 6, "screen_size": 4, "brand": 2,
+    },
 }
 
 

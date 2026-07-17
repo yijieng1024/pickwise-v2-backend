@@ -849,10 +849,10 @@ Stores one general-mode PickScore per laptop × use case in the `laptop_pick_sco
 | Slug | Emphasis |
 |---|---|
 | `office_study` | price 9, battery 8, portability 7 — cheap, mobile, all-day |
-| `programming` | cpu 9, ram_storage 9, battery 7 — compile/IDE workloads |
-| `gaming` | gpu 10, cpu 8, ram_storage 7; portability 1, battery 2 — plugged-in |
-| `creative_work` | gpu 9, cpu 8, ram_storage 8 — design/video/3D |
-| `general_use` | = `DEFAULT_PRIORITY` (balanced N-i rule) |
+| `programming` | cpu 9, ram_storage 9, price 6, battery 6 — compile/IDE workloads; screen 3 over ultra-portability (4) |
+| `gaming` | gpu 10, cpu 8, ram_storage 7; portability 1, battery 1 — portable desktop, raw performance only |
+| `creative_work` | gpu 9, cpu 8, ram_storage 8, screen 4 — design/video/3D |
+| `general_use` | price 9, cpu 7, ram_storage 7, portability 6, battery 6, gpu 2 — explicit all-rounder (replaced the N-i `DEFAULT_PRIORITY`, which overweighted GPU ~17% for daily use) |
 
 #### Key Design:
 - `laptop_pick_scores`: UUID pk, `laptop_id` FK, `use_case` slug (both indexed), `score`, full factor `breakdown` + `flags` as JSON, `updated_at`; unique on `(laptop_id, use_case)` — one row per laptop per use case is exactly the shape per-use-case ranking needs (`WHERE use_case = ? ORDER BY score DESC`)
