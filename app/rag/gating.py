@@ -18,10 +18,19 @@ from typing import Literal, Optional
 
 from app.rag.reranker import RankedCandidate
 
-# Calibrated via NDCG evaluation (run_ndcg.py). 0.40 stabilises borderline
-# relaxation cases (e.g. tight weight constraints) without letting truly
-# irrelevant results through. Raise if impossible queries start passing gate.
-RELEVANCE_THRESHOLD = 0.40
+# THIS VALUE IS EMBEDDING-MODEL-SPECIFIC. Calibrated for gemini-embedding-2
+# via spot-check on the live catalog (2026-07-17, after full re-embed):
+# relevant tops measured 0.537-0.732 (the low end is short vague Chinese
+# queries — catalog documents are English, so cross-lingual similarity runs
+# lower) and clearly-irrelevant tops 0.418-0.546 (washing machine, fridge,
+# guitar, scooter, office chair). The ranges overlap slightly, so 0.53 sits
+# at the boundary: all measured relevant queries pass, all irrelevant ones
+# gate except borderline household items at ~0.54 — acceptable because the
+# agent's scope-enforcement prompt refuses non-laptop requests before
+# search_laptops is ever called. (History: 0.40 for gemini-embedding-001,
+# 0.20 for nemotron-embed.) Re-run the NDCG calibration (run_ndcg.py) for a
+# proper tune, and re-derive whenever the embedding model changes again.
+RELEVANCE_THRESHOLD = 0.53
 
 
 @dataclass

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.database import get_session
@@ -17,7 +17,7 @@ from app.reviews.models import (
 )
 from app.reviews.matcher import match_laptop
 from app.reviews.processor import process_raw_review
-from app.reviews.service import ingest_for_laptop
+from app.reviews.service import ingest_bulk, ingest_for_laptop
 from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
@@ -100,6 +100,37 @@ def ingest_laptop(
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     return counts
+
+
+@router.post("/ingest-bulk")
+def ingest_bulk_endpoint(
+    limit: int = Query(
+        default=5,
+        ge=1,
+        le=20,
+        description=(
+            "Max laptop families to search this run. Each family costs "
+            "~active_channels × 100 YouTube quota units (daily quota: 10,000 — "
+            "with 11 channels that's ~9 families/day)."
+        ),
+    ),
+    skip_covered: bool = Query(
+        default=True,
+        description="Skip families that already have a matched raw review.",
+    ),
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """
+    Bulk discovery: runs discovery + transcript + matching across the catalog,
+    one YouTube search per laptop *family* (config variants collapsed — a
+    reviewer covers 'TUF Gaming F15', not each RAM/SSD configuration).
+    Re-run daily with skip_covered=true to walk the catalog within quota.
+    """
+    try:
+        return ingest_bulk(session, limit=limit, skip_covered=skip_covered)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # --- Raw review management ---

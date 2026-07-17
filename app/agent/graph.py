@@ -3,6 +3,7 @@ from typing import Optional
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.rate_limiters import BaseRateLimiter
 from langchain_google_genai import ChatGoogleGenerativeAI
 from sqlmodel import Session
 
@@ -18,9 +19,21 @@ from app.laptops.laptop_models import Laptop
 _HISTORY_WINDOW = 12
 
 # Single source of truth for the agent LLM config — eval/run_eval.py imports
-# these so offline evals always measure the same setup production runs.
+# build_agent_llm() so offline evals always measure the same setup
+# production runs.
 AGENT_MODEL = "gemma-4-31b-it"
 AGENT_TEMPERATURE = 0.3
+
+
+def build_agent_llm(rate_limiter: Optional[BaseRateLimiter] = None) -> ChatGoogleGenerativeAI:
+    """Construct the agent LLM. The optional rate_limiter is for the eval
+    harness, which shares one global limiter across agent + judge calls."""
+    return ChatGoogleGenerativeAI(
+        model=AGENT_MODEL,
+        temperature=AGENT_TEMPERATURE,
+        google_api_key=settings.gemini_api_key,
+        rate_limiter=rate_limiter,
+    )
 
 _SYSTEM_PROMPT = (
     "You are Pico, an expert laptop buying consultant. You have "
@@ -151,18 +164,12 @@ def _extract_search_results(messages: list) -> Optional[list[dict]]:
     return None
 
 
-async def run_agent(
+def _build_agent_input(
     message: str,
     history: list[Message],
     conv_laptops: list[ConversationLaptop],
     session: Session,
-) -> tuple[str, Optional[list[dict]]]:
-    llm = ChatGoogleGenerativeAI(
-        model=AGENT_MODEL,
-        temperature=AGENT_TEMPERATURE,
-        google_api_key=settings.gemini_api_key,
-    )
-
+) -> list:
     langchain_messages = [SystemMessage(content=_SYSTEM_PROMPT)]
 
     pool_block = _pool_block(conv_laptops, session)
@@ -171,6 +178,17 @@ async def run_agent(
 
     langchain_messages.extend(_build_message_history(history))
     langchain_messages.append(HumanMessage(content=message))
+    return langchain_messages
+
+
+async def run_agent(
+    message: str,
+    history: list[Message],
+    conv_laptops: list[ConversationLaptop],
+    session: Session,
+) -> tuple[str, Optional[list[dict]]]:
+    llm = build_agent_llm()
+    langchain_messages = _build_agent_input(message, history, conv_laptops, session)
 
     agent = create_agent(llm, ALL_TOOLS)
     result = await agent.ainvoke({"messages": langchain_messages})
@@ -179,6 +197,105 @@ async def run_agent(
     tool_results = _extract_search_results(result["messages"])
 
     return reply_text, tool_results
+
+
+async def stream_agent(
+    message: str,
+    history: list[Message],
+    conv_laptops: list[ConversationLaptop],
+    session: Session,
+):
+    """Streaming twin of run_agent. Async generator yielding event dicts:
+
+    {"type": "token", "text": str}   — one token of the model turn currently
+                                       streaming (thinking blocks filtered out)
+    {"type": "turn_reset"}           — the turn that just streamed ended in a
+                                       tool call (internal reasoning, not the
+                                       reply); the client must discard the
+                                       text it has shown for this turn
+    {"type": "tool", "name": str}    — a tool call started (activity indicator)
+    {"type": "final", "reply": str, "tool_results": list | None}
+                                     — terminal event for the caller only
+                                       (router persists it and emits "done");
+                                       never forwarded to the client as-is
+
+    Same semantics as run_agent: `tool_results` is the most recent
+    search_laptops payload of the turn when its confidence was "high".
+    """
+    llm = build_agent_llm()
+    langchain_messages = _build_agent_input(message, history, conv_laptops, session)
+
+    agent = create_agent(llm, ALL_TOOLS)
+
+    turn_text: list[str] = []
+    final_reply = ""
+    search_results: Optional[list[dict]] = None
+
+    async for event in agent.astream_events({"messages": langchain_messages}, version="v2"):
+        kind = event["event"]
+
+        if kind == "on_chat_model_start":
+            turn_text = []
+
+        elif kind == "on_chat_model_stream":
+            text = _chunk_to_text(event["data"]["chunk"].content)
+            if text:
+                turn_text.append(text)
+                yield {"type": "token", "text": text}
+
+        elif kind == "on_chat_model_end":
+            msg = event["data"]["output"]
+            if getattr(msg, "tool_calls", None):
+                # Intermediate turn: any text streamed alongside the tool
+                # call is internal ("let me search…"), not the reply.
+                if turn_text:
+                    yield {"type": "turn_reset"}
+            else:
+                # _content_to_text on the full message also covers the
+                # thinking-only fallback, so the reply is never empty.
+                final_reply = "".join(turn_text) or _content_to_text(msg.content)
+
+        elif kind == "on_tool_start":
+            yield {"type": "tool", "name": event.get("name", "")}
+
+        elif kind == "on_tool_end" and event.get("name") == _SEARCH_LAPTOPS_TOOL_NAME:
+            payload = _tool_output_payload(event["data"].get("output"))
+            if payload and payload.get("confidence") == "high":
+                search_results = payload.get("results") or None
+            else:
+                search_results = None
+
+    yield {"type": "final", "reply": final_reply, "tool_results": search_results}
+
+
+def _chunk_to_text(content) -> str:
+    """Text blocks only — unlike _content_to_text there is NO thinking
+    fallback: a thinking-only streamed chunk must yield nothing, or the
+    model's reasoning leaks to the client token-by-token. The final-message
+    fallback in on_chat_model_end still guarantees a non-empty reply."""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+    return "".join(parts)
+
+
+def _tool_output_payload(output) -> Optional[dict]:
+    """Normalize an on_tool_end output (ToolMessage, dict, or JSON string)
+    to the tool's payload dict."""
+    content = getattr(output, "content", output)
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except ValueError:
+            return None
+    return None
 
 
 def _content_to_text(content) -> str:

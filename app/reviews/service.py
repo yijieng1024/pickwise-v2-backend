@@ -16,6 +16,79 @@ from app.reviews.transcript import fetch_transcript
 logger = get_logger(__name__)
 
 
+def _family_key(product_name: str) -> str:
+    """
+    Collapse config variants into one YouTube-search family: reviewers cover
+    "ASUS TUF Gaming F15", not each RAM/SSD/CPU configuration — and discovery
+    costs 100 quota units per channel per query, so searching per variant
+    would burn the 10k daily quota on duplicate queries. Everything from the
+    first parenthesis on is config noise for search purposes.
+    """
+    base = product_name.split("(")[0]
+    return " ".join(base.lower().split())
+
+
+def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> dict:
+    """
+    Run the discovery + transcript + match pipeline across the catalog, one
+    search per laptop *family* (see _family_key). Discovered videos are
+    matched against the whole catalog by the matcher, so one family search
+    can populate raw reviews for several variants.
+
+    skip_covered=True skips families that already have at least one matched
+    raw review, so repeated runs walk through the catalog day by day within
+    the YouTube quota (cost ≈ active_channels × 100 units per family).
+    Chunking/embedding stays a separate step (POST /reviews/process/{id}).
+    """
+    active_channels = session.exec(
+        select(YoutubeChannel).where(YoutubeChannel.active == True)  # noqa: E712
+    ).all()
+    if not active_channels:
+        return {
+            "message": "No active YouTube channels registered — add channels first.",
+            "families_attempted": 0,
+            "results": [],
+        }
+
+    laptops = session.exec(select(Laptop)).all()
+    families: dict[str, Laptop] = {}
+    for laptop in laptops:
+        families.setdefault(_family_key(laptop.product_name), laptop)
+
+    covered: set[str] = set()
+    if skip_covered:
+        matched_laptops = session.exec(
+            select(Laptop)
+            .join(RawYoutubeReview, RawYoutubeReview.matched_laptop_id == Laptop.id)  # type: ignore[arg-type]
+        ).all()
+        covered = {_family_key(l.product_name) for l in matched_laptops}
+
+    todo = [(key, laptop) for key, laptop in families.items() if key not in covered]
+    todo = todo[:limit]
+
+    results = []
+    totals = {"discovered": 0, "skipped": 0, "matched": 0, "pending": 0, "rejected": 0}
+    for key, laptop in todo:
+        try:
+            counts = ingest_for_laptop(laptop.id, session)
+            for k in totals:
+                totals[k] += counts.get(k, 0)
+            results.append({"family": key, "queried_laptop_id": str(laptop.id), **counts})
+        except Exception as e:
+            logger.error("Bulk ingest failed for family '%s': %s", key, e)
+            results.append({"family": key, "queried_laptop_id": str(laptop.id), "error": str(e)})
+
+    return {
+        "families_total": len(families),
+        "families_already_covered": len(covered),
+        "families_attempted": len(todo),
+        "families_remaining": max(0, len(families) - len(covered) - len(todo)),
+        "estimated_quota_units_used": len(todo) * len(active_channels) * 100,
+        "totals": totals,
+        "results": results,
+    }
+
+
 def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
     """
     Run the full discovery + transcript-fetch + matching pipeline for one laptop.

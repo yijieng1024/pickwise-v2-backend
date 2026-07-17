@@ -135,7 +135,11 @@ def _score_brand(product: ScorableProduct, user_pref: Optional[LaptopUserPrefere
     return 100.0 if product.brand_name.lower() in prefs else 50.0
 
 
-def _compute_weights(user_pref: Optional[LaptopUserPreference], mode: str) -> dict[str, float]:
+def _compute_weights(
+    user_pref: Optional[LaptopUserPreference],
+    mode: str,
+    priority_override: Optional[dict[str, float]] = None,
+) -> dict[str, float]:
     factors = ["price", "cpu", "gpu", "ram_storage", "portability", "battery", "screen_size", "brand"]
 
     if mode == "personalized" and user_pref:
@@ -153,7 +157,11 @@ def _compute_weights(user_pref: Optional[LaptopUserPreference], mode: str) -> di
             1.0,
         )
     else:
-        base_weights = dict(DEFAULT_PRIORITY)
+        # General mode: callers may swap the balanced N-i profile for a
+        # use-case profile (e.g. Gaming weighs GPU highest) while keeping
+        # general-mode factor scoring (inverse min-max price, neutral 50
+        # for screen size / brand).
+        base_weights = dict(priority_override or DEFAULT_PRIORITY)
         purpose_mods = {f: 1.0 for f in factors}
         portability_mult = 1.0
 
@@ -174,7 +182,10 @@ def calculate_pick_score(
     ranges: dict,
     cpu_benchmarks: list[tuple[str, int]],
     gpu_benchmarks: list[tuple[str, int]],
+    priority_override: Optional[dict[str, float]] = None,
 ) -> PickScoreResponse:
+    """priority_override only applies in general mode (user_pref is None) —
+    a real user's priorities always win over a use-case profile."""
     mode = "personalized" if user_pref else "general"
 
     cpu_score, _ = _score_cpu(product, ranges, cpu_benchmarks)
@@ -197,7 +208,7 @@ def calculate_pick_score(
         "gpu":   "Apple Silicon GPU — proxied via CPU score (no PassMark data for ARM)" if gpu_is_proxy else None,
     }
 
-    weights = _compute_weights(user_pref, mode)
+    weights = _compute_weights(user_pref, mode, priority_override)
 
     breakdown = []
     weighted_sum = 0.0

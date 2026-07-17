@@ -9,15 +9,17 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.database import engine
+from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Layer 2: Serper.dev Google Shopping, geo-targeted to Malaysia — aggregates
-# Shopee/Lazada/senQ/Harvey Norman/etc. Free tier ~2,500 queries, then paid;
-# hence the cache below. Layer 1 (own catalog) is local and always available.
-_SERPER_URL = "https://google.serper.dev/shopping"
+# Layer 2: SerpApi (serpapi.com) Google Shopping, geo-targeted to Malaysia —
+# aggregates Shopee/Lazada/senQ/Harvey Norman/etc. Free tier is only ~100
+# searches/MONTH, so the cache below is essential. Layer 1 (own catalog) is
+# local and always available.
+_SERPAPI_URL = "https://serpapi.com/search"
 _TIMEOUT_S = 20.0
 _MAX_LISTINGS = 5
 # Listings whose title doesn't resemble the query are dropped. Note
@@ -74,10 +76,21 @@ def _catalog_lookup(query: str, model_code: Optional[str], session: Session) -> 
     best_score = None
     if laptop is None:
         rows = session.exec(select(Laptop)).all()
-        scored = [
-            (fuzz.token_set_ratio(query.lower(), (l.product_name or "").lower()), l)
-            for l in rows
-        ]
+        # Catalog product_names omit the brand ("ROG Strix G16 …", no
+        # "ASUS"), but the agent usually passes brand-qualified names — the
+        # unmatched brand token alone drops token_set_ratio below the
+        # threshold. Score against both forms and keep the best.
+        brands = session.exec(select(LaptopBrand)).all()
+        brand_map = {b.id: (b.name or "").lower() for b in brands}
+        q = query.lower()
+        scored = []
+        for l in rows:
+            name = (l.product_name or "").lower()
+            score = fuzz.token_set_ratio(q, name)
+            brand = brand_map.get(l.brand_id)
+            if brand:
+                score = max(score, fuzz.token_set_ratio(q, f"{brand} {name}"))
+            scored.append((score, l))
         scored = [(s, l) for s, l in scored if s >= _CATALOG_THRESHOLD]
         if scored:
             best_score, laptop = max(scored, key=lambda t: t[0])
@@ -115,14 +128,19 @@ def _catalog_lookup(query: str, model_code: Optional[str], session: Session) -> 
     return result
 
 
-# ─── Layer 2: live listings via Google Shopping (Serper.dev) ─────────────
+# ─── Layer 2: live listings via Google Shopping (SerpApi) ────────────────
 
 
 def _to_listing(item: dict, query: str) -> Optional[dict]:
     title = item.get("title") or ""
-    price = _parse_price(item.get("price"))
+    # SerpApi provides the numeric price in extracted_price; the formatted
+    # "price" string ("RM4,599.00") is the fallback.
+    price = item.get("extracted_price")
+    if not isinstance(price, (int, float)):
+        price = _parse_price(item.get("price"))
     if not title or price is None or price < _MIN_LAPTOP_PRICE_RM:
         return None
+    price = float(price)
     title_lower = title.lower()
     if any(term in title_lower for term in _ACCESSORY_TERMS):
         return None
@@ -133,18 +151,18 @@ def _to_listing(item: dict, query: str) -> Optional[dict]:
         "title": title,
         "price_rm": price,
         "store": item.get("source"),
-        "link": item.get("link"),
+        "link": item.get("link") or item.get("product_link"),
         "relevance": round(relevance, 1),
     }
 
 
 def _live_listings(query: str) -> dict:
     """Returns the live_listings section; only "ok" results are cached."""
-    if not settings.serper_api_key:
+    if not settings.serp_api_key:
         return {
             "status": "unavailable",
             "listings": [],
-            "note": "Live listings lookup is not configured (SERPER_API_KEY missing).",
+            "note": "Live listings lookup is not configured (SERP_API_KEY missing).",
         }
 
     cache_key = query.lower()
@@ -153,23 +171,28 @@ def _live_listings(query: str) -> dict:
         return cached[1]
 
     try:
-        resp = httpx.post(
-            _SERPER_URL,
-            json={"q": query, "gl": "my", "hl": "en"},
-            headers={"X-API-KEY": settings.serper_api_key},
+        resp = httpx.get(
+            _SERPAPI_URL,
+            params={
+                "engine": "google_shopping",
+                "q": query,
+                "gl": "my",
+                "hl": "en",
+                "api_key": settings.serp_api_key,
+            },
             timeout=_TIMEOUT_S,
         )
         resp.raise_for_status()
         payload = resp.json()
     except (httpx.HTTPError, ValueError) as e:
-        logger.warning("market_price: Serper shopping call failed for %r: %s", query, e)
+        logger.warning("market_price: SerpApi shopping call failed for %r: %s", query, e)
         return {
             "status": "unavailable",
             "listings": [],
             "note": f"Live listings lookup failed ({type(e).__name__}).",
         }
 
-    items = payload.get("shopping") or [] if isinstance(payload, dict) else []
+    items = payload.get("shopping_results") or [] if isinstance(payload, dict) else []
     listings = [l for l in (_to_listing(item, query) for item in items) if l]
     listings.sort(key=lambda l: (-l["relevance"], l["price_rm"]))
     # Cap 2 per store so the price range reflects the market, not one shop's

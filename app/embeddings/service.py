@@ -9,12 +9,15 @@ from app.config import settings
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
 from app.laptops.brand_model import LaptopBrand
 
-# WHY gemini-embedding-001 with output_dimensionality=768: text-embedding-004
-# was retired by Google. gemini-embedding-001 defaults to 3072 dimensions, so
-# output_dimensionality pins it to 768 to match the existing Vector(768)
-# column in LaptopEmbedding without needing a schema migration.
+# WHY gemini-embedding-2 with output_dimensionality=768 (replaced the
+# OpenRouter nvidia/llama-nemotron-embed detour): the model defaults to a
+# larger dimensionality, so output_dimensionality pins it to 768 to match
+# the existing Vector(768) columns without a schema migration. Vectors from
+# this model live in a different embedding space than any previous model —
+# after any model change, POST /embeddings/generate-all must be re-run (and
+# review chunks re-processed) or similarity scores are garbage.
 _embedder = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-001",
+    model="models/gemini-embedding-2",
     google_api_key=settings.gemini_api_key,
     output_dimensionality=768,
 )

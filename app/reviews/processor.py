@@ -2,12 +2,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.config import settings
+from app.embeddings.service import embed_text
 from app.logger import get_logger
 from app.reviews.models import LaptopReviewChunk, RawYoutubeReview
 
@@ -103,12 +104,6 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> int:
         temperature=0,
         google_api_key=settings.gemini_api_key,
     )
-    embedder = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001",
-        google_api_key=settings.gemini_api_key,
-        task_type="retrieval_document",
-        output_dimensionality=768,
-    )
     structured_llm = llm.with_structured_output(_ChunkAnalysis)
     chain = (
         ChatPromptTemplate.from_messages(
@@ -131,7 +126,7 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> int:
     for chunk in chunks:
         try:
             analysis: _ChunkAnalysis = chain.invoke({"text": chunk["text"]})  # type: ignore[assignment]
-            embedding = embedder.embed_documents([analysis.summary])[0]
+            embedding = embed_text(analysis.summary)
 
             session.add(
                 LaptopReviewChunk(

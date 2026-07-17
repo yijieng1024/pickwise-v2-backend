@@ -5,7 +5,7 @@ from typing import Dict, Any
 
 from app.database import get_session
 from app.scraper.models import RawScrapLaptop
-from app.processor.engine import process_raw_laptop_data
+from app.processor.engine import categorize_untagged_laptops, process_raw_laptop_data
 from app.users.auth import get_current_admin
 from app.logger import get_logger
 
@@ -18,9 +18,9 @@ router = APIRouter(prefix="/processor", tags=["Processor"])
 #  1500 RPD →  default batch of 100 per run (~8 min); hard cap at 1500
 _INTER_REQUEST_DELAY_S = 5    # 5 s > 60/15, gives a small safety margin
 _DEFAULT_BATCH_LIMIT   = 100  # sensible default per run; well under 1500 RPD
-_MAX_BATCH_LIMIT       = 1500 # full daily quota ceiling
+_MAX_BATCH_LIMIT       = 1500
 _RATE_LIMIT_KEYWORDS   = ("429", "quota", "resource exhausted", "rate limit")
-_RETRY_WAIT_S          = 65   # wait just over 1 minute then retry once
+_RETRY_WAIT_S          = 65
 
 
 @router.post("/process/{raw_laptop_id}", dependencies=[Depends(get_current_admin)])
@@ -35,6 +35,28 @@ def process_single_laptop(
         raise HTTPException(status_code=400, detail=result.get("message"))
 
     return result
+
+
+@router.post("/categorize-untagged", dependencies=[Depends(get_current_admin)])
+def categorize_untagged(
+    session: Session = Depends(get_session),
+    limit: int = Query(
+        default=_DEFAULT_BATCH_LIMIT,
+        ge=1,
+        le=_MAX_BATCH_LIMIT,
+        description=(
+            f"Max untagged laptops to tag in this run (default {_DEFAULT_BATCH_LIMIT}). "
+            f"Hard ceiling is {_MAX_BATCH_LIMIT} to stay within the Gemma 4 free-tier daily quota (1500 RPD)."
+        ),
+    ),
+) -> Dict[str, Any]:
+    """
+    Backfill category tags for laptops that have no laptop_categories link
+    (e.g. processed before category tagging existed). One LLM call per laptop
+    from its stored specs, throttled to the Gemma free-tier rate limit.
+    Safe to re-run until untagged_remaining reaches 0.
+    """
+    return categorize_untagged_laptops(session, limit=limit)
 
 
 @router.post("/process-pending", dependencies=[Depends(get_current_admin)])
