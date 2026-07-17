@@ -18,15 +18,19 @@ from typing import Literal, Optional
 
 from app.rag.reranker import RankedCandidate
 
-# THIS VALUE IS EMBEDDING-MODEL-SPECIFIC. 0.40 was calibrated via NDCG
-# evaluation (run_ndcg.py) for gemini-embedding-001, whose good matches
-# scored ~0.6-0.75. The switch to nvidia/llama-nemotron-embed-vl-1b-v2
-# (OpenRouter) compressed the similarity scale: measured spot-check on the
-# live catalog put clearly-relevant tops at 0.23-0.42 and clearly-irrelevant
-# (guitar, washing machine, phone) at 0.14-0.19, so 0.20 keeps the same
-# proportional strictness. Re-run the NDCG calibration for a proper tune,
-# and re-derive this whenever the embedding model changes again.
-RELEVANCE_THRESHOLD = 0.20
+# THIS VALUE IS EMBEDDING-MODEL-SPECIFIC. Calibrated for gemini-embedding-2
+# via spot-check on the live catalog (2026-07-17, after full re-embed):
+# relevant tops measured 0.537-0.732 (the low end is short vague Chinese
+# queries — catalog documents are English, so cross-lingual similarity runs
+# lower) and clearly-irrelevant tops 0.418-0.546 (washing machine, fridge,
+# guitar, scooter, office chair). The ranges overlap slightly, so 0.53 sits
+# at the boundary: all measured relevant queries pass, all irrelevant ones
+# gate except borderline household items at ~0.54 — acceptable because the
+# agent's scope-enforcement prompt refuses non-laptop requests before
+# search_laptops is ever called. (History: 0.40 for gemini-embedding-001,
+# 0.20 for nemotron-embed.) Re-run the NDCG calibration (run_ndcg.py) for a
+# proper tune, and re-derive whenever the embedding model changes again.
+RELEVANCE_THRESHOLD = 0.53
 
 
 @dataclass

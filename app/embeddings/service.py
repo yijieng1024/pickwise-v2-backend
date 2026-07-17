@@ -2,33 +2,24 @@ import time
 from datetime import datetime, timezone
 from uuid import UUID
 
-from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from sqlmodel import Session, select
 
 from app.config import settings
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
 from app.laptops.brand_model import LaptopBrand
 
-# WHY llama-nemotron-embed with dimensions=768: served via OpenRouter's
-# OpenAI-compatible /embeddings endpoint (replaced gemini-embedding-001).
-# The model natively outputs 2048 dims but is Matryoshka-trained, so
-# dimensions=768 keeps the existing Vector(768) columns without a schema
-# migration. Vectors from this model live in a different embedding space
-# than the old Gemini ones — after any model change, POST
-# /embeddings/generate-all must be re-run or similarity scores are garbage.
-# check_embedding_ctx_length=False is required on non-OpenAI backends:
-# without it langchain-openai pre-tokenizes with tiktoken and sends
-# token-ID arrays that OpenRouter cannot decode. encoding_format="float"
-# is equally required: the OpenAI SDK defaults to requesting base64, which
-# this provider answers with HTTP 200 and an empty data array
-# ("No embedding data received").
-_embedder = OpenAIEmbeddings(
-    model="nvidia/llama-nemotron-embed-vl-1b-v2:free",
-    api_key=settings.openrouter_api_key,
-    base_url="https://openrouter.ai/api/v1",
-    dimensions=768,
-    check_embedding_ctx_length=False,
-    model_kwargs={"encoding_format": "float"},
+# WHY gemini-embedding-2 with output_dimensionality=768 (replaced the
+# OpenRouter nvidia/llama-nemotron-embed detour): the model defaults to a
+# larger dimensionality, so output_dimensionality pins it to 768 to match
+# the existing Vector(768) columns without a schema migration. Vectors from
+# this model live in a different embedding space than any previous model —
+# after any model change, POST /embeddings/generate-all must be re-run (and
+# review chunks re-processed) or similarity scores are garbage.
+_embedder = GoogleGenerativeAIEmbeddings(
+    model="models/gemini-embedding-2",
+    google_api_key=settings.gemini_api_key,
+    output_dimensionality=768,
 )
 
 
@@ -79,21 +70,8 @@ def embed_text(text: str) -> list[float]:
     WHY a thin wrapper:
     Centralises the embedding API call so every caller (laptop, future phone)
     uses the same model and can be swapped in one place if the model changes.
-
-    WHY the retry: OpenRouter's :free embeddings endpoint occasionally answers
-    HTTP 200 with an empty data array (observed under bursty request rates),
-    which surfaces from langchain-openai as TypeError/ValueError rather than a
-    retryable API error. Brief backoff clears it; callers with their own
-    fallback (rag/retrieval.py) still get an exception if all attempts fail.
     """
-    last_exc: Exception | None = None
-    for attempt in range(3):
-        try:
-            return _embedder.embed_query(text)
-        except (TypeError, ValueError) as e:
-            last_exc = e
-            time.sleep(2 * (attempt + 1))
-    raise RuntimeError(f"Embedding call returned no data after 3 attempts: {last_exc}") from last_exc
+    return _embedder.embed_query(text)
 
 
 def upsert_laptop_embedding(session: Session, laptop_id: UUID, vector: list[float]) -> None:
@@ -149,7 +127,7 @@ def generate_all_laptop_embeddings(session: Session) -> dict:
             vector = embed_text(text)
             upsert_laptop_embedding(session, laptop.id, vector)
             succeeded += 1
-            time.sleep(3.5)  # OpenRouter :free models allow ~20 requests/min
+            time.sleep(0.3)  # respect Gemini rate limits
         except Exception as e:
             failed += 1
             errors.append({"laptop_id": str(laptop.id), "error": str(e)})

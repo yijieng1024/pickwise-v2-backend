@@ -405,8 +405,8 @@ def categorize_untagged_laptops(session: Session, limit: int = 100) -> dict:
     row needed. Tags missing from the DB are created, exactly like the main
     processor flow. Safe to re-run: already-tagged laptops are never selected.
     """
-    # Deferred import to avoid constructing the embeddings client (and its
-    # OpenRouter config) whenever the processor module is merely imported.
+    # Deferred import to avoid constructing the embeddings client whenever
+    # the processor module is merely imported.
     from app.embeddings.service import build_laptop_embedding_text
 
     untagged = session.exec(

@@ -16,7 +16,7 @@ A FastAPI-based backend for a laptop recommendation system with user authenticat
 - **Password Hashing**: bcrypt (via passlib)
 - **Email**: SMTP (Gmail SSL, port 465) with background tasks
 - **Web Scraping**: Playwright (Chromium headless)
-- **AI/LLM Processing**: LangChain + two providers — **OpenRouter** (agent: `nvidia/nemotron-3-ultra-550b-a55b:free` via `ChatOpenAI`; embeddings: `nvidia/llama-nemotron-embed-vl-1b-v2:free`, `dimensions=768`) and **Google Gemini/Gemma** (extraction + category tagging: `gemma-4-31b-it`; recommendation + review chunking: `gemini-3.5-flash`; eval judge)
+- **AI/LLM Processing**: LangChain + **Google Gemini/Gemma** (agent: `gemma-4-31b-it` via `ChatGoogleGenerativeAI`; embeddings: `gemini-embedding-2`, `output_dimensionality=768`; extraction + category tagging: `gemma-4-31b-it`; recommendation + review chunking: `gemini-3.5-flash`; eval judge)
 - **Vector Storage**: pgvector (768-dimension embeddings)
 - **Agentic Orchestration**: `langchain.agents.create_agent` (migrated off the deprecated `langgraph.prebuilt.create_react_agent`)
 - **YouTube Ingest**: `google-api-python-client` (YouTube Data API v3) + `youtube-transcript-api` v1.x
@@ -599,7 +599,7 @@ Two modes: **Personalized** (uses `LaptopUserPreference`) and **General** (DEFAU
 
 ### 9. **Embeddings Module** (`app/embeddings/`)
 
-Generates and stores 768-dim vector embeddings for all laptops using `nvidia/llama-nemotron-embed-vl-1b-v2:free` via OpenRouter's OpenAI-compatible `/embeddings` endpoint (migrated from `gemini-embedding-001` on 2026-07-16; all 245 laptops re-embedded).
+Generates and stores 768-dim vector embeddings for all laptops using Gemini `models/gemini-embedding-2` (moved back to Gemini on 2026-07-17 after a one-day OpenRouter nemotron-embed detour — **re-run generate-all + re-process review chunks after the switch**).
 
 #### Files:
 - `app/embeddings/service.py` — `build_laptop_embedding_text()`, `embed_text()`, `upsert_laptop_embedding()`, `generate_all_laptop_embeddings()`
@@ -607,9 +607,8 @@ Generates and stores 768-dim vector embeddings for all laptops using `nvidia/lla
 
 #### Key Design:
 - Builds natural-language document per laptop (not raw JSON) for better semantic retrieval
-- `dimensions=768` to match existing `Vector(768)` column — the model is natively 2048-dim but Matryoshka-trained, so truncation is a supported operating point (no schema migration needed)
-- `check_embedding_ctx_length=False` (else langchain-openai sends tiktoken token arrays OpenRouter can't decode) + `encoding_format: "float"` (the OpenAI SDK's base64 default gets an empty 200 response from this provider)
-- `embed_text()` is the single embedding entry point for the whole app (hybrid search, RAG retrieval, review chunks, recommendation) and retries 3× with backoff — OpenRouter's `:free` endpoint occasionally returns 200 with empty data under bursty rates
+- `output_dimensionality=768` to match existing `Vector(768)` column — pins the model's larger default down, no schema migration needed
+- `embed_text()` is the single embedding entry point for the whole app (hybrid search, RAG retrieval, review chunks, recommendation)
 - **Changing the embedding model changes the vector space** — always re-run generate-all afterwards, and recalibrate `RELEVANCE_THRESHOLD` (see §12)
 
 #### Endpoints:
@@ -669,7 +668,7 @@ Full pipeline: hybrid search → PickScore → Gemini LLM explanations.
 - `retrieval.py` — Module 1: pgvector cosine similarity search (top-50 recall), 5-min in-process query cache, relational fallback on embedding API timeout
 - `reranker.py` — Module 2: constraint-aware reranking via penalty multipliers (budget, weight) + bonuses (purpose, brand). Decoupled `UserConstraints` dataclass independent of ORM
 - `relaxation.py` — Module 3: stepwise constraint relaxation when 0 viable candidates — weight first (+0.2kg × 2 steps), then budget (+RM 500 × 3 steps), brand never auto-relaxed
-- `gating.py` — Module 4: relevance threshold (calibrated `0.20` — **embedding-model-specific**; was 0.40 for gemini-embedding-001, halved for nemotron-embed's compressed similarity scale where relevant tops measure 0.23–0.42 vs irrelevant ≤ 0.19) intercepts low-confidence results; `_detect_bottleneck()` routes targeted clarification questions (budget / weight / general). `relaxation.py`'s `_MIN_VIABLE_SCORE` rescaled 0.25 → 0.13 with the same ratio
+- `gating.py` — Module 4: relevance threshold (calibrated `0.53` — **embedding-model-specific**; spot-checked on the re-embedded catalog for gemini-embedding-2, where relevant tops measure 0.537–0.732 vs irrelevant 0.418–0.546) intercepts low-confidence results; `_detect_bottleneck()` routes targeted clarification questions (budget / weight / general). `relaxation.py`'s `_MIN_VIABLE_SCORE` = 0.33 (62.5% of the gate)
 - `evaluation.py` — Module 5: NDCG@10 offline evaluation + `log_pipeline_result()` writes to `pipeline_eval_logs` table and `logs/eval/pipeline_trace.jsonl` on every live `search_laptops` call
 - `models.py` — DB tables: `Conversation`, `Message`, `ConversationLaptop`, `PipelineEvalLog` — retained, now populated by `POST /agent/chat` (message history + shortlist pool) instead of the old CRS chat flow
 - `service.py` — Conversation-thread CRUD only (`create_conversation`, `list_conversations`, `get_conversation`, `delete_conversation`, `_generate_title`); reused by `app/agent/router.py`
@@ -703,8 +702,8 @@ Sole conversational entry point (`POST /agent/chat`). A ReAct agent that reasons
 
 - `app/agent/tools/search_laptops.py` — `search_laptops(user_query, budget_max, brand, purpose, top_k=10)`: runs the CRS `retrieve_candidates` → `rerank` → (`relax_and_retry` if 0 viable candidates) → `relevance_gate` pipeline. Returns `{results, confidence: "high"|"low", bottleneck, message, relaxation_notice}`. Each result carries **`pick_score`** (0–100, general-mode PickScore batch-computed on the gated top-k — ranges + benchmark tuples fetched once, same pattern as the recommendation service) plus a compact `pick_score_top_factors` summary (top-3 factors only; the full 8-factor breakdown would bloat LLM context and overflow eval-judge truncation). PickScore failure is non-fatal — results go out unscored. On low confidence, returns no laptops but a targeted clarification message — the agent (not the tool) decides how to use it. Logs every call to `pipeline_eval_logs` via `evaluation.log_pipeline_result()`.
 - `app/agent/tools/laptop_tools.py` — `calculate_custom_apple_price` (base price + customization add-ons), `get_review_evidence` (pgvector cosine search over review chunks, returns top-3 with YouTube timestamp links)
-- `app/agent/tools/market_price.py` — `search_malaysian_market_price(product_name, model_code)`: two-layer price lookup — (1) catalog layer from own DB (official `price_rm` + last 5 price-history snapshots; `model_code` exact match, else RapidFuzz fuzzy match on `product_name`), and (2) live Malaysian retail listings via Serper.dev Google Shopping (`SERPER_API_KEY`, optional) with accessory-keyword blocklist, RM 800 price floor, max 2 listings per store, and a 6-hour in-process cache. Shopee/Lazada search links always included as last-resort fallback
-- `app/agent/graph.py` — `run_agent(message, history, conv_laptops, session)`: reconstructs conversation state from the `messages` table (last 12 turns) + the current `conversation_laptops` shortlist each call (no LangGraph checkpointer — state lives in Postgres via the existing conversation tables), builds the agent via `langchain.agents.create_agent` with the LLM from `build_agent_llm()` — `AGENT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"` served through OpenRouter's OpenAI-compatible API via `ChatOpenAI` (`OPENROUTER_API_KEY`; migrated off `ChatGoogleGenerativeAI`/gemma on 2026-07-16; the factory is the single source of truth, imported by the eval harness so evals always measure production config), and extracts the latest `search_laptops` tool result from the run so the caller can update the shortlist pool. The reply passes through `_content_to_text()` — some models return content as a list of typed blocks (`thinking` + `text`) instead of a plain string, which crashed the `messages` insert (`psycopg2 can't adapt type 'dict'`); text blocks are joined, thinking blocks dropped (fallback-only so the reply is never empty)
+- `app/agent/tools/market_price.py` — `search_malaysian_market_price(product_name, model_code)`: two-layer price lookup — (1) catalog layer from own DB (official `price_rm` + last 5 price-history snapshots; `model_code` exact match, else RapidFuzz fuzzy match on `product_name`), and (2) live Malaysian retail listings via SerpApi Google Shopping (`SERP_API_KEY`, optional; free tier ~100 searches/month) with accessory-keyword blocklist, RM 800 price floor, max 2 listings per store, and a 6-hour in-process cache. Shopee/Lazada search links always included as last-resort fallback
+- `app/agent/graph.py` — `run_agent(message, history, conv_laptops, session)`: reconstructs conversation state from the `messages` table (last 12 turns) + the current `conversation_laptops` shortlist each call (no LangGraph checkpointer — state lives in Postgres via the existing conversation tables), builds the agent via `langchain.agents.create_agent` with the LLM from `build_agent_llm()` — `AGENT_MODEL = "gemma-4-31b-it"` via `ChatGoogleGenerativeAI` (`GEMINI_API_KEY`; back on Gemma as of 2026-07-17 after a one-day OpenRouter nemotron detour; the factory is the single source of truth, imported by the eval harness so evals always measure production config), and extracts the latest `search_laptops` tool result from the run so the caller can update the shortlist pool. The reply passes through `_content_to_text()` — some models return content as a list of typed blocks (`thinking` + `text`) instead of a plain string, which crashed the `messages` insert (`psycopg2 can't adapt type 'dict'`); text blocks are joined, thinking blocks dropped (fallback-only so the reply is never empty)
 - `app/agent/router.py` — `POST /agent/chat` (auth required); accepts optional `conversation_id` (auto-creates a new conversation if omitted); persists user/assistant `Message` rows and replaces the `conversation_laptops` pool (with `pick_score` + `similarity_score` snapshots) when `search_laptops` returns high confidence; returns 503 if the agent errors. The response includes a structured **`laptops` field** (`AgentLaptopCard`: laptop_id, product_name, price_rm, pick_score, similarity_score) for frontend score badges — fresh search results when a search ran this turn, otherwise the persisted pool joined to `laptops` (similarity DESC, NULLS LAST) so follow-up turns keep their cards
 
 #### Architecture
@@ -715,7 +714,7 @@ POST /agent/chat  (conversation_id optional — auto-creates if omitted)
         ├── search_laptops               → retrieve → rerank → relax → gate + general-mode PickScore on top-k
         ├── calculate_custom_apple_price → PostgreSQL (base price + sum of selected add-ons)
         ├── get_review_evidence          → pgvector cosine search on laptop_review_chunks
-        └── search_malaysian_market_price → catalog price + history, live listings (Serper Google Shopping)
+        └── search_malaysian_market_price → catalog price + history, live listings (SerpApi Google Shopping)
 ```
 
 No HTTP round-trips — all tools query the DB directly. The agent decides which tool(s) to call and in what order based on the user's message and replayed history; there is no separate intent-classification call.
@@ -1170,7 +1169,7 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ Benchmark range calibration from catalog laptops only (prevents desktop CPU score inflation)
 - ✅ RapidFuzz fuzzy benchmark matching (confidence threshold 0.6, 5-min module-level cache)
 - ✅ Product-agnostic PickScore adapter pattern (extensible to phones, tablets)
-- ✅ Laptop embeddings (nvidia/llama-nemotron-embed-vl-1b-v2 via OpenRouter, 768-dim Matryoshka-truncated pgvector, natural-language document format; migrated from gemini-embedding-001)
+- ✅ Laptop embeddings (gemini-embedding-2, 768-dim pgvector via `output_dimensionality`, natural-language document format)
 - ✅ Hybrid vector search (pgvector cosine distance + budget/brand hard filters)
 - ✅ Price history tracking (snapshot on create + on every PUT price change)
 - ✅ LLM recommendation layer (hybrid search → PickScore → Gemini LLM explanations)
@@ -1181,7 +1180,7 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ CRS Module 1 — Online retrieval: pgvector top-50 recall, 5-min query cache, relational fallback
 - ✅ CRS Module 2 — Reranking: budget + weight penalty multipliers, purpose + brand bonuses, decoupled UserConstraints
 - ✅ CRS Module 3 — Constraint relaxation: stepwise weight → budget relaxation, brand never auto-relaxed
-- ✅ CRS Module 4 — Relevance gating: threshold 0.20 (recalibrated for nemotron-embed similarity scale), bottleneck detection, targeted clarification messages
+- ✅ CRS Module 4 — Relevance gating: threshold 0.53 (calibrated for gemini-embedding-2 similarity scale), bottleneck detection, targeted clarification messages
 - ✅ CRS Module 5 — NDCG@10 offline evaluation + live pipeline logging per user request
 - ✅ pipeline_eval_logs table — queryable quality trace (gate_status, top_score, relaxed_field, bottleneck)
 - ✅ logs/eval/pipeline_trace.jsonl — structured JSONL file log, survives DB failures, greppable in CI
@@ -1190,7 +1189,7 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ Auto-title from first message (truncated to 60 chars)
 - ✅ ReAct agent (`app/agent/`) — `search_laptops` + `calculate_custom_apple_price` + `get_review_evidence` + `search_malaysian_market_price` tools, all query DB directly
 - ✅ Agent endpoint `POST /agent/chat` (auth required, 503 on agent error with diagnostic message)
-- ✅ Two-layer Malaysian market price tool — catalog price + history from own DB, live listings via Serper Google Shopping (accessory blocklist, RM 800 floor, per-store cap, 6h cache)
+- ✅ Two-layer Malaysian market price tool — catalog price + history from own DB, live listings via SerpApi Google Shopping (accessory blocklist, RM 800 floor, per-store cap, 6h cache)
 - ✅ General-mode PickScore attached to agent search results (`pick_score` 0–100 + top-3 factor summary, batch-computed on gated top-k; non-fatal on failure)
 - ✅ Structured `laptops` shortlist in `/agent/chat` response (`AgentLaptopCard`) for frontend score badges — fresh results or persisted pool on follow-up turns
 - ✅ `pick_score` persisted to `conversation_laptops` alongside `similarity_score`
@@ -1205,7 +1204,7 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ `POST /reviews/rematch` — bulk re-run auto-matching on all pending rows after threshold/key changes
 - ✅ `POST /reviews/ingest-bulk` — quota-aware bulk discovery: catalog collapsed to laptop families (74 from 245 variants), one YouTube search per family, `skip_covered` walks the catalog across daily quota windows
 - ✅ Review chunking — 45-second windows, Gemini summary + sentiment tag (`strength`/`weakness`/`neutral`)
-- ✅ Review embedding — central `embed_text()` (nemotron-embed via OpenRouter, 768-dim), stored in `laptop_review_chunks`
+- ✅ Review embedding — central `embed_text()` (gemini-embedding-2, 768-dim), stored in `laptop_review_chunks`
 - ✅ Review aggregation — top-5 distinct strengths + weaknesses rolled up to `laptop_review_summary`
 - ✅ `get_review_evidence` agent tool — pgvector cosine search on chunks, returns top-3 with YouTube timestamp links
 - ✅ Apple scraper image hygiene — og:image/`/meta/`/`_og.` social-preview cards excluded at scrape time
@@ -1217,6 +1216,9 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ Category backfill endpoint — `POST /processor/categorize-untagged` tags laptops with zero category links from stored specs
 - ✅ Precomputed use-case PickScores — `laptop_pick_scores` table (laptop × 5 use-case weight profiles, 1,225 rows), public per-laptop + ranking endpoints, admin regenerate
 - ✅ Gaming ranking proxy demotion — Apple CPU-proxied GPU scores sort below real-benchmark laptops in the gaming use case
+- ✅ Agent LLM reverted to Gemma (2026-07-17) — `gemma-4-31b-it` via `ChatGoogleGenerativeAI`, `build_agent_llm()` factory kept; `OPENROUTER_API_KEY` no longer required
+- ✅ Embeddings switched to `gemini-embedding-2` (2026-07-17) — `output_dimensionality=768`, all 245 laptops re-embedded, gate thresholds recalibrated by live-catalog spot-check (0.53 / 0.33)
+- ✅ SSE streaming chat endpoint `POST /agent/chat/stream` (2026-07-18) — token-by-token reply + tool-activity events via `stream_agent()`/`astream_events`; thinking-block filtering, internal tool-call-turn text discarded via `turn_reset`, persistence after stream completion shared with the non-streaming endpoint
 
 ---
 

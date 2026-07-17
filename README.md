@@ -103,7 +103,7 @@ See `.env.example` and `app/config.py`:
 | `SMTP_SERVER` / `SMTP_PORT` | — | Default `smtp.gmail.com:465` |
 | `GEMINI_API_KEY` | ✅ | Google Gemini API key (embeddings, processor, agent, reviews) |
 | `YOUTUBE_API_KEY` | optional | YouTube Data API v3 key — server starts without it; review discovery endpoints return 400 until set |
-| `SERPER_API_KEY` | optional | Serper.dev key for the market-price tool's live-listings layer (Google Shopping, Malaysia) — without it the tool answers from the catalog layer + marketplace search links |
+| `SERP_API_KEY` | optional | SerpApi (serpapi.com) key for the market-price tool's live-listings layer (Google Shopping, Malaysia) — without it the tool answers from the catalog layer + marketplace search links |
 
 ### Database migrations
 

@@ -22,10 +22,11 @@ from app.rag.retrieval import retrieve_candidates
 
 # A candidate is "viable" if its final_score clears this floor.
 # Below this, penalties are so heavy the result would be misleading to show.
-# Embedding-model-specific like gating.RELEVANCE_THRESHOLD: was 0.25 against
-# gemini-embedding-001 (62.5% of the 0.40 gate); rescaled with the same ratio
-# for the nemotron-embed similarity scale (0.20 gate).
-_MIN_VIABLE_SCORE = 0.13
+# Embedding-model-specific like gating.RELEVANCE_THRESHOLD, kept at the same
+# 62.5% ratio of the gate across model changes: 0.53 × 0.625 ≈ 0.33 for
+# gemini-embedding-2 (was 0.25 against the 0.40 gate of gemini-embedding-001,
+# 0.13 against nemotron-embed's 0.20). Re-derive alongside the gate threshold.
+_MIN_VIABLE_SCORE = 0.33
 
 _RELAXATION_STEPS = [
     {"field": "weight_limit", "step": 0.2, "max_steps": 2},
