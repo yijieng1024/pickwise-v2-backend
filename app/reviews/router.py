@@ -8,6 +8,7 @@ from app.logger import get_logger
 from app.reviews.aggregator import aggregate_for_laptop
 from app.reviews.discovery import resolve_channel_from_url
 from app.reviews.models import (
+    LaptopReviewChunk,
     ManualMatchRequest,
     RawYoutubeReview,
     RawYoutubeReviewRead,
@@ -206,6 +207,69 @@ def process_review(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"chunks_saved": chunks_saved}
+
+
+@router.post("/process-bulk")
+def process_bulk(
+    limit: int = Query(
+        default=5,
+        ge=1,
+        le=50,
+        description=(
+            "Max reviews to process this run. Each transcript chunk costs one "
+            "Gemini call + one embedding call with a 4s inter-request delay, "
+            "so a single review can take a minute or more."
+        ),
+    ),
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """
+    Bulk chunking/embedding: runs the /process/{review_id} step over every
+    matched raw review that has no chunks yet. process_raw_review doesn't flip
+    the review's status, so existing laptop_review_chunks rows are the
+    "already processed" marker — which also makes re-runs safe from writing
+    duplicate chunks. Failures are reported per review and don't stop the run.
+    """
+    processed_video_ids = set(
+        session.exec(select(LaptopReviewChunk.video_id).distinct()).all()
+    )
+    candidates = [
+        r
+        for r in session.exec(
+            select(RawYoutubeReview).where(RawYoutubeReview.status == "matched")
+        ).all()
+        if r.video_id not in processed_video_ids
+    ][:limit]
+
+    results = []
+    chunks_total = 0
+    failed = 0
+    for review in candidates:
+        try:
+            chunks_saved = process_raw_review(review.id, session)
+            chunks_total += chunks_saved
+            results.append({
+                "review_id": str(review.id),
+                "video_title": review.video_title,
+                "chunks_saved": chunks_saved,
+            })
+        except Exception as e:
+            failed += 1
+            logger.exception("Bulk processing failed for review %s", review.id)
+            results.append({
+                "review_id": str(review.id),
+                "video_title": review.video_title,
+                "error": str(e),
+            })
+
+    return {
+        "candidates": len(candidates),
+        "processed": len(candidates) - failed,
+        "failed": failed,
+        "chunks_saved": chunks_total,
+        "results": results,
+    }
 
 
 # --- Aggregation ---

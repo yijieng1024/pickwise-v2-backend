@@ -13,9 +13,12 @@ Judge API key: GOOGLE_API_KEY env var if set, else GEMINI_API_KEY from .env
 ★ Run from the project root (app.config resolves .env against CWD):
   python eval/run_eval.py run --label baseline
 
-★ Quota: agent + judge both run gemma-4-31b-it (free tier 15 RPM / 1500 RPD).
-  All LLM calls share one global rate limiter (default 15 RPM, override with
-  --rpm). Each query ≈ 2-4 requests; a full 30-query run ≈ 10-15 minutes.
+★ Quota: agent + judge both run gemma-4-31b-it (free tier 15 RPM / 1500 RPD,
+  and a strict 16,000 input-TPM cap). The TPM cap, not RPM, is the binding
+  limit: judge prompts carry up to ~27k chars of tool output, so two judge
+  calls in one minute can 429. All LLM calls share one global rate limiter
+  (default 7 RPM — keep runs below 8 RPM; override with --rpm at your own
+  risk). Each query ≈ 2-4 requests; a full 30-query run ≈ 20-30 minutes.
   Use --only / --limit for small slices.
 
 v3 changes:
@@ -27,6 +30,17 @@ v3 changes:
     factual grounding is checked against raw tool outputs only
   - Summary shows unscored count; runs with unscored items must not be compared
   - JUDGE_MODEL set to gemini-2.5-flash
+
+v4 changes:
+  - Each entry now carries `status`: passed / failed / unscored / error.
+    A missing or errored judge verdict can no longer surface as passed=true —
+    rule checks alone never grant a pass when the judge was supposed to run
+    (the 2026-07-18 baseline counted 3 judge-429 entries as passes this way).
+    `passed` is kept for compatibility but is null for unscored/error entries.
+  - Headline totals (summary + compare) count only scored entries; unscored
+    and error entries are excluded from the denominator and reported separately.
+  - compare reconstructs status for pre-v4 run files and ignores transitions
+    into/out of unscored/error when flagging regressions/improvements.
 """
 
 import argparse
@@ -49,7 +63,7 @@ JUDGE_MODEL = "gemma-4-31b-it"  # same model as the agent — one shared quota p
 # make `import app` work when run as `python eval/run_eval.py`
 sys.path.insert(0, str(EVAL_DIR.parent))
 
-MAX_RPM = 15.0  # gemma-4-31b-it free tier; override with --rpm
+MAX_RPM = 7.0  # below 8 RPM to stay under the 16k input-TPM free-tier cap; override with --rpm
 
 
 # ─────────────────────────────────────────────────────────────
@@ -302,15 +316,26 @@ async def run_one(item: dict, use_judge: bool) -> dict:
 
     rule_pass = all(c["passed"] for c in checks) if checks else False
     judge_pass = judge_result["passed"] if judge_result else None  # None = unscored
-    overall = (not error) and rule_pass and (judge_pass is not False)
+    # `status` is the single source of truth. An entry with no real verdict
+    # (agent error, or judge attempted but never returned) must never surface
+    # as passed — it gets passed=None and is excluded from headline counts.
+    if error:
+        status = "error"
+    elif not rule_pass:
+        status = "failed"  # deterministic rule failure stands even if the judge is unscored
+    elif judge_result is not None and judge_pass is None:
+        status = "unscored"
+    else:
+        status = "passed" if judge_pass is not False else "failed"
 
     return {
         "id": item["id"],
         "category": item["category"],
         "lang": item.get("lang"),
         "query": item["query"],
-        "passed": overall,
-        "unscored": judge_result is not None and judge_result["passed"] is None,
+        "status": status,
+        "passed": {"passed": True, "failed": False}.get(status),  # None if unscored/error
+        "unscored": status == "unscored",
         "rule_checks": checks,
         "judge": judge_result,
         "latency_s": latency,
@@ -348,9 +373,7 @@ async def cmd_run(args):
     for i, item in enumerate(queries, 1):  # serial: avoid hammering local DB / API quota
         r = await run_one(item, use_judge=not args.no_judge)
         results.append(r)
-        mark = "✅" if r["passed"] else "❌"
-        if r["unscored"]:
-            mark = "⚠️ "
+        mark = {"passed": "✅", "failed": "❌", "unscored": "⚠️ ", "error": "💥"}[r["status"]]
         why = r["error"] or ""
         failed_rules = [c["name"] for c in r["rule_checks"] if not c["passed"]]
         if failed_rules:
@@ -370,29 +393,40 @@ async def cmd_run(args):
 
 
 def print_summary(results: list[dict]):
+    # Headline counts only entries with a real verdict — unscored/error entries
+    # are excluded from the denominator and reported separately below.
+    def tally(rs):
+        scored = [r for r in rs if r["status"] in ("passed", "failed")]
+        return sum(r["status"] == "passed" for r in scored), len(scored), len(rs) - len(scored)
+
     by_cat = defaultdict(list)
     for r in results:
-        by_cat[r["category"]].append(r["passed"])
-    total = sum(r["passed"] for r in results)
+        by_cat[r["category"]].append(r)
     print(f"\n{'Category':<24}{'Passed':>8}")
     print("-" * 34)
-    for cat, flags in sorted(by_cat.items()):
-        print(f"{cat:<24}{sum(flags):>4}/{len(flags)}")
+    for cat, rs in sorted(by_cat.items()):
+        p, n, excluded = tally(rs)
+        note = f"  (+{excluded} unscored/error)" if excluded else ""
+        print(f"{cat:<24}{p:>4}/{n}{note}")
     print("-" * 34)
-    print(f"{'TOTAL':<24}{total:>4}/{len(results)}")
+    p, n, excluded = tally(results)
+    note = f"  (+{excluded} unscored/error, excluded)" if excluded else ""
+    print(f"{'TOTAL':<24}{p:>4}/{n}{note}")
 
     # Per-language breakdown: watch for language bias in retrieval/prompting
     by_lang = defaultdict(list)
     for r in results:
         if r.get("lang"):
-            by_lang[r["lang"]].append(r["passed"])
+            by_lang[r["lang"]].append(r)
     if by_lang:
         print("\nBy language:")
-        for lang, flags in sorted(by_lang.items()):
-            print(f"  {lang:<8}{sum(flags)}/{len(flags)}")
+        for lang, rs in sorted(by_lang.items()):
+            p, n, excluded = tally(rs)
+            note = f"  (+{excluded} unscored/error)" if excluded else ""
+            print(f"  {lang:<8}{p}/{n}{note}")
 
-    unscored = sum(1 for r in results if r.get("unscored"))
-    errors = sum(1 for r in results if r.get("error"))
+    unscored = sum(1 for r in results if r["status"] == "unscored")
+    errors = sum(1 for r in results if r["status"] == "error")
     if unscored:
         print(f"\n⚠️ Judge unscored: {unscored} — this run must NOT be used for compare; re-run when the API is stable")
     if errors:
@@ -410,12 +444,25 @@ def load_run(path: str) -> dict:
     }
 
 
+def entry_status(r: dict) -> str:
+    """Status of an entry from either format: v4+ files carry an explicit
+    `status`; older files are reconstructed from error/unscored/passed —
+    critically, a pre-v4 unscored entry with passed=true is still unscored."""
+    if "status" in r:
+        return r["status"]
+    if r.get("error"):
+        return "error"
+    if r.get("unscored"):
+        return "unscored"
+    return "passed" if r.get("passed") else "failed"
+
+
 def cmd_compare(args):
     a, b = load_run(args.run_a), load_run(args.run_b)
     for name, run in [(args.run_a, a), (args.run_b, b)]:
-        n = sum(1 for r in run.values() if r.get("unscored"))
+        n = sum(1 for r in run.values() if entry_status(r) in ("unscored", "error"))
         if n:
-            print(f"⚠️ {name} has {n} unscored entries — comparison is unreliable\n")
+            print(f"⚠️ {name} has {n} unscored/error entries — comparison is unreliable\n")
 
     ids = sorted(set(a) | set(b))
     name_a, name_b = Path(args.run_a).stem, Path(args.run_b).stem
@@ -425,26 +472,27 @@ def cmd_compare(args):
     regressions, improvements = [], []
     for qid in ids:
         ra, rb = a.get(qid), b.get(qid)
-        pa = ra["passed"] if ra else None
-        pb = rb["passed"] if rb else None
+        sa = entry_status(ra) if ra else None
+        sb = entry_status(rb) if rb else None
         cat = (ra or rb)["category"]
 
-        def sym(r, p):
-            if r is None:
-                return "—"
-            if r.get("unscored"):
-                return "⚠️"
-            return "✅" if p else "❌"
+        sym = {None: "—", "passed": "✅", "failed": "❌", "unscored": "⚠️", "error": "💥"}
 
+        # Only a verdict-to-verdict flip counts as movement; transitions
+        # into/out of unscored/error say nothing about agent quality.
         delta = ""
-        if pa is not None and pb is not None and pa != pb:
-            delta = "📈" if pb else "📉 REGRESSION"
-            (improvements if pb else regressions).append(qid)
-        print(f"| {qid} | {cat} | {sym(ra, pa)} | {sym(rb, pb)} | {delta} |")
+        if sa in ("passed", "failed") and sb in ("passed", "failed") and sa != sb:
+            improved = sb == "passed"
+            delta = "📈" if improved else "📉 REGRESSION"
+            (improvements if improved else regressions).append(qid)
+        print(f"| {qid} | {cat} | {sym[sa]} | {sym[sb]} | {delta} |")
 
-    ta = sum(r["passed"] for r in a.values())
-    tb = sum(r["passed"] for r in b.values())
-    print(f"\nTotal: {name_a} {ta}/{len(a)}  →  {name_b} {tb}/{len(b)}")
+    def tally(run):
+        scored = [r for r in run.values() if entry_status(r) in ("passed", "failed")]
+        return sum(entry_status(r) == "passed" for r in scored), len(scored)
+
+    (pa, na), (pb, nb) = tally(a), tally(b)
+    print(f"\nTotal (scored only): {name_a} {pa}/{na}  →  {name_b} {pb}/{nb}")
     if improvements:
         print(f"Improved: {improvements}")
     if regressions:

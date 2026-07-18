@@ -1219,6 +1219,12 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ Agent LLM reverted to Gemma (2026-07-17) — `gemma-4-31b-it` via `ChatGoogleGenerativeAI`, `build_agent_llm()` factory kept; `OPENROUTER_API_KEY` no longer required
 - ✅ Embeddings switched to `gemini-embedding-2` (2026-07-17) — `output_dimensionality=768`, all 245 laptops re-embedded, gate thresholds recalibrated by live-catalog spot-check (0.53 / 0.33)
 - ✅ SSE streaming chat endpoint `POST /agent/chat/stream` (2026-07-18) — token-by-token reply + tool-activity events via `stream_agent()`/`astream_events`; thinking-block filtering, internal tool-call-turn text discarded via `turn_reset`, persistence after stream completion shared with the non-streaming endpoint
+- ✅ Agent SSE `thinking` event (2026-07-18) — model reasoning deltas extracted per chunk (`_chunk_to_thinking`) and streamed on a separate channel for the frontend's thinking-flow panel; never persisted, reply tokens still filtered by `_chunk_to_text`
+- ✅ `AgentLaptopCard.image_url` (2026-07-18) — first catalog photo attached to chat shortlist cards; looked up from the `Laptop` row in the agent router (both fresh-search and persisted-pool branches), kept out of the search tool payload so URLs don't burn LLM context
+- ✅ Webshare proxy for transcript fetches (2026-07-18) — optional `WEBSHARE_PROXY_USERNAME`/`_PASSWORD` settings route `youtube-transcript-api` through a rotating-residential proxy; diagnosed all-12-rejected ingest on Render as YouTube's datacenter-IP block (discovery via keyed Data API unaffected)
+- ✅ `POST /reviews/process-bulk?limit=` (2026-07-18) — bulk chunk/embed over matched reviews with no chunks yet (existing chunks = processed marker, duplicate-safe re-runs, per-review failure reporting)
+- ✅ Review chunk processor model → `gemma-4-31b-it` (2026-07-18) — replaces `gemini-3.5-flash`, aligned with the agent model; local `_CHUNK_MODEL` constant to avoid importing the agent stack; watch structured-output adherence on first runs
+- ✅ Review pipeline backfill run (2026-07-18) — rematch flipped 8 stale pending rows (scored by an older matcher config) to matched; 7 Zenbook videos manually paired to UX3405MA / UM3406 / UX5406 / UX3407QA variants; bulk chunk+embed+aggregate run over all 15 matched reviews
 
 ---
 

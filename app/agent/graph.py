@@ -209,6 +209,10 @@ async def stream_agent(
 
     {"type": "token", "text": str}   — one token of the model turn currently
                                        streaming (thinking blocks filtered out)
+    {"type": "thinking", "text": str}— one delta of the model's reasoning
+                                       (thinking blocks), streamed separately
+                                       so the client can render a thinking
+                                       flow without mixing it into the reply
     {"type": "turn_reset"}           — the turn that just streamed ended in a
                                        tool call (internal reasoning, not the
                                        reply); the client must discard the
@@ -238,7 +242,11 @@ async def stream_agent(
             turn_text = []
 
         elif kind == "on_chat_model_stream":
-            text = _chunk_to_text(event["data"]["chunk"].content)
+            content = event["data"]["chunk"].content
+            thinking = _chunk_to_thinking(content)
+            if thinking:
+                yield {"type": "thinking", "text": thinking}
+            text = _chunk_to_text(content)
             if text:
                 turn_text.append(text)
                 yield {"type": "token", "text": text}
@@ -266,6 +274,19 @@ async def stream_agent(
                 search_results = None
 
     yield {"type": "final", "reply": final_reply, "tool_results": search_results}
+
+
+def _chunk_to_thinking(content) -> str:
+    """Thinking blocks only — the counterpart of _chunk_to_text. These deltas
+    are sent to the client as explicit `thinking` events, never as reply
+    tokens, so the UI can show the reasoning flow in its own surface."""
+    if isinstance(content, str):
+        return ""
+    parts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "thinking":
+            parts.append(block.get("thinking", ""))
+    return "".join(parts)
 
 
 def _chunk_to_text(content) -> str:
