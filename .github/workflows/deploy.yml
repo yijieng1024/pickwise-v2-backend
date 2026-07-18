@@ -10,6 +10,7 @@ on:
       - .github/**
       - README.md
       - Progress.md
+      - eval/runs
 
 env:
   REGISTRY: ghcr.io

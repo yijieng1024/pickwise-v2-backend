@@ -1224,7 +1224,11 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - ✅ Webshare proxy for transcript fetches (2026-07-18) — optional `WEBSHARE_PROXY_USERNAME`/`_PASSWORD` settings route `youtube-transcript-api` through a rotating-residential proxy; diagnosed all-12-rejected ingest on Render as YouTube's datacenter-IP block (discovery via keyed Data API unaffected)
 - ✅ `POST /reviews/process-bulk?limit=` (2026-07-18) — bulk chunk/embed over matched reviews with no chunks yet (existing chunks = processed marker, duplicate-safe re-runs, per-review failure reporting)
 - ✅ Review chunk processor model → `gemma-4-31b-it` (2026-07-18) — replaces `gemini-3.5-flash`, aligned with the agent model; local `_CHUNK_MODEL` constant to avoid importing the agent stack; watch structured-output adherence on first runs
-- ✅ Review pipeline backfill run (2026-07-18) — rematch flipped 8 stale pending rows (scored by an older matcher config) to matched; 7 Zenbook videos manually paired to UX3405MA / UM3406 / UX5406 / UX3407QA variants; bulk chunk+embed+aggregate run over all 15 matched reviews
+- ✅ Review pipeline backfill run (2026-07-18) — rematch flipped 8 stale pending rows (scored by an older matcher config) to matched; 7 Zenbook videos manually paired to UX3405MA / UM3406 / UX5406 / UX3407QA variants; bulk chunk+embed+aggregate run over all 15 matched reviews (291 chunks, 0 failures — gemma-4-31b-it handled structured output cleanly)
+- ✅ Saved laptops (2026-07-18) — `app/saved/` module: `saved_laptops` table (migration `d7c2e94b5a18`, unique user+laptop), `GET /saved/` + `GET /saved/ids` + idempotent `PUT`/`DELETE /saved/{laptop_id}` (bearer auth); backs the frontend's `/saved` wishlist page and details-page heart; deployed
+- ✅ Conversation shortlist restore (2026-07-18) — `GET /conversations/{id}/laptops` returns the persisted `conversation_laptops` pool as `AgentLaptopCard`s (schema imported from agent router), so the chat frontend restores the shortlist rail on reopen
+- ✅ Conversation rename (2026-07-18) — `PATCH /conversations/{id}` `{title}`: trimmed, 400 on empty, 60-char cap; backs the frontend's per-conversation action menu
+- ✅ Personalized PickScore in the UI (2026-07-18) — `POST /laptops/calculate-score[/batch]` got its first frontend callers: details-page "For you" tab, details hero ring (best-fit fallback), and chat shortlist overlay; agent tools stay general-mode by design
 
 ---
 
