@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # Comma-separated origins allowed to call the API from a browser
     # (CORS). Add the deployed frontend origin here in production.
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,https://pickwise-eight.vercel.app"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
