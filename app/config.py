@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # YouTube Data API v3 — optional until key is obtained; discovery.py raises on None
     youtube_api_key: Optional[str] = None
 
+    # Webshare rotating-residential proxy (proxy.webshare.io) — optional;
+    # transcript fetches go direct when unset. Needed on cloud hosts (Render)
+    # because YouTube IP-blocks the unauthenticated transcript endpoint for
+    # datacenter IPs; the YouTube Data API (discovery) is unaffected.
+    webshare_proxy_username: Optional[str] = None
+    webshare_proxy_password: Optional[str] = None
+
     # SerpApi (serpapi.com Google Shopping, gl=my) — optional; the
     # live-listings layer of search_malaysian_market_price reports
     # "unavailable" when unset and the tool answers from the catalog layer

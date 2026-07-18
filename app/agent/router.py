@@ -32,6 +32,10 @@ class AgentLaptopCard(BaseModel):
     price_rm: Optional[float] = None
     pick_score: Optional[int] = None
     similarity_score: Optional[float] = None
+    # First catalog photo, for the card thumbnail. Looked up from the Laptop
+    # row here rather than added to the search tool's payload, so image URLs
+    # never enter the LLM context.
+    image_url: Optional[str] = None
 
 
 class AgentChatResponse(BaseModel):
@@ -105,13 +109,18 @@ def _persist_assistant_turn(
     session.commit()
 
     if tool_results is not None:
-        return [AgentLaptopCard(
-            laptop_id=r["laptop_id"],
-            product_name=r["product_name"],
-            price_rm=r.get("price_rm"),
-            pick_score=r.get("pick_score"),
-            similarity_score=r.get("similarity_score"),
-        ) for r in tool_results]
+        cards = []
+        for r in tool_results:
+            laptop = session.get(Laptop, r["laptop_id"])
+            cards.append(AgentLaptopCard(
+                laptop_id=r["laptop_id"],
+                product_name=r["product_name"],
+                price_rm=r.get("price_rm"),
+                pick_score=r.get("pick_score"),
+                similarity_score=r.get("similarity_score"),
+                image_url=laptop.image_urls[0] if laptop and laptop.image_urls else None,
+            ))
+        return cards
 
     # No new search this turn — return the persisted shortlist pool so the
     # frontend keeps its cards on follow-up questions.
@@ -127,6 +136,7 @@ def _persist_assistant_turn(
         price_rm=laptop.price_rm,
         pick_score=cl.pick_score,
         similarity_score=cl.similarity_score,
+        image_url=laptop.image_urls[0] if laptop.image_urls else None,
     ) for cl, laptop in pool_rows]
 
 
@@ -172,6 +182,8 @@ async def agent_chat_stream(
     Events (JSON per `data:` line):
       meta       {conversation_id}            — first event, always
       token      {text}                       — append to the assistant bubble
+      thinking   {text}                       — append to the thinking-flow
+                                                panel (model reasoning delta)
       turn_reset {}                           — discard the current bubble text
                                                 (internal tool-call turn)
       tool       {name}                       — tool started (activity chip)

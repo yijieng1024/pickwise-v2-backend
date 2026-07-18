@@ -17,6 +17,10 @@ logger = get_logger(__name__)
 _CHUNK_DURATION_SECONDS = 45
 _INTER_REQUEST_DELAY = 4  # seconds between Gemini calls
 
+# Same model as the agent (app/agent/graph.py AGENT_MODEL) — kept as a local
+# constant so the review pipeline doesn't import the agent stack.
+_CHUNK_MODEL = "gemma-4-31b-it"
+
 
 class _ChunkAnalysis(BaseModel):
     summary: str
@@ -100,7 +104,7 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> int:
         return 0
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash",
+        model=_CHUNK_MODEL,
         temperature=0,
         google_api_key=settings.gemini_api_key,
     )
