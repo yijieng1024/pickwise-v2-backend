@@ -151,7 +151,9 @@ async def agent_chat(
     conv, history, conv_laptops = _setup_turn(body, current_user, session)
 
     try:
-        reply_text, tool_results = await run_agent(body.message, history, conv_laptops, session)
+        reply_text, tool_results = await run_agent(
+            body.message, history, conv_laptops, session, user_id=current_user.id
+        )
     except Exception as e:
         raise HTTPException(
             status_code=503,
@@ -202,7 +204,9 @@ async def agent_chat_stream(
         reply_text = ""
         tool_results: Optional[list[dict]] = None
         try:
-            async for ev in stream_agent(body.message, history, conv_laptops, session):
+            async for ev in stream_agent(
+                body.message, history, conv_laptops, session, user_id=current_user.id
+            ):
                 if ev["type"] == "final":
                     reply_text = ev["reply"]
                     tool_results = ev["tool_results"]

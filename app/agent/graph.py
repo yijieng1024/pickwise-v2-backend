@@ -1,16 +1,18 @@
 import json
+import uuid
 from typing import Optional
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.rate_limiters import BaseRateLimiter
 from langchain_google_genai import ChatGoogleGenerativeAI
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.agent.tools import ALL_TOOLS
 from app.config import settings
 from app.rag.models import ConversationLaptop, Message, MessageRole
 from app.laptops.laptop_models import Laptop
+from app.users.models import LaptopUserPreference
 
 # How many prior turns (user + assistant messages combined) to replay into
 # the agent's context window each call. Reconstructed from the `messages`
@@ -117,6 +119,68 @@ _SYSTEM_PROMPT = (
 _SEARCH_LAPTOPS_TOOL_NAME = "search_laptops"
 
 
+def _format_budget(budget: Optional[dict]) -> Optional[str]:
+    if not budget:
+        return None
+    lo, hi = budget.get("min"), budget.get("max")
+    if lo and hi:
+        return f"RM {lo:.0f}–{hi:.0f}"
+    if hi:
+        return f"up to RM {hi:.0f}"
+    if lo:
+        return f"at least RM {lo:.0f} (no upper limit)"
+    return None
+
+
+def _preference_block(user_id: Optional[uuid.UUID], session: Session) -> Optional[str]:
+    """Saved needs-questionnaire profile, injected as agent context so
+    "recommend me something according to my preferences" works without the
+    user re-answering the wizard in chat. Conversation always overrides the
+    profile — the block says so explicitly, and search_laptops args still
+    come from the LLM's read of the conversation, not from this row."""
+    if user_id is None:
+        return None
+    pref = session.exec(
+        select(LaptopUserPreference).where(LaptopUserPreference.user_id == user_id)
+    ).first()
+    if pref is None:
+        return None
+
+    lines = []
+    budget = _format_budget(pref.budget)
+    if budget:
+        lines.append(f"- Budget: {budget}")
+    if pref.purpose:
+        lines.append(f"- Primary uses: {', '.join(pref.purpose)}")
+    if pref.priorities:
+        ranked = sorted(pref.priorities.items(), key=lambda kv: kv[1], reverse=True)
+        lines.append(
+            "- Factor priorities (1-10): "
+            + ", ".join(f"{k} {v}" for k, v in ranked)
+        )
+    if pref.screen_size:
+        lines.append(f"- Preferred screen sizes: {', '.join(pref.screen_size)}")
+    if pref.portability:
+        lines.append(f"- Portability importance: {pref.portability}")
+    if pref.brand_preferences:
+        lines.append(f"- Preferred brands: {', '.join(pref.brand_preferences)}")
+    if pref.tech_savviness:
+        lines.append(
+            f"- Tech-savviness: {pref.tech_savviness} — match your explanation depth to this"
+        )
+    if not lines:
+        return None
+
+    return (
+        "The user's saved preference profile (from their needs questionnaire):\n"
+        + "\n".join(lines)
+        + "\n\nUse this profile as the default for searches and recommendations — "
+        "when the user says \"my preferences\", they mean this profile, so do not "
+        "re-ask for information it already answers. Anything the user states in "
+        "this conversation overrides the profile."
+    )
+
+
 def _pool_block(conv_laptops: list[ConversationLaptop], session: Session) -> Optional[str]:
     if not conv_laptops:
         return None
@@ -169,8 +233,13 @@ def _build_agent_input(
     history: list[Message],
     conv_laptops: list[ConversationLaptop],
     session: Session,
+    user_id: Optional[uuid.UUID] = None,
 ) -> list:
     langchain_messages = [SystemMessage(content=_SYSTEM_PROMPT)]
+
+    preference_block = _preference_block(user_id, session)
+    if preference_block:
+        langchain_messages.append(SystemMessage(content=preference_block))
 
     pool_block = _pool_block(conv_laptops, session)
     if pool_block:
@@ -186,9 +255,10 @@ async def run_agent(
     history: list[Message],
     conv_laptops: list[ConversationLaptop],
     session: Session,
+    user_id: Optional[uuid.UUID] = None,
 ) -> tuple[str, Optional[list[dict]]]:
     llm = build_agent_llm()
-    langchain_messages = _build_agent_input(message, history, conv_laptops, session)
+    langchain_messages = _build_agent_input(message, history, conv_laptops, session, user_id)
 
     agent = create_agent(llm, ALL_TOOLS)
     result = await agent.ainvoke({"messages": langchain_messages})
@@ -204,6 +274,7 @@ async def stream_agent(
     history: list[Message],
     conv_laptops: list[ConversationLaptop],
     session: Session,
+    user_id: Optional[uuid.UUID] = None,
 ):
     """Streaming twin of run_agent. Async generator yielding event dicts:
 
@@ -227,7 +298,7 @@ async def stream_agent(
     search_laptops payload of the turn when its confidence was "high".
     """
     llm = build_agent_llm()
-    langchain_messages = _build_agent_input(message, history, conv_laptops, session)
+    langchain_messages = _build_agent_input(message, history, conv_laptops, session, user_id)
 
     agent = create_agent(llm, ALL_TOOLS)
 
