@@ -8,7 +8,7 @@ from langchain_core.rate_limiters import BaseRateLimiter
 from langchain_google_genai import ChatGoogleGenerativeAI
 from sqlmodel import Session, select
 
-from app.agent.tools import ALL_TOOLS
+from app.agent.tools import ALL_TOOLS, make_search_laptops
 from app.config import settings
 from app.rag.models import ConversationLaptop, Message, MessageRole
 from app.laptops.laptop_models import Laptop
@@ -95,8 +95,12 @@ _SYSTEM_PROMPT = (
     "hardware-and-value score computed from real benchmarks, RAM/storage, "
     "portability, battery, screen size, and price — it is data, not opinion. "
     "When presenting a laptop, cite it as \"PickScore N/100\" and use "
-    "pick_score_top_factors to explain what drives the score. If pick_score "
-    "is missing for a result, simply omit it — never invent a score.\n"
+    "pick_score_top_factors to explain what drives the score. If the "
+    "payload's score_mode is \"personalized\", the scores are weighted by "
+    "the user's saved preference profile — present them as personalized "
+    "(e.g. \"your personalized PickScore 87/100\"); if \"general\", present "
+    "them as standard PickScores. If pick_score is missing for a result, "
+    "simply omit it — never invent a score.\n"
     "- If confidence is \"low\", you MUST NOT simply say no laptops were found "
     "and stop. The tool intentionally withholds a forced, poorly-matching "
     "recommendation — it is now your job to keep the conversation productive. "
@@ -117,6 +121,18 @@ _SYSTEM_PROMPT = (
 )
 
 _SEARCH_LAPTOPS_TOOL_NAME = "search_laptops"
+
+
+def _agent_tools(user_id: Optional[uuid.UUID]) -> list:
+    """Per-request toolset: search_laptops bound to the authenticated user so
+    its PickScores are personalized when a preference row exists. All other
+    tools are user-independent and shared."""
+    if user_id is None:
+        return ALL_TOOLS
+    return [
+        make_search_laptops(user_id) if t.name == _SEARCH_LAPTOPS_TOOL_NAME else t
+        for t in ALL_TOOLS
+    ]
 
 
 def _format_budget(budget: Optional[dict]) -> Optional[str]:
@@ -260,7 +276,7 @@ async def run_agent(
     llm = build_agent_llm()
     langchain_messages = _build_agent_input(message, history, conv_laptops, session, user_id)
 
-    agent = create_agent(llm, ALL_TOOLS)
+    agent = create_agent(llm, _agent_tools(user_id))
     result = await agent.ainvoke({"messages": langchain_messages})
 
     reply_text = _content_to_text(result["messages"][-1].content)
@@ -300,7 +316,7 @@ async def stream_agent(
     llm = build_agent_llm()
     langchain_messages = _build_agent_input(message, history, conv_laptops, session, user_id)
 
-    agent = create_agent(llm, ALL_TOOLS)
+    agent = create_agent(llm, _agent_tools(user_id))
 
     turn_text: list[str] = []
     final_reply = ""

@@ -8,6 +8,7 @@ from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
+from app.users.models import LaptopUserPreference
 from app.rag.evaluation import log_pipeline_result
 from app.rag.gating import relevance_gate
 from app.rag.reranker import RankedCandidate, UserConstraints, rerank
@@ -33,12 +34,17 @@ def _normalize_purpose(purpose: Optional[str]) -> list[str]:
     return [normalized]
 
 
-def _pick_scores_for(top: list[RankedCandidate], session: Session) -> dict[str, dict]:
+def _pick_scores_for(
+    top: list[RankedCandidate],
+    session: Session,
+    user_pref: Optional[LaptopUserPreference] = None,
+) -> dict[str, dict]:
     """
-    General-mode PickScore (no user preference row — the agent has no user
-    context) for the gated top results only. Same batch pattern as
-    app/recommendation/service.py: ranges + benchmark tuples fetched once,
-    reused for every laptop. Keyed by str(laptop_id).
+    PickScore for the gated top results only — personalized when the caller
+    passes the authenticated user's preference row, general-mode otherwise
+    (the eval harness and signed-in users without a questionnaire row).
+    Same batch pattern as app/recommendation/service.py: ranges + benchmark
+    tuples fetched once, reused for every laptop. Keyed by str(laptop_id).
 
     Only the composite score and a compact top-3 factor summary are exposed —
     the full 8-factor breakdown would bloat the LLM context and overflow the
@@ -56,7 +62,7 @@ def _pick_scores_for(top: list[RankedCandidate], session: Session) -> dict[str, 
             brand = session.get(LaptopBrand, laptop.brand_id)
             brand_names[laptop.brand_id] = brand.name if brand else ""
         product = laptop_to_scorable(laptop, brand_names[laptop.brand_id])
-        resp = calculate_pick_score(product, None, ranges, cpu_benchmarks, gpu_benchmarks)
+        resp = calculate_pick_score(product, user_pref, ranges, cpu_benchmarks, gpu_benchmarks)
         top_factors = sorted(resp.breakdown, key=lambda f: f.contribution, reverse=True)[:3]
         scores[str(laptop.id)] = {
             "pick_score": resp.score,
@@ -88,15 +94,7 @@ def _to_result_dict(rc: RankedCandidate) -> dict:
     }
 
 
-@tool
-def search_laptops(
-    user_query: str,
-    budget_max: Optional[float] = None,
-    brand: Optional[str] = None,
-    purpose: Optional[str] = None,
-    top_k: int = 10,
-) -> dict:
-    """
+_SEARCH_LAPTOPS_DOC = """
     Search the PickWise laptop catalog with the full retrieve -> rerank ->
     relax -> gate precision pipeline (pgvector semantic search, corrected
     against explicit constraints).
@@ -118,6 +116,8 @@ def search_laptops(
         - results: list of matching laptops (empty when confidence is "low").
           Each result carries pick_score (0-100 deterministic hardware/value
           score) and pick_score_top_factors (its top scoring factors).
+        - score_mode: "personalized" when pick_score values are weighted by
+          the user's saved preference profile, "general" otherwise.
         - confidence: "high" if good matches were found, "low" otherwise.
         - bottleneck: "budget" | "weight_limit" | "general" | None — only set
           when confidence is "low". Explains what's blocking a good match.
@@ -127,6 +127,16 @@ def search_laptops(
         - relaxation_notice: set when a constraint had to be auto-relaxed to
           find any viable results — mention this to the user.
     """
+
+
+def _run_search(
+    user_query: str,
+    budget_max: Optional[float] = None,
+    brand: Optional[str] = None,
+    purpose: Optional[str] = None,
+    top_k: int = 10,
+    user_id: Optional[uuid.UUID] = None,
+) -> dict:
     constraints = UserConstraints(
         budget=budget_max,
         weight_limit=None,
@@ -135,6 +145,14 @@ def search_laptops(
     )
 
     with Session(engine) as session:
+        # user_id is bound by make_search_laptops() from the authenticated
+        # request — never an LLM-visible argument (a model could fabricate it).
+        user_pref = None
+        if user_id is not None:
+            user_pref = session.exec(
+                select(LaptopUserPreference).where(LaptopUserPreference.user_id == user_id)
+            ).first()
+
         candidates = retrieve_candidates(user_query, session, budget_max=budget_max)
         ranked = rerank(candidates, constraints)
 
@@ -155,9 +173,12 @@ def search_laptops(
         except Exception:
             logger.exception("search_laptops: failed to log pipeline result")
 
+        score_mode = "personalized" if user_pref else "general"
+
         if gate.status == "gated":
             return {
                 "results": [],
+                "score_mode": score_mode,
                 "confidence": "low",
                 "bottleneck": gate.bottleneck,
                 "message": gate.message,
@@ -169,10 +190,11 @@ def search_laptops(
         # PickScore failure must not take down the search itself — results
         # just go out unscored (pick_score stays absent, persisted as NULL).
         try:
-            pick_scores = _pick_scores_for(top, session)
+            pick_scores = _pick_scores_for(top, session, user_pref)
         except Exception:
             logger.exception("search_laptops: PickScore computation failed")
             pick_scores = {}
+            score_mode = "general"
 
         results = []
         for rc in top:
@@ -182,8 +204,38 @@ def search_laptops(
 
         return {
             "results": results,
+            "score_mode": score_mode,
             "confidence": "high",
             "bottleneck": None,
             "message": None,
             "relaxation_notice": relaxation.user_message if relaxation else None,
         }
+
+
+def _make_search_fn(user_id: Optional[uuid.UUID]):
+    def search_laptops(
+        user_query: str,
+        budget_max: Optional[float] = None,
+        brand: Optional[str] = None,
+        purpose: Optional[str] = None,
+        top_k: int = 10,
+    ) -> dict:
+        return _run_search(user_query, budget_max, brand, purpose, top_k, user_id)
+
+    search_laptops.__doc__ = _SEARCH_LAPTOPS_DOC
+    return search_laptops
+
+
+# Module-level tool: general-mode scores. Used by ALL_TOOLS (and therefore the
+# eval harness), and by requests with no usable preference row.
+search_laptops = tool(_make_search_fn(None))
+
+
+def make_search_laptops(user_id: Optional[uuid.UUID]):
+    """Per-request search_laptops bound to the authenticated user, so
+    pick_score comes out personalized when their preference row exists.
+    Same tool name, docstring, and arg schema as the module-level tool —
+    the LLM cannot tell them apart."""
+    if user_id is None:
+        return search_laptops
+    return tool(_make_search_fn(user_id))
