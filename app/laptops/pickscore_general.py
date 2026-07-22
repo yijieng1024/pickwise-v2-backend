@@ -34,18 +34,20 @@ USE_CASE_PRIORITIES: dict[str, dict[str, float]] = {
         "price": 9, "cpu": 6, "gpu": 2, "ram_storage": 5,
         "portability": 7, "battery": 8, "screen_size": 2, "brand": 1,
     },
-    "programming": {  # compile/IDE workloads: CPU + RAM + screen real estate
-        # over extreme ultra-portability
+    "programming": {  # compile/IDE workloads: CPU + RAM heavy; screen real estate
+        # and portability matter about equally for devs on the go
         "price": 6, "cpu": 9, "gpu": 3, "ram_storage": 9,
-        "portability": 4, "battery": 6, "screen_size": 3, "brand": 1,
+        "portability": 4, "battery": 6, "screen_size": 4, "brand": 1,
     },
-    "gaming": {  # portable desktop: raw GPU/CPU is all that matters
-        "price": 5, "cpu": 8, "gpu": 10, "ram_storage": 7,
-        "portability": 1, "battery": 1, "screen_size": 3, "brand": 1,
+    "gaming": {  # portable desktop: raw GPU/CPU and screen immersion are what
+        # matter — price sensitivity is lower than the other use cases
+        "price": 4, "cpu": 8, "gpu": 10, "ram_storage": 7,
+        "portability": 1, "battery": 1, "screen_size": 4, "brand": 1,
     },
-    "creative_work": {  # design/video/3D: GPU + RAM heavy, bigger screens help
-        "price": 4, "cpu": 8, "gpu": 9, "ram_storage": 8,
-        "portability": 3, "battery": 3, "screen_size": 4, "brand": 1,
+    "creative_work": {  # design/video/3D: performance, RAM, and a big screen come
+        # first — a professional tool, so price sensitivity is low
+        "price": 3, "cpu": 8, "gpu": 9, "ram_storage": 8,
+        "portability": 3, "battery": 3, "screen_size": 5, "brand": 1,
     },
     "general_use": {  # balanced all-rounder: price-first, GPU minimal
         "price": 9, "cpu": 7, "gpu": 2, "ram_storage": 7,

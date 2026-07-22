@@ -15,13 +15,32 @@ DEFAULT_PRIORITY: dict[str, float] = {
     "brand":       1,
 }
 
-# Purpose → per-factor weight multipliers (capped at 1.3 per spec 3.4)
+# Purpose → per-factor weight multipliers, boost-only and capped at 1.3 per
+# spec 3.4 (values must stay >= 1.0 — _compute_weights combines multiple
+# selected purposes via max(), which would silently swallow anything lower).
+# Tiers mirror each factor's relative rank inside USE_CASE_PRIORITIES (see
+# app/laptops/pickscore_general.py): 1.3 = the defining factor(s) for that
+# purpose, 1.2 = a close second tier, 1.1 = a minor but still above-baseline
+# factor. Office/Study and General Use lead with price because PickScore's
+# price/value factor is the first priority for everyday, non-performance
+# use; boosting the other relevant factors already dilutes gpu's share
+# without needing an explicit suppression entry.
 PURPOSE_MODIFIERS: dict[str, dict[str, float]] = {
-    "Office/Study":            {"cpu": 1.1},
-    "Programming/Development": {"cpu": 1.2, "ram_storage": 1.2},
-    "Gaming":                  {"gpu": 1.3, "cpu": 1.1},
-    "Creative Work":           {"gpu": 1.3, "ram_storage": 1.2},
-    "General Use":             {},
+    "Office/Study": {
+        "price": 1.3, "battery": 1.2, "portability": 1.2, "cpu": 1.1,
+    },
+    "Programming/Development": {
+        "cpu": 1.3, "ram_storage": 1.3, "price": 1.1, "battery": 1.1,
+    },
+    "Gaming": {
+        "gpu": 1.3, "cpu": 1.2, "ram_storage": 1.1,
+    },
+    "Creative Work": {
+        "gpu": 1.3, "cpu": 1.2, "ram_storage": 1.2, "screen_size": 1.1,
+    },
+    "General Use": {
+        "price": 1.3, "cpu": 1.2, "ram_storage": 1.2, "portability": 1.1, "battery": 1.1,
+    },
 }
 
 # Q5 portability intensity → Portability factor weight multiplier
