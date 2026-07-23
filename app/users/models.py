@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 from datetime import datetime, timezone, date
 from enum import Enum
@@ -18,6 +18,7 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     password: Optional[str] = Field(default=None, description="bcrypt hash; None for social-login accounts with no local password")
     role: str = Field(default="user")
+    status: str = Field(default="active", description="Account status: 'active', 'inactive', or 'suspended' — enforced at login and on every authenticated request")
     auth_provider: str = Field(default="local", description="How the account was created: 'local' or 'google'")
     provider_sub: Optional[str] = Field(default=None, unique=True, index=True, description="Stable OAuth subject ID from the provider (Google 'sub')")
     is_verified: bool = Field(default=False)
@@ -60,6 +61,21 @@ class UserRead(SQLModel):
     gender: Optional[str]
     occupation: Optional[str]
     created_at: datetime
+
+# admin-facing user record — no password, adds moderation-relevant fields
+class UserAdminRead(SQLModel):
+    id: uuid.UUID
+    username: str
+    email: str
+    role: str
+    status: str
+    is_verified: bool
+    auth_provider: str
+    created_at: datetime
+
+class UserListResponse(SQLModel):
+    total: int
+    items: List["UserAdminRead"]
 
 # token response model for authentication
 class Token(SQLModel):

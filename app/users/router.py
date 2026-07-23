@@ -29,6 +29,19 @@ from app.users.auth import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+def _ensure_account_active(user: User) -> None:
+    """Shared status gate for every login path (password + Google)."""
+    if user.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been suspended.",
+        )
+    if user.status == "inactive":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is inactive.",
+        )
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(
     request: UserRegisterRequest,
@@ -134,7 +147,9 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = D
             detail="Incorrect username/email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-        
+
+    _ensure_account_active(user)
+
     # check if email is verified
     if not user.is_verified:
         raise HTTPException(
@@ -233,12 +248,14 @@ def google_login(request: GoogleLoginRequest, session: Session = Depends(get_ses
     # 1. Returning Google user — matched by stable Google subject ID
     user = session.exec(select(User).where(User.provider_sub == google_sub)).first()
     if user:
+        _ensure_account_active(user)
         return _issue_access_token(user)
 
     # 2. Existing local account with the same email — link it to Google.
     #    Google has verified the email, so the account counts as verified too.
     user = session.exec(select(User).where(User.email == email)).first()
     if user:
+        _ensure_account_active(user)
         user.provider_sub = google_sub
         user.is_verified = True
         session.add(user)

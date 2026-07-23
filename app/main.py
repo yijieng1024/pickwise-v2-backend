@@ -8,6 +8,7 @@ from app.laptops.customization_router import router as customization_router
 from app.laptops.laptop_router import router as laptops_router
 from app.laptops.brand_router import router as brands_router
 from app.users.router import router as users_router
+from app.users.admin_router import router as users_admin_router
 from app.scraper.router import router as scraper_router
 from app.processor.router import router as processor_router
 from app.benchmark.router import router as benchmark_router
@@ -44,6 +45,7 @@ app.add_middleware(
 
 # declare routes before including routers to avoid circular imports
 app.include_router(users_router, prefix=API_PREFIX)
+app.include_router(users_admin_router, prefix=API_PREFIX)
 app.include_router(laptops_router, prefix=API_PREFIX)
 app.include_router(brands_router, prefix=API_PREFIX)
 app.include_router(customization_router, prefix=API_PREFIX)

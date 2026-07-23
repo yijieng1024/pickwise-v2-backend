@@ -1,7 +1,7 @@
 import re
 from datetime import date
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import List, Optional, Dict
+from typing import List, Literal, Optional, Dict
 
 class UserRegisterRequest(BaseModel):
     username: str
@@ -76,3 +76,9 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str = Field(min_length=8, description="Must be at least 8 characters long")
+
+class UserRoleUpdate(BaseModel):
+    role: Literal["user", "admin"]
+
+class UserStatusUpdate(BaseModel):
+    status: Literal["active", "inactive", "suspended"]
