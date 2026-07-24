@@ -73,9 +73,17 @@ def get_current_user(
         raise credentials_exception
     
     user = session.get(User, user_identifier)
-    
+
     if user is None:
         raise credentials_exception
+
+    # A token can outlive an admin action taken against the account (7-day
+    # expiry) — re-check status on every request, not just at login.
+    if user.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is not active.",
+        )
 
     return user
 
