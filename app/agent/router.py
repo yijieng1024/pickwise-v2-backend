@@ -1,13 +1,15 @@
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.agent.monitoring_service import MonitoringCallbackHandler, log_agent_run
 from app.rag import service
 from app.rag.models import Conversation, ConversationLaptop, Message, MessageRole
 from app.database import get_session
@@ -143,24 +145,40 @@ def _persist_assistant_turn(
 @router.post("/chat")
 async def agent_chat(
     body: AgentChatRequest,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> AgentChatResponse:
     from app.agent.graph import run_agent
 
     conv, history, conv_laptops = _setup_turn(body, current_user, session)
+    handler = MonitoringCallbackHandler()
+    turn_started = time.monotonic()
 
     try:
         reply_text, tool_results = await run_agent(
-            body.message, history, conv_laptops, session, user_id=current_user.id
+            body.message, history, conv_laptops, session, user_id=current_user.id, handler=handler,
         )
     except Exception as e:
+        # Raising here bypasses the response FastAPI would have attached
+        # `background_tasks` to, so log synchronously — this is the rare
+        # agent-failure path, not the hot path BackgroundTasks exists for.
+        log_agent_run(
+            conv.id, current_user.id, body.message, "", "error", str(e),
+            round((time.monotonic() - turn_started) * 1000), handler,
+        )
         raise HTTPException(
             status_code=503,
             detail=f"Agent unavailable: {e}",
         )
 
     laptop_cards = _persist_assistant_turn(conv, reply_text, tool_results, conv_laptops, session)
+
+    background_tasks.add_task(
+        log_agent_run,
+        conv.id, current_user.id, body.message, reply_text, "success", None,
+        round((time.monotonic() - turn_started) * 1000), handler,
+    )
 
     return AgentChatResponse(
         response=reply_text,
@@ -176,6 +194,7 @@ def _sse(payload: dict) -> str:
 @router.post("/chat/stream")
 async def agent_chat_stream(
     body: AgentChatRequest,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
@@ -197,6 +216,8 @@ async def agent_chat_stream(
     from app.agent.graph import stream_agent
 
     conv, history, conv_laptops = _setup_turn(body, current_user, session)
+    handler = MonitoringCallbackHandler()
+    turn_started = time.monotonic()
 
     async def sse_gen():
         yield _sse({"type": "meta", "conversation_id": str(conv.id)})
@@ -205,7 +226,7 @@ async def agent_chat_stream(
         tool_results: Optional[list[dict]] = None
         try:
             async for ev in stream_agent(
-                body.message, history, conv_laptops, session, user_id=current_user.id
+                body.message, history, conv_laptops, session, user_id=current_user.id, handler=handler,
             ):
                 if ev["type"] == "final":
                     reply_text = ev["reply"]
@@ -214,11 +235,21 @@ async def agent_chat_stream(
                     yield _sse(ev)
         except Exception as e:
             logger.exception("agent stream failed for conversation %s", conv.id)
+            background_tasks.add_task(
+                log_agent_run,
+                conv.id, current_user.id, body.message, reply_text, "error", str(e),
+                round((time.monotonic() - turn_started) * 1000), handler,
+            )
             yield _sse({"type": "error", "detail": f"Agent unavailable: {e}"})
             return
 
         laptop_cards = _persist_assistant_turn(
             conv, reply_text, tool_results, conv_laptops, session
+        )
+        background_tasks.add_task(
+            log_agent_run,
+            conv.id, current_user.id, body.message, reply_text, "success", None,
+            round((time.monotonic() - turn_started) * 1000), handler,
         )
         yield _sse({
             "type": "done",
@@ -235,4 +266,10 @@ async def agent_chat_stream(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+        # BackgroundTasks added inside sse_gen() (both on success and the
+        # internal except branch) land in this same object — FastAPI only
+        # auto-attaches an injected BackgroundTasks to responses it builds
+        # itself, not to a Response subclass returned directly, so it must
+        # be passed explicitly here.
+        background=background_tasks,
     )

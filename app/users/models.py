@@ -73,10 +73,6 @@ class UserAdminRead(SQLModel):
     auth_provider: str
     created_at: datetime
 
-class UserListResponse(SQLModel):
-    total: int
-    items: List["UserAdminRead"]
-
 # token response model for authentication
 class Token(SQLModel):
     access_token: str

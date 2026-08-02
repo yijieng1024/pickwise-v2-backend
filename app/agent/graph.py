@@ -8,6 +8,7 @@ from langchain_core.rate_limiters import BaseRateLimiter
 from langchain_google_genai import ChatGoogleGenerativeAI
 from sqlmodel import Session, select
 
+from app.agent.monitoring_service import MonitoringCallbackHandler
 from app.agent.tools import ALL_TOOLS, make_search_laptops
 from app.config import settings
 from app.rag.models import ConversationLaptop, Message, MessageRole
@@ -272,12 +273,14 @@ async def run_agent(
     conv_laptops: list[ConversationLaptop],
     session: Session,
     user_id: Optional[uuid.UUID] = None,
+    handler: Optional[MonitoringCallbackHandler] = None,
 ) -> tuple[str, Optional[list[dict]]]:
     llm = build_agent_llm()
     langchain_messages = _build_agent_input(message, history, conv_laptops, session, user_id)
 
     agent = create_agent(llm, _agent_tools(user_id))
-    result = await agent.ainvoke({"messages": langchain_messages})
+    config = {"callbacks": [handler]} if handler else None
+    result = await agent.ainvoke({"messages": langchain_messages}, config=config)
 
     reply_text = _content_to_text(result["messages"][-1].content)
     tool_results = _extract_search_results(result["messages"])
@@ -291,6 +294,7 @@ async def stream_agent(
     conv_laptops: list[ConversationLaptop],
     session: Session,
     user_id: Optional[uuid.UUID] = None,
+    handler: Optional[MonitoringCallbackHandler] = None,
 ):
     """Streaming twin of run_agent. Async generator yielding event dicts:
 
@@ -317,12 +321,15 @@ async def stream_agent(
     langchain_messages = _build_agent_input(message, history, conv_laptops, session, user_id)
 
     agent = create_agent(llm, _agent_tools(user_id))
+    config = {"callbacks": [handler]} if handler else None
 
     turn_text: list[str] = []
     final_reply = ""
     search_results: Optional[list[dict]] = None
 
-    async for event in agent.astream_events({"messages": langchain_messages}, version="v2"):
+    async for event in agent.astream_events(
+        {"messages": langchain_messages}, version="v2", config=config
+    ):
         kind = event["event"]
 
         if kind == "on_chat_model_start":
