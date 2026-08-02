@@ -29,6 +29,7 @@ from app.reviews.models import (
     LaptopReviewChunk,
     LaptopReviewSummary,
 )
+from app.agent.monitoring_models import AgentRunLog
 
 load_dotenv()
 

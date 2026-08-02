@@ -17,6 +17,7 @@ from app.embeddings.router import router as embedding_router
 from app.recommendation.router import router as recommendation_router
 from app.rag.router import router as rag_router
 from app.agent.router import router as agent_router
+from app.agent.monitoring_router import router as agent_monitoring_router
 from app.reviews.router import router as reviews_router
 from app.taxonomy.product_type_router import router as product_type_router
 from app.taxonomy.category_router import router as category_router
@@ -57,6 +58,7 @@ app.include_router(embedding_router, prefix=API_PREFIX)
 app.include_router(recommendation_router, prefix=API_PREFIX)
 app.include_router(rag_router, prefix=API_PREFIX)
 app.include_router(agent_router, prefix=API_PREFIX)
+app.include_router(agent_monitoring_router, prefix=API_PREFIX)
 app.include_router(reviews_router, prefix=API_PREFIX)
 app.include_router(product_type_router, prefix=API_PREFIX)
 app.include_router(category_router, prefix=API_PREFIX)
