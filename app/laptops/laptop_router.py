@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 from app.database import get_session
@@ -9,6 +9,7 @@ from app.laptops.laptop_models import (
 from app.laptops.brand_model import LaptopBrand
 from app.embeddings.service import embed_text
 from app.scraper.models import RawScrapLaptop
+from app.common.pagination_service import count_total
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
 from typing import List, Optional
@@ -39,7 +40,8 @@ def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session))
 
 @router.get("/", response_model=List[LaptopRead])
 def list_laptops(
-    search: Optional[str] = search_query("Matches product name or model code"),
+    response: Response,
+    search: Optional[str] = search_query("Matches product name, model code, or brand name"),
     sort_by: Optional[str] = Query(default=None, description="One of: product_name, price_rm, created_at"),
     sort_dir: SortDirection = sort_dir_query(),
     skip: Optional[int] = Query(default=None, ge=0, description="Omit to get every row (default, unpaginated)"),
@@ -52,9 +54,19 @@ def list_laptops(
     existing caller (client-side browse/filter, admin dashboard counts) keeps
     working unchanged. Pass search/sort_by/sort_dir/skip/limit to opt into
     server-side filtering, sorting, and slicing.
+
+    The body stays a bare array (unchanged contract) — the filtered row count
+    travels via the `X-Total-Count` response header instead, so callers that
+    want real pagination (not just a client-side slice) can read it without
+    a breaking response-shape change.
     """
-    statement = select(Laptop)
-    statement = apply_search(statement, search, [Laptop.product_name, Laptop.model_code])
+    # Joined so search can also match the brand name (the old client-side
+    # search did this too — kept for parity now that search moved server-side).
+    statement = select(Laptop).join(LaptopBrand, Laptop.brand_id == LaptopBrand.id)  # type: ignore[arg-type]
+    statement = apply_search(statement, search, [Laptop.product_name, Laptop.model_code, LaptopBrand.name])
+
+    response.headers["X-Total-Count"] = str(count_total(session, statement))
+
     statement = apply_sort(statement, sort_by, sort_dir, LAPTOP_SORTABLE_COLUMNS, Laptop.created_at)
 
     if skip is not None:

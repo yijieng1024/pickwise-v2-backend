@@ -19,6 +19,11 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Hard ceiling on how many laptops a single search emits into the agent's
+# context. See the _run_search slice for why this is the main tokens-per-minute
+# lever. Tune here (not per-call) if the Gemini quota changes.
+_MAX_RESULTS = 6
+
 # Keys reranker.py's purpose-signal dicts are keyed by. Anything that doesn't
 # normalize to one of these falls back to "Office" — the neutral default —
 # so the tool never passes an unrecognized purpose string downstream.
@@ -75,6 +80,12 @@ def _pick_scores_for(
 
 def _to_result_dict(rc: RankedCandidate) -> dict:
     laptop = rc._laptop  # type: ignore[attr-defined]
+    # final_score / penalty_reasons / bonus_reasons are internal reranker
+    # diagnostics — the gate/relaxation stages read them off the RankedCandidate
+    # object, never this dict, and no downstream consumer (router persistence,
+    # frontend cards) uses them either. Kept out of the emitted payload so they
+    # don't inflate the LLM context on every follow-up step (Gemini free-tier
+    # tokens-per-minute is the binding limit).
     return {
         "laptop_id": str(laptop.id),
         "model_code": laptop.model_code,
@@ -88,9 +99,6 @@ def _to_result_dict(rc: RankedCandidate) -> dict:
         "weight_kg": laptop.weight_kg,
         "display_size_inch": laptop.display_size_inch,
         "similarity_score": rc.similarity_score,
-        "final_score": rc.final_score,
-        "penalty_reasons": rc.penalty_reasons,
-        "bonus_reasons": rc.bonus_reasons,
     }
 
 
@@ -185,7 +193,11 @@ def _run_search(
                 "relaxation_notice": None,
             }
 
-        top = gate.candidates[:top_k]
+        # Hard ceiling regardless of the top_k the LLM requests: every result
+        # is re-sent in context on each follow-up reasoning step, so this is
+        # the single biggest lever on tokens-per-minute. Six is plenty for a
+        # chat shortlist (the frontend renders these as cards).
+        top = gate.candidates[: min(top_k, _MAX_RESULTS)]
 
         # PickScore failure must not take down the search itself — results
         # just go out unscored (pick_score stays absent, persisted as NULL).

@@ -22,6 +22,11 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
+# Shown to the end user on any agent failure — the real exception (which can
+# include raw provider error payloads, e.g. Gemini rate-limit JSON) goes to
+# AgentRunLog.error_message and the server log, never to the client.
+_USER_FACING_ERROR = "Pico is unavailable right now. Please try again in a moment."
+
 
 class AgentChatRequest(BaseModel):
     message: str
@@ -169,7 +174,7 @@ async def agent_chat(
         )
         raise HTTPException(
             status_code=503,
-            detail=f"Agent unavailable: {e}",
+            detail=_USER_FACING_ERROR,
         )
 
     laptop_cards = _persist_assistant_turn(conv, reply_text, tool_results, conv_laptops, session)
@@ -240,7 +245,7 @@ async def agent_chat_stream(
                 conv.id, current_user.id, body.message, reply_text, "error", str(e),
                 round((time.monotonic() - turn_started) * 1000), handler,
             )
-            yield _sse({"type": "error", "detail": f"Agent unavailable: {e}"})
+            yield _sse({"type": "error", "detail": _USER_FACING_ERROR})
             return
 
         laptop_cards = _persist_assistant_turn(

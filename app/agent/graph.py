@@ -4,7 +4,7 @@ from typing import Optional
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.rate_limiters import BaseRateLimiter
+from langchain_core.rate_limiters import BaseRateLimiter, InMemoryRateLimiter
 from langchain_google_genai import ChatGoogleGenerativeAI
 from sqlmodel import Session, select
 
@@ -19,7 +19,10 @@ from app.users.models import LaptopUserPreference
 # the agent's context window each call. Reconstructed from the `messages`
 # table each turn instead of a LangGraph checkpointer — see
 # CRS_Agent_Consolidation_Spec.md and the migration plan for why.
-_HISTORY_WINDOW = 12
+# Trimmed from 12 to 8: the full window is re-sent on every internal ReAct
+# step, so it multiplies against tokens-per-minute (Gemini free-tier's binding
+# limit). 8 still covers ~4 back-and-forth exchanges of follow-up context.
+_HISTORY_WINDOW = 8
 
 # Single source of truth for the agent LLM config — eval/run_eval.py imports
 # build_agent_llm() so offline evals always measure the same setup
@@ -27,15 +30,34 @@ _HISTORY_WINDOW = 12
 AGENT_MODEL = "gemma-4-31b-it"
 AGENT_TEMPERATURE = 0.3
 
+# Process-wide token bucket that paces outbound model calls. The ReAct loop
+# fires every internal step back-to-back (sub-second apart), which is what
+# spikes tokens-per-minute past the Gemini free-tier cap (16K TPM) and trips
+# 429s. Pacing to ~1 call / 5s spreads those steps out and keeps request rate
+# well under the RPM ceiling (30/min).
+#
+# Tuning knob: lower requests_per_second = fewer 429s, slower replies. Note
+# this SMOOTHS bursts but does not by itself guarantee staying under 16K TPM
+# at the current per-call size (~4K tokens) — for that, per-call size also has
+# to come down (system-prompt / tool-doc trim). Also: one bucket per process,
+# so a multi-worker deploy (e.g. Render with >1 worker) multiplies the
+# effective rate by the worker count.
+_AGENT_RATE_LIMITER = InMemoryRateLimiter(
+    requests_per_second=0.2,
+    check_every_n_seconds=0.1,
+    max_bucket_size=1,
+)
+
 
 def build_agent_llm(rate_limiter: Optional[BaseRateLimiter] = None) -> ChatGoogleGenerativeAI:
-    """Construct the agent LLM. The optional rate_limiter is for the eval
-    harness, which shares one global limiter across agent + judge calls."""
+    """Construct the agent LLM. Defaults to the shared production rate limiter;
+    the eval harness passes its own so it can share one global limiter across
+    agent + judge calls."""
     return ChatGoogleGenerativeAI(
         model=AGENT_MODEL,
         temperature=AGENT_TEMPERATURE,
         google_api_key=settings.gemini_api_key,
-        rate_limiter=rate_limiter,
+        rate_limiter=rate_limiter or _AGENT_RATE_LIMITER,
     )
 
 _SYSTEM_PROMPT = (

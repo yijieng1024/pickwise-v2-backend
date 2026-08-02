@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, BackgroundTasks
 from sqlmodel import Session, select
 from typing import List, Optional
 from uuid import UUID
 
 from app.benchmark.cpu_scraper import run_cpu_list_scraper
 from app.benchmark.gpu_scraper import run_gpu_list_scraper
-from app.common.pagination_service import PaginationParams, paginate
+from app.common.pagination_service import PaginationParams, count_total, paginate
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
 from app.database import get_session
@@ -41,6 +41,7 @@ def create_cpu_benchmark(
 
 @router.get("/cpu", response_model=List[CPUBenchmarkRead])
 def list_cpu_benchmarks(
+    response: Response,
     search: Optional[str] = search_query("Matches CPU name"),
     sort_by: Optional[str] = Query(default=None, description="One of: cpu_name, cpu_mark"),
     sort_dir: SortDirection = sort_dir_query(),
@@ -49,6 +50,7 @@ def list_cpu_benchmarks(
 ):
     statement = select(CPUBenchmark)
     statement = apply_search(statement, search, [CPUBenchmark.cpu_name])
+    response.headers["X-Total-Count"] = str(count_total(db, statement))
     statement = apply_sort(statement, sort_by, sort_dir, CPU_SORTABLE_COLUMNS, CPUBenchmark.cpu_name)
     return db.exec(paginate(statement, pagination)).all()
 
@@ -132,6 +134,7 @@ def create_gpu_benchmark(
 
 @router.get("/gpu", response_model=List[GPUBenchmarkRead])
 def list_gpu_benchmarks(
+    response: Response,
     search: Optional[str] = search_query("Matches GPU name"),
     sort_by: Optional[str] = Query(default=None, description="One of: gpu_name, gpu_mark"),
     sort_dir: SortDirection = sort_dir_query(),
@@ -140,6 +143,7 @@ def list_gpu_benchmarks(
 ):
     statement = select(GPUBenchmark)
     statement = apply_search(statement, search, [GPUBenchmark.gpu_name])
+    response.headers["X-Total-Count"] = str(count_total(db, statement))
     statement = apply_sort(statement, sort_by, sort_dir, GPU_SORTABLE_COLUMNS, GPUBenchmark.gpu_name)
     return db.exec(paginate(statement, pagination)).all()
 
