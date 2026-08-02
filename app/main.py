@@ -42,6 +42,11 @@ app.add_middleware(
     allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
+    # Custom response headers are invisible to browser JS unless explicitly
+    # exposed. X-Total-Count carries the row count for list endpoints that
+    # deliberately kept a bare-array response body (see /laptops/,
+    # /benchmarks/cpu, /benchmarks/gpu) instead of a {items,total} envelope.
+    expose_headers=["X-Total-Count"],
 )
 
 # declare routes before including routers to avoid circular imports
