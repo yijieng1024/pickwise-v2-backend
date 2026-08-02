@@ -2,43 +2,50 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
+from app.common.pagination_service import Page, PaginationParams, count_total, paginate
+from app.common.search_service import apply_search, search_query
+from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
 from app.database import get_session
 from app.users.auth import get_current_admin
-from app.users.models import User, UserAdminRead, UserListResponse
+from app.users.models import User, UserAdminRead
 from app.users.schema import UserRoleUpdate, UserStatusUpdate
 
 router = APIRouter(prefix="/users", tags=["Admin - Users"])
 
+# Allow-list for ?sort_by= — see app.common.sorting_service.
+USER_SORTABLE_COLUMNS = {
+    "username": User.username,
+    "created_at": User.created_at,
+}
 
-@router.get("", response_model=UserListResponse, dependencies=[Depends(get_current_admin)])
+
+@router.get("", response_model=Page[UserAdminRead], dependencies=[Depends(get_current_admin)])
 def list_users(
-    search: Optional[str] = Query(default=None, description="Matches username or email (case-insensitive)"),
+    search: Optional[str] = search_query("Matches username or email (case-insensitive)"),
     role: Optional[str] = Query(default=None),
     status_filter: Optional[str] = Query(default=None, alias="status", description="active, inactive, or suspended"),
-    skip: int = 0,
-    limit: int = 50,
+    sort_by: Optional[str] = Query(default=None, description="One of: username, created_at"),
+    sort_dir: SortDirection = sort_dir_query(default=SortDirection.desc),
+    pagination: PaginationParams = Depends(),
     session: Session = Depends(get_session),
 ):
     """List users with optional search/role/status filters (admin only)."""
-    query = select(User)
+    statement = select(User)
 
-    if search:
-        pattern = f"%{search}%"
-        query = query.where(or_(User.username.ilike(pattern), User.email.ilike(pattern)))
+    statement = apply_search(statement, search, [User.username, User.email])
     if role:
-        query = query.where(User.role == role)
+        statement = statement.where(User.role == role)
     if status_filter:
-        query = query.where(User.status == status_filter)
+        statement = statement.where(User.status == status_filter)
 
-    total = session.exec(select(func.count()).select_from(query.subquery())).one()
-    items = session.exec(
-        query.order_by(User.created_at.desc()).offset(skip).limit(limit)
-    ).all()
+    total = count_total(session, statement)
 
-    return UserListResponse(total=total, items=list(items))
+    statement = apply_sort(statement, sort_by, sort_dir, USER_SORTABLE_COLUMNS, User.created_at)
+    items = session.exec(paginate(statement, pagination)).all()
+
+    return Page(items=list(items), total=total, skip=pagination.skip, limit=pagination.limit)
 
 
 @router.get("/{user_id}", response_model=UserAdminRead, dependencies=[Depends(get_current_admin)])

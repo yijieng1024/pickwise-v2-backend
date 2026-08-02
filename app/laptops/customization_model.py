@@ -29,6 +29,11 @@ class CustomizationRead(SQLModel):
     price_add_rm: float
     dependency_note: Optional[str] = None
 
+# Schema for the admin "which laptops have customizations" summary list
+class LaptopCustomizationSummary(SQLModel):
+    laptop_id: uuid.UUID
+    customization_count: int
+
 # Schema for creating data (Supports assigning to multiple laptops at once!)
 class CustomizationBulkCreate(SQLModel):
     laptop_ids: List[uuid.UUID]  # Send 1 or many laptop IDs here

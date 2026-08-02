@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 from app.database import get_session
@@ -9,11 +9,21 @@ from app.laptops.laptop_models import (
 from app.laptops.brand_model import LaptopBrand
 from app.embeddings.service import embed_text
 from app.scraper.models import RawScrapLaptop
-from typing import List
+from app.common.search_service import apply_search, search_query
+from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
+from typing import List, Optional
 from uuid import UUID
 from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/laptops", tags=["Laptops"])
+
+# Allow-list for ?sort_by= — keeps sorting to columns that are indexed/cheap
+# and meant to be exposed, per app.common.sorting_service.
+LAPTOP_SORTABLE_COLUMNS = {
+    "product_name": Laptop.product_name,
+    "price_rm": Laptop.price_rm,
+    "created_at": Laptop.created_at,
+}
 
 @router.post("/", response_model=LaptopRead, status_code=201, dependencies=[Depends(get_current_admin)])
 def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session)):
@@ -28,8 +38,31 @@ def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session))
     return db_laptop
 
 @router.get("/", response_model=List[LaptopRead])
-def list_laptops(session: Session = Depends(get_session)):
-    return session.exec(select(Laptop)).all()
+def list_laptops(
+    search: Optional[str] = search_query("Matches product name or model code"),
+    sort_by: Optional[str] = Query(default=None, description="One of: product_name, price_rm, created_at"),
+    sort_dir: SortDirection = sort_dir_query(),
+    skip: Optional[int] = Query(default=None, ge=0, description="Omit to get every row (default, unpaginated)"),
+    limit: Optional[int] = Query(default=None, ge=1, le=200, description="Omit to get every row (default, unpaginated)"),
+    session: Session = Depends(get_session),
+):
+    """
+    All params are optional and additive: called with no query params, this
+    returns the full unpaginated/unfiltered catalog exactly as before — every
+    existing caller (client-side browse/filter, admin dashboard counts) keeps
+    working unchanged. Pass search/sort_by/sort_dir/skip/limit to opt into
+    server-side filtering, sorting, and slicing.
+    """
+    statement = select(Laptop)
+    statement = apply_search(statement, search, [Laptop.product_name, Laptop.model_code])
+    statement = apply_sort(statement, sort_by, sort_dir, LAPTOP_SORTABLE_COLUMNS, Laptop.created_at)
+
+    if skip is not None:
+        statement = statement.offset(skip)
+    if limit is not None:
+        statement = statement.limit(limit)
+
+    return session.exec(statement).all()
 
 @router.post("/hybrid-search", response_model=List[LaptopSearchResult])
 def hybrid_search(request: HybridSearchRequest, session: Session = Depends(get_session)):

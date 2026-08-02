@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlmodel import Session, select, col
 from typing import List
 import uuid
 from app.database import get_session
 from app.laptops.laptop_models import Laptop
-from app.laptops.customization_model import CustomizationUpdate, CustomizationBulkCreate, CustomizationRead, LaptopCustomization
+from app.laptops.customization_model import CustomizationUpdate, CustomizationBulkCreate, CustomizationRead, LaptopCustomization, LaptopCustomizationSummary
 from app.laptops.customization_schema import CustomizationBulkCreateByPattern
-from app.users.auth import get_current_admin 
+from app.users.auth import get_current_admin
 # from app.schemas import CustomizationBulkCreate, CustomizationRead, CustomizationUpdate
 
 router = APIRouter(prefix="/customizations", tags=["Laptop Customizations"])
@@ -93,6 +94,27 @@ def create_customizations_by_pattern(
         session.refresh(custom)
         
     return created_customizations
+
+
+@router.get("/laptops-summary", response_model=List[LaptopCustomizationSummary], dependencies=[Depends(get_current_admin)])
+def get_laptops_with_customizations(session: Session = Depends(get_session)):
+    """
+    READ: Lists every laptop that has at least one customization, with a count.
+
+    Powers the admin customizations picker so admins see which laptops
+    actually have upgrade options configured instead of searching blind.
+    """
+    rows = session.execute(
+        select(
+            LaptopCustomization.laptop_id,
+            func.count(LaptopCustomization.id).label("customization_count"),
+        ).group_by(LaptopCustomization.laptop_id)
+    ).all()
+
+    return [
+        LaptopCustomizationSummary(laptop_id=row.laptop_id, customization_count=row.customization_count)
+        for row in rows
+    ]
 
 
 @router.get("/laptop/{laptop_id}", response_model=List[CustomizationRead], dependencies=[Depends(get_current_admin)])

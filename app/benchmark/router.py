@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from sqlmodel import Session, select
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from app.benchmark.cpu_scraper import run_cpu_list_scraper
 from app.benchmark.gpu_scraper import run_gpu_list_scraper
+from app.common.pagination_service import PaginationParams, paginate
+from app.common.search_service import apply_search, search_query
+from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
 from app.database import get_session
 from app.users.auth import get_current_admin
 from app.benchmark.model import (
@@ -13,6 +16,10 @@ from app.benchmark.model import (
 )
 
 router = APIRouter(prefix="/benchmarks", tags=["Benchmarks"])
+
+# Allow-lists for ?sort_by= — see app.common.sorting_service.
+CPU_SORTABLE_COLUMNS = {"cpu_name": CPUBenchmark.cpu_name, "cpu_mark": CPUBenchmark.cpu_mark}
+GPU_SORTABLE_COLUMNS = {"gpu_name": GPUBenchmark.gpu_name, "gpu_mark": GPUBenchmark.gpu_mark}
 
 # CPU BENCHMARK ENDPOINTS
 
@@ -33,8 +40,17 @@ def create_cpu_benchmark(
     return db_cpu
 
 @router.get("/cpu", response_model=List[CPUBenchmarkRead])
-def list_cpu_benchmarks(offset: int = 0, limit: int = 100, db: Session = Depends(get_session)):
-    return db.exec(select(CPUBenchmark).offset(offset).limit(limit)).all()
+def list_cpu_benchmarks(
+    search: Optional[str] = search_query("Matches CPU name"),
+    sort_by: Optional[str] = Query(default=None, description="One of: cpu_name, cpu_mark"),
+    sort_dir: SortDirection = sort_dir_query(),
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_session),
+):
+    statement = select(CPUBenchmark)
+    statement = apply_search(statement, search, [CPUBenchmark.cpu_name])
+    statement = apply_sort(statement, sort_by, sort_dir, CPU_SORTABLE_COLUMNS, CPUBenchmark.cpu_name)
+    return db.exec(paginate(statement, pagination)).all()
 
 @router.get("/cpu/{id}", response_model=CPUBenchmarkRead)
 def get_cpu_benchmark(id: UUID, db: Session = Depends(get_session)):
@@ -115,8 +131,17 @@ def create_gpu_benchmark(
     return db_gpu
 
 @router.get("/gpu", response_model=List[GPUBenchmarkRead])
-def list_gpu_benchmarks(offset: int = 0, limit: int = 100, db: Session = Depends(get_session)):
-    return db.exec(select(GPUBenchmark).offset(offset).limit(limit)).all()
+def list_gpu_benchmarks(
+    search: Optional[str] = search_query("Matches GPU name"),
+    sort_by: Optional[str] = Query(default=None, description="One of: gpu_name, gpu_mark"),
+    sort_dir: SortDirection = sort_dir_query(),
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_session),
+):
+    statement = select(GPUBenchmark)
+    statement = apply_search(statement, search, [GPUBenchmark.gpu_name])
+    statement = apply_sort(statement, sort_by, sort_dir, GPU_SORTABLE_COLUMNS, GPUBenchmark.gpu_name)
+    return db.exec(paginate(statement, pagination)).all()
 
 @router.get("/gpu/{id}", response_model=GPUBenchmarkRead)
 def get_gpu_benchmark(id: UUID, db: Session = Depends(get_session)):
