@@ -50,8 +50,12 @@ Create a `.env` file in the project root. Required variables (see `app/config.py
 ```
 DATABASE_URL=postgresql://postgres:password@localhost:5432/pickwise_v2
 SECRET_KEY=your-secret-key
-SMTP_USERNAME=your-gmail@gmail.com
+SMTP_USERNAME=your-gmail@gmail.com          # local-dev email fallback, used only when BREVO_API_KEY is unset
 SMTP_PASSWORD=your-gmail-app-password
+BREVO_API_KEY=xxx                           # production email transport (HTTPS); required on Render — see below
+EMAIL_SENDER_ADDRESS=verified@sender        #   must be a sender verified in the Brevo dashboard
+FRONTEND_URL=https://pickwise-eight.vercel.app        # base URL for links in emails (password reset)
+BACKEND_URL=https://pickwise-v2-backend.onrender.com  #   and for the email-verification link
 GEMINI_API_KEY=your-gemini-api-key
 YOUTUBE_API_KEY=your-youtube-data-api-key   # optional — server starts without it
 SERP_API_KEY=your-serpapi-key               # optional — market price tool's live-listings layer (SerpApi Google Shopping); catalog layer works without it
@@ -59,6 +63,8 @@ GOOGLE_OAUTH_CLIENT_ID=xxx.apps.googleusercontent.com  # optional — Sign in wi
 WEBSHARE_PROXY_USERNAME=xxx                 # optional — Webshare rotating-RESIDENTIAL proxy for review transcript fetches;
 WEBSHARE_PROXY_PASSWORD=xxx                 #   direct connection when unset (fine locally; Render's datacenter IP is blocked by YouTube)
 ```
+
+**Email must not go over SMTP in production.** Render blocks outbound traffic to SMTP ports (25/465/587) on free instances, so `smtplib` there fails instantly with `[Errno 101] Network is unreachable` — and because the send runs in a `BackgroundTasks` job, registration still returns 201 "check your email" while nothing is delivered. `app/users/email.py` therefore posts to Brevo's HTTP API (port 443) whenever `BREVO_API_KEY` is set, and only falls back to `smtplib` when it isn't (fine locally). Both senders return a bool and log every failure at ERROR with the provider's response body; they never raise, since nothing would see the exception. Links inside emails are built from `BACKEND_URL`/`FRONTEND_URL` — set both on Render, or verification links point at `localhost`. The verification link must include the `/api/v2` prefix that `main.py` mounts routers under.
 
 `GEMINI_API_KEY` is a required setting (`app/config.py`) and is passed explicitly (`google_api_key=settings.gemini_api_key`) to every Gemini client — agent, embeddings, processor, recommendation, review processor, and the eval judge. Do **not** rely on the ambient `GOOGLE_API_KEY` / Application Default Credentials — that won't exist in Docker/production.
 
