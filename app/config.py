@@ -12,11 +12,19 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 10080
     email_verification_token_expire_hours: int = 1
 
-    # SMTP Configuration
+    # SMTP Configuration.
+    #
+    # Note: this works locally but NOT on Render's free instances, which
+    # block outbound traffic to SMTP ports (25/465/587) — sends there fail
+    # with "[Errno 101] Network is unreachable".
     smtp_server: str = "smtp.gmail.com"
     smtp_port: int = 465
     smtp_username: str
     smtp_password: str
+
+    # Public base URLs used to build links inside emails.
+    frontend_url: str = "http://localhost:3000"
+    backend_url: str = "http://localhost:8000"
 
     # Gemini API
     gemini_api_key: str
