@@ -12,11 +12,27 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 10080
     email_verification_token_expire_hours: int = 1
 
-    # SMTP Configuration
+    # Email delivery.
+    #
+    # Brevo's HTTP API is the production transport: it sends over 443, which
+    # is the only thing that works on Render — outbound SMTP ports (25/465/587)
+    # are blocked there on free instances, so smtplib fails with
+    # "[Errno 101] Network is unreachable". SMTP stays as the local-dev
+    # fallback and is used whenever brevo_api_key is unset.
+    brevo_api_key: Optional[str] = None
+    email_sender_name: str = "PickWise Team"
+    # Must be a sender address verified in the Brevo dashboard.
+    email_sender_address: Optional[str] = None
+
+    # SMTP Configuration (local-dev fallback)
     smtp_server: str = "smtp.gmail.com"
     smtp_port: int = 465
     smtp_username: str
     smtp_password: str
+
+    # Public base URLs used to build links inside emails.
+    frontend_url: str = "http://localhost:3000"
+    backend_url: str = "http://localhost:8000"
 
     # Gemini API
     gemini_api_key: str
