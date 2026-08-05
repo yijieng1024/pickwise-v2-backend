@@ -16,6 +16,7 @@ from app.taxonomy.category_model import Category
 from app.users.models import User
 from app.users.questionnaire_model import QuestionnaireQuestion
 from app.scraper.models import ScrapeTarget
+from app.scraper.raw_html_model import RawProductHtml
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.rag.models import (
     Conversation,
@@ -30,6 +31,14 @@ from app.reviews.models import (
     LaptopReviewSummary,
 )
 from app.agent.monitoring_models import AgentRunLog
+# Every table model must be imported here, or it is absent from
+# SQLModel.metadata and `alembic revision --autogenerate` emits a DROP TABLE
+# for the live table it cannot see. Importing any name from a module registers
+# all of that module's tables, so one import per module is enough.
+from app.saved.models import SavedLaptop
+from app.common.job_model import BackgroundJob
+from app.laptops.pickscore_general import LaptopPickScore
+from app.users.avatar_model import UserAvatar
 
 load_dotenv()
 

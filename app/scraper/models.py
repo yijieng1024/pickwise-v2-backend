@@ -8,6 +8,32 @@ from sqlalchemy.dialects.postgresql import JSONB
 from typing import List, Dict, Any
 
 
+class ScrapeStatus:
+    """
+    Lifecycle values for `ScrapeTarget.scrape_status` (a plain string column, so
+    adding a value needs no migration).
+
+    Two routes reach a terminal state:
+
+      live scrape   pending → COMPLETED / FAILED / SKIPPED
+      uploaded HTML pending → HTML_UPLOADED → PARSED / FAILED
+
+    HTML_UPLOADED means the page is stored in `raw_product_htmls` and waiting to
+    be parsed; PARSED is its success state, kept distinct from COMPLETED so the
+    admin UI can tell a hand-uploaded page from a live scrape. Both FAILED and
+    HTML_UPLOADED are re-picked by the next bulk run.
+    """
+
+    PENDING = "pending"
+    HTML_UPLOADED = "html_uploaded"
+    PARSED = "parsed"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+    ALL = (PENDING, HTML_UPLOADED, PARSED, COMPLETED, FAILED, SKIPPED)
+
+
 class ScrapeTarget(SQLModel, table=True):
     __tablename__ = "laptop_scrape_urls"  # type: ignore
 
@@ -20,8 +46,8 @@ class ScrapeTarget(SQLModel, table=True):
     )
     # status for the website
     is_active: bool = Field(default=True)
-    # States: 'pending', 'completed', 'failed', 'skipped'
-    scrape_status: str = Field(default="pending")
+    # See ScrapeStatus above for the full lifecycle
+    scrape_status: str = Field(default=ScrapeStatus.PENDING)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class RawScrapLaptop(SQLModel, table=True):

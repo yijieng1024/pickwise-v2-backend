@@ -1,26 +1,33 @@
-import time
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session, select
-from typing import Dict, Any
+from typing import Any, Dict
 
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlmodel import Session, select
+
+from app.common.job_model import JobAccepted, JobType
+from app.common.job_service import JobProgress, create_job, job_accepted, run_job
 from app.database import get_session
-from app.scraper.models import RawScrapLaptop
-from app.processor.engine import categorize_untagged_laptops, process_raw_laptop_data
-from app.users.auth import get_current_admin
+from app.laptops.laptop_category_model import LaptopCategory
+from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
+from app.processor.engine import (
+    categorize_untagged_laptops,
+    process_pending_laptops,
+    process_raw_laptop_data,
+)
+from app.scraper.models import RawScrapLaptop
+from app.users.auth import get_current_admin
+from app.users.models import User
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/processor", tags=["Processor"])
 
 # Gemma 4 31B free-tier limits (gemma-4-31b-it):
-#  15 RPM  →  minimum 4 s between requests; using 5 s for safety margin
+#  15 RPM  →  minimum 4 s between requests; the engine uses 5 s for safety
 #  1500 RPD →  default batch of 100 per run (~8 min); hard cap at 1500
-_INTER_REQUEST_DELAY_S = 5    # 5 s > 60/15, gives a small safety margin
-_DEFAULT_BATCH_LIMIT   = 100  # sensible default per run; well under 1500 RPD
+_SECONDS_PER_ITEM      = 5
+_DEFAULT_BATCH_LIMIT   = 100
 _MAX_BATCH_LIMIT       = 1500
-_RATE_LIMIT_KEYWORDS   = ("429", "quota", "resource exhausted", "rate limit")
-_RETRY_WAIT_S          = 65
 
 
 @router.post("/process/{raw_laptop_id}", dependencies=[Depends(get_current_admin)])
@@ -28,7 +35,10 @@ def process_single_laptop(
     raw_laptop_id: str,
     session: Session = Depends(get_session),
 ) -> Dict[str, Any]:
-    """Manually trigger the AI processor for a single raw scraped laptop."""
+    """
+    Process a single raw scraped laptop. Runs inline — one record is a single
+    LLM call, fast enough to answer within the request.
+    """
     result = process_raw_laptop_data(raw_laptop_id, session)
 
     if result.get("status") == "error":
@@ -37,107 +47,126 @@ def process_single_laptop(
     return result
 
 
-@router.post("/categorize-untagged", dependencies=[Depends(get_current_admin)])
-def categorize_untagged(
-    session: Session = Depends(get_session),
-    limit: int = Query(
-        default=_DEFAULT_BATCH_LIMIT,
-        ge=1,
-        le=_MAX_BATCH_LIMIT,
-        description=(
-            f"Max untagged laptops to tag in this run (default {_DEFAULT_BATCH_LIMIT}). "
-            f"Hard ceiling is {_MAX_BATCH_LIMIT} to stay within the Gemma 4 free-tier daily quota (1500 RPD)."
-        ),
-    ),
-) -> Dict[str, Any]:
-    """
-    Backfill category tags for laptops that have no laptop_categories link
-    (e.g. processed before category tagging existed). One LLM call per laptop
-    from its stored specs, throttled to the Gemma free-tier rate limit.
-    Safe to re-run until untagged_remaining reaches 0.
-    """
-    return categorize_untagged_laptops(session, limit=limit)
-
-
-@router.post("/process-pending", dependencies=[Depends(get_current_admin)])
+@router.post(
+    "/process-pending",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def process_all_pending_laptops(
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
+    current_admin: User = Depends(get_current_admin),
     limit: int = Query(
         default=_DEFAULT_BATCH_LIMIT,
         ge=1,
         le=_MAX_BATCH_LIMIT,
         description=(
             f"Max records to process in this run (default {_DEFAULT_BATCH_LIMIT}). "
-            f"Hard ceiling is {_MAX_BATCH_LIMIT} to stay within the Gemma 4 free-tier daily quota (1500 RPD)."
+            f"Hard ceiling is {_MAX_BATCH_LIMIT} to stay within the Gemma 4 "
+            "free-tier daily quota (1500 RPD)."
         ),
     ),
-) -> Dict[str, Any]:
+) -> JobAccepted:
     """
-    Sweeps RawScrapLaptop for pending entries and processes them through the
-    Gemini LLM one at a time, with a mandatory delay between requests to
-    respect the 5 RPM free-tier rate limit.
+    Start processing pending scraped records through the AI extractor.
 
-    - Default batch size: 20 (= daily quota). Pass ?limit=N to process fewer.
-    - On a 429 / quota error: waits 65 s and retries once before marking failed.
+    **Returns 202 immediately — it does not wait for the work.** Each record
+    costs one throttled LLM call (~5 s), so a default batch of 100 runs for
+    roughly 8 minutes; holding the connection open for that long risks a proxy
+    or network timeout, and offered no progress feedback.
+
+    Poll `GET /api/v2/jobs/{job_id}` (returned as `poll_url`) for live counts,
+    per-item errors and a percentage. Stop polling when `status` is
+    `completed` or `failed`.
     """
-    pending_records = session.exec(
-        select(RawScrapLaptop)
-        .where(RawScrapLaptop.processing_status == "pending")
-        .limit(limit)
-    ).all()
+    queued = len(
+        session.exec(
+            select(RawScrapLaptop.id)
+            .where(RawScrapLaptop.processing_status == "pending")
+            .limit(limit)
+        ).all()
+    )
 
-    if not pending_records:
-        return {"message": "No pending records found in the queue."}
+    job = create_job(
+        session,
+        job_type=JobType.PROCESS_PENDING,
+        total_count=queued,
+        params={"limit": limit},
+        created_by=current_admin.id,
+        seconds_per_item=_SECONDS_PER_ITEM,
+    )
 
-    results_summary = []
-    total_saved = 0
-    total_updated = 0
-    requests_made = 0
+    def worker(work_session: Session, progress: JobProgress) -> dict:
+        return process_pending_laptops(work_session, limit=limit, progress=progress)
 
-    for i, record in enumerate(pending_records):
-        # Throttle: sleep before every request except the first
-        if i > 0:
-            logger.info(f"Rate-limit delay: sleeping {_INTER_REQUEST_DELAY_S}s before next request ({i+1}/{len(pending_records)})")
-            time.sleep(_INTER_REQUEST_DELAY_S)
+    background_tasks.add_task(run_job, job.id, worker)
 
-        logger.info(f"Processing [{i+1}/{len(pending_records)}]: {record.raw_product_name} (id={record.id})")
-        res = process_raw_laptop_data(str(record.id), session)
-        requests_made += 1
+    return job_accepted(
+        job,
+        message=(
+            f"Processing {queued} pending record(s) in the background."
+            if queued
+            else "No pending records found — the job will finish immediately."
+        ),
+    )
 
-        # On rate-limit error: wait 65 s and retry once
-        if res.get("status") == "error":
-            error_msg = (res.get("message") or "").lower()
-            is_rate_limited = any(kw in error_msg for kw in _RATE_LIMIT_KEYWORDS)
 
-            if is_rate_limited:
-                logger.warning(f"Rate limit hit on record {record.id}. Waiting {_RETRY_WAIT_S}s then retrying...")
-                time.sleep(_RETRY_WAIT_S)
-                res = process_raw_laptop_data(str(record.id), session)
-                requests_made += 1
+@router.post(
+    "/categorize-untagged",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def categorize_untagged(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_admin: User = Depends(get_current_admin),
+    limit: int = Query(
+        default=_DEFAULT_BATCH_LIMIT,
+        ge=1,
+        le=_MAX_BATCH_LIMIT,
+        description=(
+            f"Max untagged laptops to tag in this run (default {_DEFAULT_BATCH_LIMIT}). "
+            f"Hard ceiling is {_MAX_BATCH_LIMIT} to stay within the Gemma 4 "
+            "free-tier daily quota (1500 RPD)."
+        ),
+    ),
+) -> JobAccepted:
+    """
+    Backfill category tags for laptops with no `laptop_categories` link.
 
-        results_summary.append({
-            "raw_id": str(record.id),
-            "product_name": record.raw_product_name,
-            "status": res.get("status"),
-            "variants_extracted": res.get("variants_extracted", 0),
-            "variants_saved": res.get("variants_saved", 0),
-            "variants_updated": res.get("variants_updated", 0),
-            "error": res.get("message") if res.get("status") == "error" else None,
-        })
+    **Returns 202 immediately** — one throttled LLM call per laptop, same
+    timing profile as `/process-pending`. Poll `poll_url` for progress.
 
-        if res.get("status") == "success":
-            total_saved   += res.get("variants_saved", 0)
-            total_updated += res.get("variants_updated", 0)
+    Tagging is additive: manually assigned tags are never removed, so this is
+    safe to re-run until the job result reports `untagged_remaining: 0`.
+    """
+    queued = len(
+        session.exec(
+            select(Laptop.id)
+            .where(Laptop.id.not_in(select(LaptopCategory.laptop_id)))  # type: ignore[union-attr]
+            .limit(limit)
+        ).all()
+    )
 
-    pending_remaining = session.exec(
-        select(RawScrapLaptop).where(RawScrapLaptop.processing_status == "pending")
-    ).all()
+    job = create_job(
+        session,
+        job_type=JobType.CATEGORIZE_UNTAGGED,
+        total_count=queued,
+        params={"limit": limit},
+        created_by=current_admin.id,
+        seconds_per_item=_SECONDS_PER_ITEM,
+    )
 
-    return {
-        "message": f"Bulk processing complete. {len(pending_records)} record(s) attempted.",
-        "requests_made": requests_made,
-        "total_new_variants_saved": total_saved,
-        "total_variants_updated": total_updated,
-        "pending_remaining": len(pending_remaining),
-        "details": results_summary,
-    }
+    def worker(work_session: Session, progress: JobProgress) -> dict:
+        return categorize_untagged_laptops(work_session, limit=limit, progress=progress)
+
+    background_tasks.add_task(run_job, job.id, worker)
+
+    return job_accepted(
+        job,
+        message=(
+            f"Tagging {queued} untagged laptop(s) in the background."
+            if queued
+            else "No untagged laptops found — the job will finish immediately."
+        ),
+    )

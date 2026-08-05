@@ -23,6 +23,8 @@ from app.taxonomy.product_type_router import router as product_type_router
 from app.taxonomy.category_router import router as category_router
 from app.users.questionnaire_router import router as questionnaire_router
 from app.saved.router import router as saved_router
+from app.common.job_router import router as jobs_router
+from app.common.job_service import reset_stale_jobs
 
 setup_logging()
 
@@ -69,6 +71,17 @@ app.include_router(product_type_router, prefix=API_PREFIX)
 app.include_router(category_router, prefix=API_PREFIX)
 app.include_router(questionnaire_router, prefix=API_PREFIX)
 app.include_router(saved_router, prefix=API_PREFIX)
+app.include_router(jobs_router, prefix=API_PREFIX)
+
+
+@app.on_event("startup")
+def _recover_interrupted_jobs() -> None:
+    """
+    Background jobs run in-process, so a deploy or crash orphans anything still
+    running. Fail those rows on boot — otherwise the admin UI polls a
+    `processing` job that no longer exists, forever. Never raises.
+    """
+    reset_stale_jobs()
 
 
 @app.get("/")
