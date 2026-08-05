@@ -15,7 +15,7 @@ A FastAPI-based backend for a laptop recommendation system with user authenticat
 - **Authentication**: JWT (PyJWT) with OAuth2 PasswordBearer (username-or-email login) + Google Sign-In (ID-token verification via `google-auth`)
 - **Password Hashing**: bcrypt (via passlib)
 - **Email**: SMTP (Gmail SSL, port 465) with background tasks
-- **Web Scraping**: Playwright (Chromium headless)
+- **Web Scraping**: Playwright (Chromium headless); lxml for offline parsing of uploaded HTML (Acer — WAF-blocked, see §18)
 - **AI/LLM Processing**: LangChain + **Google Gemini/Gemma** (agent: `gemma-4-31b-it` via `ChatGoogleGenerativeAI`; embeddings: `gemini-embedding-2`, `output_dimensionality=768`; extraction + category tagging: `gemma-4-31b-it`; recommendation + review chunking: `gemini-3.5-flash`; eval judge)
 - **Vector Storage**: pgvector (768-dimension embeddings)
 - **Agentic Orchestration**: `langchain.agents.create_agent` (migrated off the deprecated `langgraph.prebuilt.create_react_agent`)
@@ -47,13 +47,16 @@ pickwise-v2-backend/
 │   ├── 📂 rag/                      # CRS pipeline library (retrieve/rerank/relax/gate/evaluate) + conversation-thread models (renamed from conversations/)
 │   ├── 📂 laptops/                  # Laptop catalog, brands & customizations module
 │   ├── 📂 processor/               # AI-powered data processor (LLM extraction via Gemini)
-│   ├── 📂 scraper/                  # Playwright web scraping pipeline (Apple & Asus specs)
+│   ├── 📂 scraper/                  # Scraping pipeline (Apple & Asus live; Acer via uploaded HTML)
 │   │   ├── 📄 apple_scraper.py     # Apple-specific crawler and spec extractor (async)
 │   │   ├── 📄 asus_scraper.py      # Asus/ROG-specific __NUXT__ JSON extractor (variant-aware)
+│   │   ├── 📄 acer_scraper.py      # Acer Magento lxml parser over uploaded HTML (no network)
+│   │   ├── 📄 html_ingest.py       # Product-agnostic raw-HTML storage/lookup layer
+│   │   ├── 📄 raw_html_model.py    # RawProductHtml model (raw_product_htmls) + upload schemas
 │   │   ├── 📄 bulk_scraper.py      # Bulk scraping orchestration module (brand-wide)
-│   │   ├── 📄 models.py            # ScrapeTarget & RawScrapLaptop models
+│   │   ├── 📄 models.py            # ScrapeStatus, ScrapeTarget & RawScrapLaptop models
 │   │   ├── 📄 playwright_utils.py  # Thread runner for async Playwright (Windows compat)
-│   │   └── 📄 router.py            # Scraper API endpoints
+│   │   └── 📄 router.py            # Scraper API endpoints (incl. upload-html)
 │   ├── 📂 users/                    # User authentication, profiles, and preferences module
 │   ├── 📄 config.py                 # Application settings and environment variables loader
 │   ├── 📄 database.py              # SQLModel engine setup and database session generators
@@ -281,7 +284,22 @@ Automated web scraping system using Playwright for extracting laptop specs from 
 | POST   | /scraper/feed-crawler             | Admin only | 200     | Crawl site for spec page links               |
 | POST   | /scraper/scrape-url               | Admin only | 200     | Scrape a single URL                          |
 | POST   | /scraper/bulk-scrape              | Admin only | 200/207 | Bulk scrape all pending URLs for a brand     |
+| POST   | /scraper/scrape-targets           | Admin only | 200/207 | Scrape an admin-selected subset of targets   |
+| GET    | /scraper/targets                  | Admin only | 200     | List the crawled queue (brand/status/active filters) |
+| POST   | /scraper/upload-html              | Admin only | 200     | Upload saved HTML pages (multipart) — see §18 |
+| POST   | /scraper/upload-html/json         | Admin only | 200     | Same, as a JSON payload                      |
 | GET    | /scraper/raw-laptop/{raw_laptop_id} | Admin only | 200   | Get full details of a single raw scraped record |
+
+#### ScrapeTarget Status Lifecycle (`ScrapeStatus` in `models.py`):
+
+`scrape_status` is a plain VARCHAR, so new values need no migration.
+
+| Route | Flow |
+| ----- | ---- |
+| Live scrape (Apple, Asus) | `pending` → `completed` / `failed` / `skipped` |
+| Uploaded HTML (Acer) | `pending` → `html_uploaded` → `parsed` / `failed` |
+
+`parsed` is kept distinct from `completed` so the admin UI can tell a hand-uploaded page from a live scrape (`bulk_scraper._success_status()` picks between them off `HTML_UPLOAD_BRANDS`). **`html_uploaded` is in `run_bulk_scrape`'s WHERE clause alongside `failed`** — a target that failed for want of HTML already has `last_scraped_at` stamped, so without that clause freshly uploaded HTML would never be re-picked.
 
 #### Scraping Workflow:
 
@@ -451,7 +469,8 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | `laptop_brands`          | UUID        | ← laptops, ← raw_scrap_laptops, ← laptop_scrape_urls |
 | `laptop_customizations`  | UUID        | → laptops (FK: laptop_id), → categories (FK: category_id) |
 | `raw_scrap_laptops`      | UUID        | → laptop_brands (FK: brand_id)    |
-| `laptop_scrape_urls`     | UUID        | → laptop_brands (FK: brand_id)    |
+| `laptop_scrape_urls`     | UUID        | → laptop_brands (FK: brand_id); `scrape_status` lifecycle incl. `html_uploaded`/`parsed` |
+| `raw_product_htmls`      | UUID        | → product_types (FK), → laptop_brands (FK); `target_id` indexed UUID with **no FK** (target table varies by product type); `canonical_url` UNIQUE |
 | `laptop_embeddings`      | UUID        | → laptops (FK: laptop_id, unique) — 768-dim pgvector |
 | `laptop_price_history`   | UUID        | → laptops (FK: laptop_id) — price snapshots on create + PUT change |
 | `cpu_benchmarks`         | UUID        | Standalone (unique cpu_name)      |
@@ -561,6 +580,13 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | c8f24d1e9a37   | Add MULTIPLE_CHOICE to questiontype Postgres enum | 2026-07-14 | ✅ Complete |
 | e5a7c093b1d4   | Add user_avatars table (bytea, 1:1 users, unique user_id index) | 2026-07-14 | ✅ Complete |
 | a91f3c5d80e2   | Add laptop_pick_scores table (unique laptop_id + use_case, JSON breakdown/flags) | 2026-07-16 | ✅ Complete |
+| d7c2e94b5a18   | Add saved_laptops table (unique user_id + laptop_id)     | 2026-07-18 | ✅ Complete |
+| f1a2b3c4d5e6   | Add status to users (moderation state)                   | 2026-07-23 | ✅ Complete |
+| a3f9c1d7e224   | Add agent_run_logs table (per-turn agent monitoring)      | 2026-08-02 | ✅ Complete |
+| b7e4a2f16c93   | Add raw_product_htmls table (uploaded source HTML; product-agnostic, canonical_url UNIQUE) | 2026-08-05 | ✅ Complete |
+| c4d8b31f7a55   | Add background_jobs table (polled async batch operations) | 2026-08-06 | ✅ Complete |
+
+> Two earlier revisions predate this table and were never listed: `453fffc97e7b` (init all tables, 2026-06-29) and `9962eb7ee808` (add `scrape_status` to `laptop_scrape_urls`, 2026-06-29).
 
 ---
 
@@ -870,6 +896,106 @@ Stores one general-mode PickScore per laptop × use case in the `laptop_pick_sco
 
 ---
 
+### 18. **Acer — Uploaded-HTML Ingestion & Offline Parsing** (`app/scraper/`)
+
+Acer's Malaysian store (`store.acer.com`) cannot be scraped at all. Pages are saved by hand from a normal browser, uploaded to the API, stored in Postgres, and parsed with lxml through the same downstream pipeline as any scraped brand.
+
+#### Files:
+- `app/scraper/acer_scraper.py` — Magento 2 lxml parser (no network, no Playwright)
+- `app/scraper/html_ingest.py` — product-agnostic storage layer: canonical extraction, target resolution, upsert, lookup
+- `app/scraper/raw_html_model.py` — `RawProductHtml` table + upload request/response schemas
+- Migration `b7e4a2f16c93`
+
+#### Why offline — every automated route was tried and refused (measured 2026-08-05):
+
+| Approach | Result |
+|---|---|
+| Playwright bundled Chromium | `ERR_HTTP2_PROTOCOL_ERROR` on every request — Akamai fingerprints the **TLS/HTTP2 handshake**, and the bundled build matches no shipping browser. No user-agent or flag changes this |
+| curl_cffi TLS impersonation | Fixes exactly that layer — the site root returns a full 200 — but protected paths still `403 Access Denied` from `AkamaiGHost`: the `_abck` cookie stays unvalidated (`~-1~`) until Akamai's obfuscated sensor JS posts telemetry. (`firefox*` profiles pass the edge where `chrome*` get 403 — curl_cffi's Chrome fingerprints lag real Chrome, and a Chrome UA over a near-miss handshake is itself a signal) |
+| Playwright + real Google Chrome | Challenge interstitial or 403, and IP-reputation-sensitive — a datacenter IP (Render) has no chance |
+| robots.txt | Disallows `/en-my/*?*`, covering both `?product_list_limit=all` and `?p=N` pagination — even a permitted crawl sees only 10 of 49 products |
+
+The **markup itself needs nothing special**: Magento renders the specs table, prices, and gallery image list server-side, so a saved page contains everything.
+
+#### Storage design — product-agnostic on purpose:
+
+`raw_product_htmls`: `id`, `product_type_id` (FK → `product_types`), `brand_id` (FK → `laptop_brands`), `target_id`, `canonical_url` (UNIQUE), `raw_html` (TEXT), `created_at`/`updated_at` (timestamptz).
+
+- **`target_id` has no FK, deliberately.** The target table is chosen by product type (`laptop_scrape_urls` today, `monitor_scrape_urls` later) and one FK cannot span tables. Integrity is enforced in `html_ingest.py`, which never writes a row without first resolving a live target. Adding a product line = one entry in `_TARGET_MODELS`, **no schema change**
+- **No disk storage.** Render's filesystem is ephemeral, so saved pages had to live in Postgres to survive a deploy (same reasoning as the `user_avatars` bytea table)
+- `canonical_url` UNIQUE is the upsert key — re-uploading refreshes a stale price and re-queues the target
+
+#### Workflow:
+
+1. Save the page in a browser ("Webpage, HTML Only")
+2. `POST /scraper/upload-html` (multipart) or `/upload-html/json`. Each page identifies itself by its `<link rel="canonical">` tag, so **filenames are irrelevant**; matching is exact-URL-first then by slug (`url_key`), tolerant of trailing slashes and query strings. Target → `html_uploaded`
+3. `POST /scraper/bulk-scrape` (or `/scrape-targets`) parses the stored string → `raw_scrap_laptops` → target `parsed`
+4. `GET /scraper/targets?brand_id=…&scrape_status=failed` lists what still needs uploading
+
+Every item in a batch is independent: a page with no canonical tag, one belonging to another brand, or an oversized/empty file is reported in the summary (`matched`/`unmatched`/`invalid` + per-file rows) and never aborts a 49-file upload. Duplicates *within* one batch are absorbed by autoflush (upsert), not an IntegrityError.
+
+#### Parsing details retained from the browser-based version:
+- Specs from `#product-attribute-specs-table`, **section-prefixed** (`"Processor & Chipset / Processor Model"`) — header rows carry a `▶` and an empty `td`
+- Price by explicit `data-price-type` (`finalPrice` → `basePrice` → `oldPrice`); pages also carry an **empty-type** node holding an instalment figure, so first/last-match picks the wrong number. Pre-discount price kept as `Regular Price`
+- Images from the `mage/gallery/gallery` JSON inside the page's `x-magento-init` script — **not** `.fotorama__img` nodes, which are built client-side and do not exist in saved HTML. Filtered to `/media/catalog/product/` (drops promo banners), `?` stripped (collapses the same photo at several sizes)
+- Magento *simple* products (one SKU per page) → always a single-element result with an empty `source_url_suffix`
+
+#### Verification (2026-08-05):
+Full flow exercised through the real endpoints against the live Supabase Postgres inside a rolled-back transaction — upload → `html_uploaded` → parse → `parsed`, with 45 specs, `basePrice` chosen over `oldPrice`, `Regular Price` retained, SKU captured, 13 deduped images, JSONB round trip intact, Postgres rejecting a duplicate `canonical_url`, and the `?scrape_status=failed` filter surfacing the 15 targets still missing HTML. Nothing persisted.
+
+---
+
+### 19. **Background Jobs & Admin Lockout Guards** (`app/common/`, `app/users/admin_router.py`)
+
+Two fixes from the administrative API audit (2026-08-06).
+
+#### 19a. Async background jobs for slow batch operations
+
+Four endpoints used to hold an HTTP connection open for minutes. They now return **`202 Accepted`** with a job envelope and run in the background:
+
+| Endpoint | Was | Now |
+|---|---|---|
+| `POST /scraper/bulk-scrape` | blocked minutes, 200/207 | 202 + `job_id` |
+| `POST /scraper/scrape-targets` | blocked minutes, 200/207 | 202 + `job_id` |
+| `POST /processor/process-pending` | blocked ~8 min at limit=100 | 202 + `job_id` |
+| `POST /processor/categorize-untagged` | blocked ~8 min at limit=100 | 202 + `job_id` |
+
+**⚠️ Breaking change** for existing callers: the response is now a job envelope, not a result. The full report those endpoints used to return (including `log_file` and per-URL `results[]`) is preserved verbatim in the finished job's `result` field.
+
+**New endpoints:**
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/jobs/{job_id}` | Poll one job — status, counts, `progress_percentage`, `errors[]`, `result` |
+| GET | `/jobs` | Job history; filter by `job_type`, `status`, `active_only` |
+
+**Files:** `app/common/job_model.py` (`BackgroundJob` table, `JobStatus`, `JobType`, `JobAccepted`/`JobRead` schemas) · `job_service.py` (`create_job`, `run_job`, `JobProgress`, `reset_stale_jobs`) · `job_router.py` · migration `c4d8b31f7a55`.
+
+**Key design:**
+- **A table, not an in-process dict.** The UI polls for minutes and Render restarts on every deploy; an in-memory registry would 404 mid-poll and break outright under multiple uvicorn workers.
+- **Two sessions, neither the request's.** The request session is closed once the response is sent, so `run_job()` opens its own — one for the worker, a separate one for job bookkeeping, so a poisoned worker session cannot also destroy the error report.
+- **A job can never be stuck in `processing`.** `finally` guarantees a terminal status; `reset_stale_jobs()` (startup hook in `main.py`) fails anything orphaned by a restart.
+- **Per-item failures do not fail the job** — they increment `failed_count` and append `{item, error}` to `errors[]` (capped at 50). A run that finishes is `completed` even if every item failed, so the UI checks `failed_count`, not `status`.
+- **Validation happens before the job exists** — an unknown brand or target id is a 404 on the POST, never a failed job.
+- `/jobs` deliberately sits outside `/scraper`: jobs originate from the processor too.
+- The processor's batch loop moved out of the router into `engine.process_pending_laptops()`, which takes an optional `progress` handle.
+- `POST /reviews/process-bulk` is still synchronous — the remaining conversion candidate.
+
+#### 19b. Admin lockout guards
+
+| Action | Result |
+|---|---|
+| Admin demotes/deactivates **themselves** | `403` — *"Admins cannot demote or deactivate their own account."* |
+| Anyone demotes/deactivates the **last active admin** | `400` — *"Cannot modify or delete the last remaining active admin account."* |
+| Promote, re-affirm an existing admin role, re-activate | Always allowed |
+
+"Active admin" = `role == "admin" AND status == "active"`. Only *demotions* are checked. In practice the last-admin guard mostly backs up the self-guard (the caller is always an active admin, so any other active admin puts the count at ≥ 2); it is kept because it is what holds the invariant if the acting identity or status enforcement ever changes. `assert_can_delete_user()` is ready for the **`DELETE /users/{id}` route that does not exist yet**.
+
+#### Verification (2026-08-06)
+Against the live Supabase Postgres: guards tested in a rolled-back transaction (self-demotion, self-deactivation to both inactive and suspended, last-admin demotion and suspension, plus every legitimate change still succeeding); job machinery tested with synthetic workers covering success, partial failure, worker exception, async workers, `set_total` correction, session independence, stale recovery, and mid-flight polling (a poller genuinely observed `processing` at 50%); all four converted endpoints exercised end-to-end against empty queues. `alembic check` clean; 64 admin endpoints (62 + 2 job routes) all still auth-protected.
+
+---
+
 ## 📋 Complete API Endpoints Summary
 
 **All endpoints below are served under the `/api/v2` prefix** (e.g. `/auth/register` is actually `POST /api/v2/auth/register`), applied via `prefix="/api/v2"` on every `app.include_router(...)` call in `app/main.py`. The root health check (`GET /`) and the auto-generated `/docs`, `/redoc`, `/openapi.json` stay unprefixed. Tables below omit the prefix for brevity.
@@ -930,6 +1056,10 @@ Stores one general-mode PickScore per laptop × use case in the `laptop_pick_sco
 | POST   | /scraper/feed-crawler               | Admin only | Crawl site for spec page links             |
 | POST   | /scraper/scrape-url                 | Admin only | Scrape a single URL                        |
 | POST   | /scraper/bulk-scrape                | Admin only | Bulk scrape all pending URLs for a brand   |
+| POST   | /scraper/scrape-targets             | Admin only | Scrape an admin-selected subset of targets |
+| GET    | /scraper/targets                    | Admin only | List the crawled queue (brand/status filters) |
+| POST   | /scraper/upload-html                | Admin only | Upload saved HTML pages (multipart)        |
+| POST   | /scraper/upload-html/json           | Admin only | Upload saved HTML pages (JSON payload)     |
 | GET    | /scraper/raw-laptop/{raw_laptop_id} | Admin only | Get full details of a raw scraped record   |
 
 ### Processor (`/processor`)
@@ -1247,7 +1377,9 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 - **Router separation** prevents circular imports and improves maintainability
 - **Type system** strictly separates Python `uuid.UUID` from SQLAlchemy UUID types
 - **Import architecture** uses `TYPE_CHECKING` guards + deferred imports to resolve Laptop ↔ LaptopCustomization circular dependency
-- **Scraping** supports Apple and Asus brands; architecture is extensible for other brands
+- **Scraping** supports Apple and Asus live; Acer is parsed offline from uploaded HTML (§18) because its store's WAF refuses every automated client. Architecture is extensible for other brands — note brand dispatch is a hardcoded `if/elif` in **three** places (`router.py` feed-crawler + scrape-url, `bulk_scraper._dispatch_scraper`)
+- **`alembic/env.py` must import every table module** — autogenerate diffs the live DB against `SQLModel.metadata`, so a model whose module is never imported looks like a deleted table and gets a `DROP TABLE`. `saved_laptops`, `laptop_pick_scores` and `user_avatars` sat in exactly that state until 2026-08-05. Importing any one name from a module registers all of its tables. **Run `alembic check` before trusting an autogenerated migration** — it should say "No new upgrade operations detected"
+- **Model column types must match the live DB** — `alembic check` also flags type/nullability drift, and applying it blindly is quietly destructive: `laptop_user_preference.budget` declared `JSON` while the column is `JSONB` would have generated an ALTER that downgrades it and loses JSONB indexing. Aligned 2026-08-05 (`budget` → JSONB; `agent_run_logs` text fields → `Text`, `tool_calls` → `JSONB NOT NULL`). Its sibling columns genuinely *are* plain `json` — do not "upgrade" them
 - **Asus scraper** uses `window.__NUXT__` state extraction (no CSS selectors) for reliable, variant-aware data extraction — separate paths for ROG (`Spec.spec`) and standard ASUS (`PDPage.TechSpec`)
 - **Bulk scraper** orchestrates brand-wide scraping with structured reporting, failure logging, and HTTP 207 Multi-Status support
 - **AI Processor** uses `gemini-3.5-flash` with temperature=0 for deterministic, high-quality extraction
