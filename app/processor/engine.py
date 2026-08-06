@@ -397,7 +397,110 @@ _CATEGORIZE_SYSTEM_PROMPT = """
 _CATEGORIZE_DELAY_S = 5
 
 
-def categorize_untagged_laptops(session: Session, limit: int = 100) -> dict:
+# Gemma 4 31B free-tier limits (gemma-4-31b-it):
+#   15 RPM  → minimum 4 s between requests; 5 s gives a safety margin
+#   1500 RPD → hard ceiling on batch size, enforced by the router
+_INTER_REQUEST_DELAY_S = 5
+_RATE_LIMIT_KEYWORDS = ("429", "quota", "resource exhausted", "rate limit")
+_RETRY_WAIT_S = 65
+
+
+def process_pending_laptops(session: Session, limit: int = 100, progress=None) -> dict:
+    """
+    Process pending `raw_scrap_laptops` rows through the LLM, one at a time.
+
+    Lives here rather than in the router because it now runs inside a
+    background job: at ~5 s per record a full batch takes minutes, which is far
+    too long to hold an HTTP connection open (see app/common/job_service.py).
+    *progress* is an optional `JobProgress` — pass it and each record reports as
+    it lands, so the admin UI can show a real percentage.
+
+    On a 429 / quota error the record is retried once after a 65 s wait before
+    being marked failed.
+    """
+    pending_records = session.exec(
+        select(RawScrapLaptop)
+        .where(RawScrapLaptop.processing_status == "pending")
+        .limit(limit)
+    ).all()
+
+    if progress:
+        progress.set_total(len(pending_records))
+
+    if not pending_records:
+        return {
+            "message": "No pending records found in the queue.",
+            "requests_made": 0,
+            "total_new_variants_saved": 0,
+            "total_variants_updated": 0,
+            "pending_remaining": 0,
+            "details": [],
+        }
+
+    results_summary: list[dict] = []
+    total_saved = 0
+    total_updated = 0
+    requests_made = 0
+
+    for i, record in enumerate(pending_records):
+        # Throttle: sleep before every request except the first
+        if i > 0:
+            time.sleep(_INTER_REQUEST_DELAY_S)
+
+        res = process_raw_laptop_data(str(record.id), session)
+        requests_made += 1
+
+        # On rate-limit error: wait and retry once
+        if res.get("status") == "error":
+            error_msg = (res.get("message") or "").lower()
+            if any(kw in error_msg for kw in _RATE_LIMIT_KEYWORDS):
+                time.sleep(_RETRY_WAIT_S)
+                res = process_raw_laptop_data(str(record.id), session)
+                requests_made += 1
+
+        succeeded = res.get("status") == "success"
+        results_summary.append(
+            {
+                "raw_id": str(record.id),
+                "product_name": record.raw_product_name,
+                "status": res.get("status"),
+                "variants_extracted": res.get("variants_extracted", 0),
+                "variants_saved": res.get("variants_saved", 0),
+                "variants_updated": res.get("variants_updated", 0),
+                "error": None if succeeded else res.get("message"),
+            }
+        )
+
+        if succeeded:
+            total_saved += res.get("variants_saved", 0)
+            total_updated += res.get("variants_updated", 0)
+
+        if progress:
+            progress.advance(
+                succeeded=succeeded,
+                item=record.raw_product_name or str(record.id),
+                error=None if succeeded else res.get("message"),
+            )
+
+    pending_remaining = len(
+        session.exec(
+            select(RawScrapLaptop.id).where(
+                RawScrapLaptop.processing_status == "pending"
+            )
+        ).all()
+    )
+
+    return {
+        "message": f"Bulk processing complete. {len(pending_records)} record(s) attempted.",
+        "requests_made": requests_made,
+        "total_new_variants_saved": total_saved,
+        "total_variants_updated": total_updated,
+        "pending_remaining": pending_remaining,
+        "details": results_summary,
+    }
+
+
+def categorize_untagged_laptops(session: Session, limit: int = 100, progress=None) -> dict:
     """
     Backfill step for laptops processed before category tagging existed (or
     whose tags were removed): finds laptops with no laptop_categories link
@@ -425,6 +528,11 @@ def categorize_untagged_laptops(session: Session, limit: int = 100) -> dict:
             "untagged_remaining": 0,
             "errors": [],
         }
+
+    # The caller's estimate was based on `limit`; the real queue is usually
+    # smaller, so correct the total before any progress is reported.
+    if progress:
+        progress.set_total(len(untagged))
 
     brands = session.exec(select(LaptopBrand)).all()
     brand_map = {b.id: b.name for b in brands}
@@ -493,6 +601,8 @@ def categorize_untagged_laptops(session: Session, limit: int = 100) -> dict:
             links_added += added
             if added:
                 tagged += 1
+            if progress:
+                progress.advance(succeeded=True, item=laptop.product_name)
         except Exception as e:
             errors.append(
                 {
@@ -501,6 +611,10 @@ def categorize_untagged_laptops(session: Session, limit: int = 100) -> dict:
                     "error": str(e),
                 }
             )
+            if progress:
+                progress.advance(
+                    succeeded=False, item=laptop.product_name, error=str(e)
+                )
 
     untagged_remaining = len(
         session.exec(

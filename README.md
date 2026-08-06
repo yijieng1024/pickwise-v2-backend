@@ -13,17 +13,22 @@ Built with **FastAPI + SQLModel + PostgreSQL (pgvector)**, powered by **Google G
 - **PickScore engine** — deterministic, product-agnostic 8-factor scoring (price, CPU, GPU, RAM/storage, portability, battery, screen size, brand) with a 3-layer weighting pipeline; personalized via user preferences or general mode. No LLM involved — its structured breakdown feeds the LLM's explanations. Consumed by the recommendation pipeline (personalized), the standalone `/laptops/calculate-score` endpoints, and the agent's search results (general mode).
 - **Recommendations** (`POST /api/v2/recommendations/laptops`) — hybrid vector search → batch PickScore → Gemini structured output, adapted to the user's tech-savviness.
 - **Data ingestion pipeline** — Playwright scrapers (Apple DOM, Asus/ROG `window.__NUXT__`) → raw scrape store → Gemini-powered AI processor that normalizes multi-variant listings into a 9-part laptop spec model, with price-history tracking and upsert-by-`model_code`.
+- **Uploaded-HTML ingestion** (`POST /api/v2/scraper/upload-html`) — for storefronts that cannot be scraped at all: Acer's store sits behind Akamai Bot Manager, which refuses automated clients outright. Pages are saved by hand from a normal browser and posted to the API; each identifies itself by its `<link rel="canonical">` tag, so filenames are irrelevant and the page is matched back to its queued target automatically. HTML is stored in Postgres (`raw_product_htmls` — the container filesystem is ephemeral) and parsed with lxml through the same downstream pipeline as any scraped brand. The table is product-agnostic, ready for monitors/desktops without a schema change.
 - **YouTube review ingestion** — channel discovery (YouTube Data API v3) → transcript fetch (optionally via a Webshare residential proxy — YouTube blocks datacenter IPs) → RapidFuzz title matching (+ manual pairing and `POST /reviews/rematch`) → 45s chunk summarization + sentiment tagging + embedding (`POST /reviews/process-bulk` for duplicate-safe batch runs) → per-laptop strengths/weaknesses aggregation.
 - **Benchmarks** — PassMark CPU/GPU scraping with PostgreSQL upsert, consumed by PickScore via fuzzy model matching.
-- **Auth** — JWT (scoped tokens for email verification / password reset / access), bcrypt, role-based admin access, user preference questionnaire.
+- **Auth** — JWT (scoped tokens for email verification / password reset / access), bcrypt, role-based admin access, user preference questionnaire. Admin role/status changes are guarded against lockout: no self-demotion, and the last active admin cannot be demoted or deactivated.
+- **Background jobs** — long batch operations (bulk scrape, AI processing, category backfill) return `202 Accepted` with a `job_id` instead of holding the connection open for minutes. Poll `GET /api/v2/jobs/{job_id}` for live counts, per-item errors and a progress percentage; job state lives in Postgres, so it survives a deploy and interrupted runs are failed on the next startup rather than sticking in `processing`.
 - **Agent eval harness** (`eval/`) — 30 bilingual (中文/English/Manglish) test queries across 5 behavior categories, graded by deterministic rule checks plus an LLM judge that verifies factual grounding against raw tool outputs; run-to-run comparison for regression catching.
 
 ## Architecture
 
 ```
-Feed Crawler ──► laptop_scrape_urls
-                      │
-Scrape / Bulk Scrape ─▼──► raw_scrap_laptops (pending)
+Feed Crawler ──► laptop_scrape_urls ◄── upload-html (canonical-URL match)
+                      │                        │
+                      │                        ▼
+                      │                 raw_product_htmls   (WAF-blocked brands)
+                      │                        │
+Scrape / Bulk Scrape ─▼────────────────────────▼──► raw_scrap_laptops (pending)
                       │
 AI Processor (Gemini) ─▼──► laptops (normalized, multi-variant)
                       │
@@ -49,7 +54,7 @@ Independent pipelines: PassMark benchmark scraping (`cpu_benchmarks` / `gpu_benc
 | `app/laptops/` | Laptop models, brands, customizations, price history, hybrid search, PickScore adapter |
 | `app/embeddings/` | Per-laptop document building + Gemini embedding generation |
 | `app/reviews/` | YouTube review discovery, transcripts, matching, chunk processing, aggregation |
-| `app/scraper/` | Playwright crawlers (Apple, Asus/ROG) + bulk scraping |
+| `app/scraper/` | Playwright crawlers (Apple, Asus/ROG) + bulk scraping + uploaded-HTML ingestion & offline parsing (Acer) |
 | `app/processor/` | LLM extraction from raw scrapes into structured laptops |
 | `app/benchmark/` | PassMark CPU/GPU scrapers |
 | `app/taxonomy/` | Product types + marketing/use-case categories |
@@ -113,9 +118,12 @@ See `.env.example` and `app/config.py`:
 
 ```bash
 alembic upgrade head                                  # apply all pending migrations
+alembic check                                         # show drift without writing a file
 alembic revision --autogenerate -m "description"      # create a new migration
 alembic downgrade -1                                  # roll back one migration
 ```
+
+> **Before trusting an autogenerated migration, run `alembic check`.** Autogenerate diffs the live database against `SQLModel.metadata`, so a table whose model module is missing from `alembic/env.py` looks deleted and gets a `DROP TABLE`. Every table module must be imported there — importing any one name from a module registers all of its tables. `alembic check` should print *"No new upgrade operations detected."*
 
 ## API overview
 
@@ -125,7 +133,9 @@ All routes live under `/api/v2` (e.g. `GET /api/v2/laptops`). `GET /` is an unpr
 |---|---|
 | Public | GET laptops, hybrid search, price history, brands, benchmarks, product types, categories, questionnaire; auth register/login/verify |
 | Bearer token | `/auth/me/*`, `POST /laptops/calculate-score[,/batch]`, `POST /recommendations/laptops`, `/conversations/*` (incl. rename + `/{id}/laptops`), `/saved/*`, `POST /agent/chat[,/stream]` |
-| Admin (`role == "admin"`) | All write operations: laptops, brands, customizations, scraper, processor, benchmarks, embeddings, taxonomy, and all `/reviews/*` endpoints |
+| Admin (`role == "admin"`) | All write operations: laptops, brands, customizations, scraper (incl. `POST /scraper/upload-html` and `/upload-html/json`), processor, benchmarks, embeddings, taxonomy, users, `/jobs/*`, and all `/reviews/*` endpoints |
+
+Four admin endpoints are **asynchronous**: `POST /scraper/bulk-scrape`, `POST /scraper/scrape-targets`, `POST /processor/process-pending` and `POST /processor/categorize-untagged` return `202 Accepted` with a `job_id` and `poll_url`. Poll `GET /jobs/{job_id}` until `status` is `completed` or `failed`; the finished job's `result` contains the full report those endpoints used to return synchronously. Per-item failures are reported in `failed_count`/`errors[]` and do **not** fail the job.
 
 ## Docker & deployment
 
@@ -159,7 +169,7 @@ The harness calls the agent in-process with the exact production model and syste
 - **API:** FastAPI, Uvicorn, SQLModel/SQLAlchemy, Alembic, Pydantic v2
 - **Database:** PostgreSQL + pgvector (768-dim embeddings, cosine distance)
 - **AI:** LangChain (`create_agent` ReAct loop), Google Gemini/Gemma (agent + extraction + review chunking: `gemma-4-31b-it`; embeddings: `gemini-embedding-2`)
-- **Scraping:** Playwright (Chromium), youtube-transcript-api, YouTube Data API v3
+- **Scraping:** Playwright (Chromium), lxml (offline HTML parsing), youtube-transcript-api, YouTube Data API v3
 - **Matching:** RapidFuzz (benchmark lookup, review-to-laptop matching)
 - **Auth:** PyJWT (scoped tokens), bcrypt via passlib
 

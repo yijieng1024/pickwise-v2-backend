@@ -20,6 +20,71 @@ USER_SORTABLE_COLUMNS = {
     "created_at": User.created_at,
 }
 
+SELF_DEMOTION_MESSAGE = "Admins cannot demote or deactivate their own account."
+LAST_ADMIN_MESSAGE = "Cannot modify or delete the last remaining active admin account."
+
+
+# ---------------------------------------------------------------------------
+# Lockout guards
+# ---------------------------------------------------------------------------
+#
+# Two ways an admin can lock everyone out of the portal, both irreversible
+# without direct database access:
+#   1. demoting or suspending themselves while alone,
+#   2. removing admin from the only remaining active admin.
+#
+# Both checks live here so every mutating user endpoint applies them
+# identically — including a future DELETE /users/{id}, which does not exist
+# yet (see `assert_can_delete_user`).
+
+
+def count_active_admins(session: Session) -> int:
+    """Admins who can actually sign in — role admin AND status active."""
+    return len(
+        session.exec(
+            select(User).where(User.role == "admin", User.status == "active")
+        ).all()
+    )
+
+
+def _is_active_admin(user: User) -> bool:
+    return user.role == "admin" and user.status == "active"
+
+
+def assert_not_self_lockout(
+    target: User, current_admin: User, *, is_demotion: bool
+) -> None:
+    """Block an admin removing their own access. 403 — it is about identity."""
+    if target.id == current_admin.id and is_demotion:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=SELF_DEMOTION_MESSAGE
+        )
+
+
+def assert_not_last_admin(session: Session, target: User) -> None:
+    """
+    Block removing the final active admin.
+
+    In practice this mostly backs up the self-guard: the caller is an active
+    admin themselves, so any *other* active admin means the count is already
+    at least 2. It still matters if the acting account is ever changed (a
+    service account, a break-glass path) or if status enforcement moves —
+    this is the check that keeps the invariant true regardless.
+    """
+    if _is_active_admin(target) and count_active_admins(session) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=LAST_ADMIN_MESSAGE
+        )
+
+
+def assert_can_delete_user(session: Session, target: User, current_admin: User) -> None:
+    """
+    Guard for user deletion. No DELETE /users/{id} route exists today; this is
+    the check it must call when one is added, so the rule is not re-derived.
+    """
+    assert_not_self_lockout(target, current_admin, is_demotion=True)
+    assert_not_last_admin(session, target)
+
 
 @router.get("", response_model=Page[UserAdminRead], dependencies=[Depends(get_current_admin)])
 def list_users(
@@ -63,15 +128,21 @@ def update_user_role(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session),
 ):
-    if user_id == current_admin.id and payload.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You cannot change your own role.",
-        )
+    """
+    Set a user's role.
 
+    Refuses to remove the last route into the portal: an admin cannot demote
+    themselves (403), and the final active admin cannot be demoted by anyone
+    (400). Promotions are never blocked.
+    """
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    is_demotion = user.role == "admin" and payload.role != "admin"
+    if is_demotion:
+        assert_not_self_lockout(user, current_admin, is_demotion=True)
+        assert_not_last_admin(session, user)
 
     user.role = payload.role
     session.add(user)
@@ -87,15 +158,21 @@ def update_user_status(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session),
 ):
-    if user_id == current_admin.id and payload.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You cannot change your own account status.",
-        )
+    """
+    Set a user's account status.
 
+    Same lockout guards as the role endpoint: an admin cannot deactivate or
+    suspend themselves (403), and the final active admin cannot be deactivated
+    by anyone (400). Re-activating is never blocked.
+    """
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    is_deactivation = user.status == "active" and payload.status != "active"
+    if is_deactivation:
+        assert_not_self_lockout(user, current_admin, is_demotion=True)
+        assert_not_last_admin(session, user)
 
     user.status = payload.status
     session.add(user)

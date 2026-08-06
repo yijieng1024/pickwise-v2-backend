@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.database import get_session
@@ -12,6 +13,7 @@ from app.laptops.brand_model import LaptopBrand
 from app.laptops.pickscore_adapter import laptop_to_scorable, get_laptop_ranges
 from app.laptops.pickscore_general import (
     USE_CASE_PRIORITIES,
+    LaptopPickScore,
     generate_all_pick_scores,
     get_pick_scores_for_laptop,
     get_ranking_for_use_case,
@@ -155,6 +157,31 @@ def get_use_case_ranking(
             for i, (score_row, laptop, brand_name) in enumerate(rows)
         ],
     )
+
+
+@router.get("/pick-scores/status")
+def get_pick_score_status(session: Session = Depends(get_session)) -> Dict[str, Any]:
+    """
+    How many laptops carry a stored PickScore vs. the catalog total.
+
+    Mirrors GET /embeddings/laptops/status so the admin dashboard can render
+    both coverage rails the same way. Without this, coverage was only
+    knowable by re-running generate-all, which is a write.
+
+    Counts DISTINCT laptop_id: the table holds one row per laptop × use case,
+    so a raw row count would report several times the catalog size.
+    """
+    total_laptops = session.execute(select(func.count()).select_from(Laptop)).scalar() or 0
+    scored = session.execute(
+        select(func.count(func.distinct(LaptopPickScore.laptop_id)))
+    ).scalar() or 0
+
+    return {
+        "total_laptops": total_laptops,
+        "scored": scored,
+        "missing": total_laptops - scored,
+        "coverage_pct": round(scored / total_laptops * 100, 1) if total_laptops > 0 else 0,
+    }
 
 
 @router.post("/pick-scores/generate-all", dependencies=[Depends(get_current_admin)])

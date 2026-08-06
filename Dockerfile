@@ -10,6 +10,10 @@ RUN useradd --create-home appuser
 WORKDIR /app
 
 COPY requirements.txt .
+# `chromium` covers the Apple/ASUS scrapers. Acer needs no browser at all —
+# its pages are saved by hand and parsed offline from app/scraper/data/acer_html
+# (the store's WAF refuses automated requests), so the real-Chrome install that
+# used to live here is gone.
 RUN pip install --no-cache-dir -r requirements.txt \
     && playwright install --with-deps chromium \
     && chown -R appuser:appuser /opt/playwright-browsers

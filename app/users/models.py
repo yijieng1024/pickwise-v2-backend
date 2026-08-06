@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 from datetime import datetime, timezone, date
 from enum import Enum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Relationship, JSON, Column, SQLModel, Field
 
 class GenderEnum(str, Enum):
@@ -35,8 +36,11 @@ class LaptopUserPreference(SQLModel, table=True):
     
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    # JSONB, unlike the plain-JSON columns below — that is what the live column
+    # actually is, and declaring JSON here made `alembic check` propose an
+    # ALTER that would have downgraded it and lost JSONB indexing/operators.
     budget: Optional[Dict[str, Optional[float]]] = Field(
-        default=None, sa_column=Column(JSON), description="{min, max} RM range; max=null means no upper limit"
+        default=None, sa_column=Column(JSONB), description="{min, max} RM range; max=null means no upper limit"
     )
     purpose: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))
     priorities: Optional[Dict[str, int]] = Field(default_factory=dict, sa_column=Column(JSON))

@@ -7,6 +7,7 @@ from app.database import get_session
 from app.laptops.laptop_models import Laptop
 from app.laptops.customization_model import CustomizationUpdate, CustomizationBulkCreate, CustomizationRead, LaptopCustomization, LaptopCustomizationSummary
 from app.laptops.customization_schema import CustomizationBulkCreateByPattern
+from app.taxonomy.category_model import Category
 from app.users.auth import get_current_admin
 # from app.schemas import CustomizationBulkCreate, CustomizationRead, CustomizationUpdate
 
@@ -29,15 +30,20 @@ def create_customizations_for_laptops(
     
     if len(laptops) != len(request.laptop_ids):
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail="One or more Laptop IDs provided do not exist in the database."
         )
+
+    # Checked up front so a bad tag id is a readable 404 rather than an
+    # IntegrityError surfacing as a 500 at commit time.
+    if not session.get(Category, request.category_id):
+        raise HTTPException(status_code=404, detail="Category not found.")
 
     # Create a distinct row for each laptop
     for laptop_id in request.laptop_ids:
         new_customization = LaptopCustomization(
             laptop_id=laptop_id,
-            category=request.category,
+            category_id=request.category_id,
             option_name=request.option_name,
             price_add_rm=request.price_add_rm,
             dependency_note=request.dependency_note
@@ -71,15 +77,20 @@ def create_customizations_by_pattern(
 
     if not matching_laptops:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail=f"No laptops found matching pattern: '{request.target_pattern}'"
         )
+
+    # Checked up front so a bad tag id is a readable 404 rather than an
+    # IntegrityError surfacing as a 500 at commit time.
+    if not session.get(Category, request.category_id):
+        raise HTTPException(status_code=404, detail="Category not found.")
 
     # 2. Create a distinct customization row for each matching laptop
     for laptop in matching_laptops:
         new_customization = LaptopCustomization(
             laptop_id=laptop.id,
-            category=request.category,
+            category_id=request.category_id,
             option_name=request.option_name,
             price_add_rm=request.price_add_rm,
             dependency_note=request.dependency_note
@@ -104,15 +115,31 @@ def get_laptops_with_customizations(session: Session = Depends(get_session)):
     Powers the admin customizations picker so admins see which laptops
     actually have upgrade options configured instead of searching blind.
     """
+    # Joined rather than returning bare ids: the picker has to label every
+    # row, and without the name it would need one /laptops/{id} call each.
     rows = session.execute(
         select(
             LaptopCustomization.laptop_id,
+            Laptop.product_name,
+            Laptop.model_code,
             func.count(LaptopCustomization.id).label("customization_count"),
-        ).group_by(LaptopCustomization.laptop_id)
+        )
+        .join(Laptop, col(Laptop.id) == col(LaptopCustomization.laptop_id))
+        .group_by(
+            LaptopCustomization.laptop_id,
+            Laptop.product_name,
+            Laptop.model_code,
+        )
+        .order_by(func.count(LaptopCustomization.id).desc())
     ).all()
 
     return [
-        LaptopCustomizationSummary(laptop_id=row.laptop_id, customization_count=row.customization_count)
+        LaptopCustomizationSummary(
+            laptop_id=row.laptop_id,
+            product_name=row.product_name,
+            model_code=row.model_code,
+            customization_count=row.customization_count,
+        )
         for row in rows
     ]
 
