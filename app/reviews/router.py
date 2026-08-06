@@ -1,14 +1,17 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.database import get_session
+from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
 from app.reviews.aggregator import aggregate_for_laptop
 from app.reviews.discovery import resolve_channel_from_url
 from app.reviews.models import (
     LaptopReviewChunk,
+    LaptopReviewSummary,
     ManualMatchRequest,
     RawYoutubeReview,
     RawYoutubeReviewRead,
@@ -273,6 +276,106 @@ def process_bulk(
 
 
 # --- Aggregation ---
+
+# Declared before /summaries/{laptop_id} so "pending" is not parsed as a UUID.
+@router.get("/summaries/pending")
+def list_pending_summaries(
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """
+    Laptops whose roll-up is missing or out of date.
+
+    `state` is:
+      - `new`     chunks exist but nothing has ever been aggregated
+      - `stale`   a chunk arrived after the last aggregation
+      - `current` the summary already covers every chunk
+
+    Only `new` and `stale` are returned, because they are the work list.
+    Re-running aggregation on a `current` laptop is safe but pointless.
+    """
+    chunk_stats = (
+        select(
+            LaptopReviewChunk.laptop_id.label("laptop_id"),  # type: ignore[attr-defined]
+            func.count(LaptopReviewChunk.id).label("chunk_count"),
+            func.max(LaptopReviewChunk.created_at).label("latest_chunk_at"),
+        )
+        .group_by(LaptopReviewChunk.laptop_id)
+        .subquery()
+    )
+
+    rows = session.execute(
+        select(
+            chunk_stats.c.laptop_id,
+            chunk_stats.c.chunk_count,
+            chunk_stats.c.latest_chunk_at,
+            Laptop.product_name,
+            Laptop.model_code,
+            LaptopReviewSummary.review_count,
+            LaptopReviewSummary.last_updated_at,
+        )
+        .join(Laptop, Laptop.id == chunk_stats.c.laptop_id)  # type: ignore[arg-type]
+        .outerjoin(
+            LaptopReviewSummary,
+            LaptopReviewSummary.laptop_id == chunk_stats.c.laptop_id,  # type: ignore[arg-type]
+        )
+        .order_by(chunk_stats.c.latest_chunk_at.desc())
+    ).all()
+
+    pending = []
+    for row in rows:
+        if row.last_updated_at is None:
+            state = "new"
+        elif row.latest_chunk_at is not None and row.latest_chunk_at > row.last_updated_at:
+            state = "stale"
+        else:
+            continue  # already current
+
+        pending.append(
+            {
+                "laptop_id": row.laptop_id,
+                "product_name": row.product_name,
+                "model_code": row.model_code,
+                "chunk_count": row.chunk_count,
+                "summary_review_count": row.review_count or 0,
+                "last_aggregated_at": row.last_updated_at,
+                "state": state,
+            }
+        )
+
+    return {"total": len(pending), "items": pending}
+
+
+@router.get("/summaries/{laptop_id}")
+def get_laptop_summary(
+    laptop_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """
+    Read the stored roll-up without recomputing it.
+
+    POST /aggregate/{laptop_id} returns the same shape but performs a write,
+    so previewing what the chatbot currently quotes used to cost an
+    aggregation run.
+    """
+    summary = session.exec(
+        select(LaptopReviewSummary).where(LaptopReviewSummary.laptop_id == laptop_id)
+    ).first()
+    if not summary:
+        raise HTTPException(
+            status_code=404,
+            detail="This laptop has not been aggregated yet.",
+        )
+
+    return {
+        "laptop_id": summary.laptop_id,
+        "review_count": summary.review_count,
+        "strengths": summary.aggregated_strengths,
+        "weaknesses": summary.aggregated_weaknesses,
+        "last_updated_at": summary.last_updated_at,
+    }
+
 
 @router.post("/aggregate/{laptop_id}")
 def aggregate_laptop(

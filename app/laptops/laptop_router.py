@@ -108,15 +108,34 @@ def hybrid_search(request: HybridSearchRequest, session: Session = Depends(get_s
 
 @router.get("/raw-scrap-laptops", dependencies=[Depends(get_current_admin)])
 def list_raw_scrap_laptops(
-    offset: int = 0, 
-    limit: int = 50, 
-    session: Session = Depends(get_session)
+    response: Response,
+    processing_status: Optional[str] = Query(
+        default=None,
+        description="pending | processing | completed | failed",
+    ),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=1000),
+    session: Session = Depends(get_session),
 ) -> List[RawScrapLaptop]:
+    """
+    The raw collected records, newest first.
 
-    statement = select(RawScrapLaptop).order_by(RawScrapLaptop.created_at.desc()).offset(offset).limit(limit) # type: ignore
-    scrap_laptops = session.exec(statement).all()
-    
-    return list(scrap_laptops)
+    The body stays a bare array (unchanged contract); the filtered row count
+    travels via `X-Total-Count`, matching GET /laptops/. Before this, callers
+    had to pull the whole table just to count rows per status.
+    """
+    statement = select(RawScrapLaptop)
+    if processing_status is not None:
+        statement = statement.where(RawScrapLaptop.processing_status == processing_status)
+
+    response.headers["X-Total-Count"] = str(count_total(session, statement))
+
+    statement = (
+        statement.order_by(RawScrapLaptop.created_at.desc())  # type: ignore[attr-defined]
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(session.exec(statement).all())
 
 @router.get("/{laptop_id}", response_model=LaptopRead)
 def get_laptop(laptop_id: UUID, session: Session = Depends(get_session)):

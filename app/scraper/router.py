@@ -10,7 +10,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 from app.database import get_session
 from pydantic import BaseModel, Field
@@ -437,6 +437,43 @@ def upload_raw_html_json(
 # ---------------------------------------------------------------------------
 # Crawled queue — listing for the admin selection UI
 # ---------------------------------------------------------------------------
+
+@router.get("/targets/status-counts", dependencies=[Depends(get_current_admin)])
+def scrape_target_status_counts(
+    session: Session = Depends(get_session),
+    brand_id: Optional[UUID] = Query(None, description="Restrict the counts to one brand"),
+) -> dict:
+    """
+    One count per scrape_status, plus the total.
+
+    The queue UI shows a tab per status. Getting these from GET /targets meant
+    six requests, each of which materialises every matching row to compute
+    `total` — this answers all six in a single grouped query.
+
+    Statuses with no rows are still returned as 0 so the tabs never disappear.
+    """
+    statement = select(ScrapeTarget.scrape_status, func.count()).group_by(
+        ScrapeTarget.scrape_status
+    )
+    if brand_id is not None:
+        statement = statement.where(ScrapeTarget.brand_id == brand_id)
+
+    counts = {
+        "pending": 0,
+        "html_uploaded": 0,
+        "parsed": 0,
+        "completed": 0,
+        "failed": 0,
+        "skipped": 0,
+    }
+    total = 0
+    for status_value, count in session.execute(statement).all():
+        total += count
+        if status_value in counts:
+            counts[status_value] = count
+
+    return {**counts, "total": total}
+
 
 @router.get("/targets", dependencies=[Depends(get_current_admin)])
 def list_scrape_targets(

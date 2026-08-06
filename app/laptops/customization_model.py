@@ -29,9 +29,13 @@ class CustomizationRead(SQLModel):
     price_add_rm: float
     dependency_note: Optional[str] = None
 
-# Schema for the admin "which laptops have customizations" summary list
+# Schema for the admin "which laptops have customizations" summary list.
+# Carries the laptop's identity so the picker can label rows without a
+# follow-up lookup per row.
 class LaptopCustomizationSummary(SQLModel):
     laptop_id: uuid.UUID
+    product_name: str
+    model_code: str
     customization_count: int
 
 # Schema for creating data (Supports assigning to multiple laptops at once!)
