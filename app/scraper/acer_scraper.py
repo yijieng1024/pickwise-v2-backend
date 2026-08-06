@@ -157,19 +157,39 @@ def _parse_prices(doc) -> dict[str, str]:
     return prices or collect(doc)
 
 
+# Real product photos all live under this path on Acer's CDN; the gallery
+# also carries promo banners, which do not.
+_CDN_PRODUCT_PATH = "/media/catalog/product/"
+
+
 def _parse_image_urls(doc) -> list[str]:
     """
     Product photos.
 
-    The Fotorama gallery is built client-side from a JSON blob in the page's
-    `x-magento-init` script, so a saved page has no `.fotorama__img` nodes —
-    the JSON is the same source they would have been built from, and it
-    survives the save intact. Real photos live under /media/catalog/product/;
-    anything else in the gallery is a promo banner. The same photo is served at
-    several sizes via ?width=… params, so strip the query to collapse
-    duplicates.
+    Three sources are tried in order and merged, because a page reaches us in
+    one of two very different states:
+
+    1. `x-magento-init` JSON — present on a live scrape and on a page saved as
+       "Webpage, HTML Only", where the original source survives untouched.
+       This is the only source that yields the *whole* gallery.
+    2. The og:/twitter: meta tags — a single hero photo, but their absolute
+       URLs survive every save mode because browsers do not rewrite <meta>.
+    3. Any attribute anywhere holding an absolute CDN product URL. This is the
+       net for pages saved as "Webpage, Complete", where the browser rewrites
+       every img/@src to a local path inside the sidecar `_files` folder that
+       is never uploaded. A couple of gallery nodes keep absolute URLs, and
+       they are all that is recoverable from such a save.
+
+    Real photos live under /media/catalog/product/; anything else in the
+    gallery is a promo banner. The same photo is served at several sizes via
+    ?width=… params, so strip the query to collapse duplicates.
+
+    Note the filter runs *after* all three are collected, not between them. An
+    earlier version checked "did this source return anything?" before
+    filtering, so a source returning only junk (a save-rewritten local path,
+    say) counted as a hit and suppressed the sources that would have worked.
     """
-    urls: list[str] = []
+    candidates: list[str] = []
 
     for script in doc.xpath("//script[@type='text/x-magento-init']"):
         text = script.text or ""
@@ -190,22 +210,22 @@ def _parse_image_urls(doc) -> list[str]:
                 # Video entries carry a null `full`
                 full = entry.get("full") or entry.get("img") or entry.get("thumb")
                 if isinstance(full, str):
-                    urls.append(full)
+                    candidates.append(full)
 
-    # Fallbacks: the statically-rendered hero image, then the og: tag
-    if not urls:
-        urls = [
-            src
-            for src in doc.xpath("//div[contains(@class,'gallery-placeholder')]//img/@src")
-            if src
-        ]
-    if not urls:
-        urls = doc.xpath("//meta[@property='og:image']/@content")
+    candidates.extend(doc.xpath("//meta[@property='og:image']/@content"))
+    candidates.extend(doc.xpath("//meta[@name='twitter:image']/@content"))
+    candidates.extend(doc.xpath("//div[contains(@class,'gallery-placeholder')]//img/@src"))
+
+    # Last resort: sweep every attribute for an absolute CDN product URL.
+    for element in doc.iter():
+        for value in element.attrib.values():
+            if isinstance(value, str) and _CDN_PRODUCT_PATH in value and value.startswith("http"):
+                candidates.append(value)
 
     seen: set[str] = set()
     cleaned: list[str] = []
-    for url in urls:
-        if "/media/catalog/product/" not in url:
+    for url in candidates:
+        if _CDN_PRODUCT_PATH not in url:
             continue
         url = url.split("?")[0]
         if url not in seen:

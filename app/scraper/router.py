@@ -10,6 +10,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from lxml import html as lxml_html
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 from app.database import get_session
@@ -22,7 +23,11 @@ from app.laptops.brand_model import LaptopBrand
 from app.users.auth import get_current_admin
 from .apple_scraper import crawl_apple_specs_links, scrape_official_website
 from .asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
-from .acer_scraper import crawl_acer_specs_links, scrape_acer_laptop_specs
+from .acer_scraper import (
+    _parse_image_urls,
+    crawl_acer_specs_links,
+    scrape_acer_laptop_specs,
+)
 from app.scraper.models import ScrapeStatus, ScrapeTarget, RawScrapLaptop
 from app.scraper.html_ingest import (
     MAX_HTML_BYTES,
@@ -253,6 +258,56 @@ async def scrape_url(
 # ---------------------------------------------------------------------------
 
 
+def _check_saved_page(
+    session: Session, page_html: str, target_brand_id: UUID
+) -> Optional[str]:
+    """
+    Catch a page that stored fine but will parse badly, while the admin is
+    still looking at the upload screen.
+
+    The common mistake is saving with "Webpage, Complete" instead of "Webpage,
+    HTML Only". Complete rewrites every image URL to a local path inside a
+    sidecar `_files` folder that is never uploaded, and strips the
+    `x-magento-init` gallery JSON — so the page looks accepted but yields few
+    or no product photos, which is only discovered much later at parse time.
+
+    Only Acer pages are checked, because the image parser keys on Acer's CDN
+    path; running it on another brand would warn about nothing.
+    """
+    brand = session.get(LaptopBrand, target_brand_id)
+    if not brand or (brand.name or "").strip().lower() != "acer":
+        return None
+
+    try:
+        doc = lxml_html.fromstring(page_html)
+    except Exception:  # noqa: BLE001 - a page we cannot even parse is a bad save
+        return "This file could not be parsed as HTML. Re-save the page and try again."
+
+    # Checked before the image count, not after: a "Complete" save leaves a
+    # couple of absolute URLs behind, so it can still yield two photos out of
+    # eight and look fine. The rewritten srcs are the reliable tell, and an
+    # incomplete gallery is still worth re-saving for.
+    recovered = len(_parse_image_urls(doc))
+    locally_rewritten = sum(
+        1
+        for src in doc.xpath("//img/@src")
+        if isinstance(src, str) and (src.startswith("./") or "_files/" in src)
+    )
+    if locally_rewritten:
+        return (
+            f"Saved with “Webpage, Complete”: {locally_rewritten} image links point at "
+            "a local folder that isn't uploaded, so most photos were lost"
+            f"{f' (only {recovered} recovered)' if recovered else ''}. Re-save with "
+            "“Webpage, HTML Only” and upload again."
+        )
+    if not recovered:
+        return (
+            "No product photos could be read from this page. The specs were still "
+            "stored. Re-saving with “Webpage, HTML Only” usually fixes it."
+        )
+    return None
+
+
 def _ingest_documents(
     session: Session,
     documents: list[tuple[str, str, Optional[str]]],
@@ -271,7 +326,7 @@ def _ingest_documents(
     product_type = get_product_type(session, product_type_name)
 
     results: list[RawHtmlItemResult] = []
-    matched = unmatched = invalid = inserted = updated = 0
+    matched = unmatched = invalid = inserted = updated = warnings = 0
 
     for source_name, page_html, canonical_override in documents:
         canonical_url = ""
@@ -296,9 +351,12 @@ def _ingest_documents(
                 canonical_url=canonical_url,
             )
 
+            warning = _check_saved_page(session, page_html, target.brand_id)
+
             matched += 1
             inserted += 1 if created else 0
             updated += 0 if created else 1
+            warnings += 1 if warning else 0
             results.append(
                 RawHtmlItemResult(
                     source_name=source_name,
@@ -306,6 +364,7 @@ def _ingest_documents(
                     canonical_url=canonical_url,
                     target_id=target.id,
                     created=created,
+                    warning=warning,
                 )
             )
 
@@ -332,6 +391,7 @@ def _ingest_documents(
         invalid=invalid,
         inserted=inserted,
         updated=updated,
+        warnings=warnings,
         results=results,
     )
 

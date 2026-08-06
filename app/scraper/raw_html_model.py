@@ -88,6 +88,10 @@ class RawHtmlItemResult(SQLModel):
     target_id: Optional[uuid.UUID] = None
     created: Optional[bool] = None  # True = inserted, False = updated
     error: Optional[str] = None
+    # Stored fine, but something about the page looks wrong — most often a
+    # "Webpage, Complete" save, which rewrites image URLs to local paths that
+    # are never uploaded. Distinct from `error`: the page was still accepted.
+    warning: Optional[str] = None
 
 
 class RawHtmlUploadSummary(SQLModel):
@@ -97,4 +101,6 @@ class RawHtmlUploadSummary(SQLModel):
     invalid: int
     inserted: int
     updated: int
+    # Subset of `matched` that stored cleanly but carried a warning.
+    warnings: int = 0
     results: list[RawHtmlItemResult]
