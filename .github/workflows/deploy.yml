@@ -1,6 +1,11 @@
 name: Build and Deploy
 
 on:
+  # Manual trigger: `.github/**` is in paths-ignore below, so a change to this
+  # file cannot trigger its own run — and a transient cache/registry failure
+  # needs a way to be retried without an unrelated commit.
+  workflow_dispatch:
+
   push:
     branches: [main]
 
@@ -44,8 +49,14 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Cache lives in GHCR, not the Actions cache service. The Chromium
+          # layer is ~600 MB, and pushing that to type=gha took 120s per run
+          # and returned an HTML 504 often enough to fail the job — which
+          # blocked the deploy below even though the image had already pushed.
+          # GHCR has no 10 GB cache quota and we are already authenticated to it.
+          # ignore-error keeps a cache hiccup from ever failing a good build.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max,ignore-error=true
 
   deploy:
     needs: build-and-push
