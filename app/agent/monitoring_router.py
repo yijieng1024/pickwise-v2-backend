@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.agent.monitoring_models import AgentRunLog, AgentRunLogDetail, AgentRunLogSummary
+from app.common.filter_service import apply_filters, filter_query
 from app.common.pagination_service import Page, PaginationParams, count_total, paginate
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
@@ -19,6 +20,9 @@ from app.users.models import User
 router = APIRouter(prefix="/agent/monitoring", tags=["Admin - Agent Monitoring"])
 
 # Allow-list for ?sort_by= — see app.common.sorting_service.
+# Allow-list for the filter params — see app.common.filter_service.
+RUN_FILTERABLE_COLUMNS = {"status": AgentRunLog.status}
+
 RUN_SORTABLE_COLUMNS = {
     "created_at": AgentRunLog.created_at,
     "latency_ms": AgentRunLog.latency_ms,
@@ -51,7 +55,7 @@ def _to_summary(run: AgentRunLog, username: str) -> AgentRunLogSummary:
 @router.get("/runs", response_model=Page[AgentRunLogSummary], dependencies=[Depends(get_current_admin)])
 def list_agent_runs(
     search: Optional[str] = search_query("Matches the user's message"),
-    status_filter: Optional[str] = Query(default=None, alias="status", description="success or error"),
+    status_filter: Optional[str] = filter_query("success or error", alias="status"),
     sort_by: Optional[str] = Query(default=None, description="One of: created_at, latency_ms"),
     sort_dir: SortDirection = sort_dir_query(default=SortDirection.desc),
     pagination: PaginationParams = Depends(),
@@ -60,8 +64,7 @@ def list_agent_runs(
     """Browsable, searchable, sortable log of every Pico agent turn (admin only)."""
     statement = select(AgentRunLog)
     statement = apply_search(statement, search, [AgentRunLog.user_message])
-    if status_filter:
-        statement = statement.where(AgentRunLog.status == status_filter)
+    statement = apply_filters(statement, {"status": status_filter}, RUN_FILTERABLE_COLUMNS)
 
     total = count_total(session, statement)
 

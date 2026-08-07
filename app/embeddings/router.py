@@ -1,11 +1,14 @@
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlmodel import Session
 
+from app.common.job_model import JobAccepted, JobType
+from app.common.job_service import JobProgress, create_job, job_accepted, run_job
 from app.database import get_session
 from app.users.auth import get_current_admin
+from app.users.models import User
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
 from app.embeddings.service import (
     generate_all_laptop_embeddings,
@@ -14,32 +17,64 @@ from app.embeddings.service import (
 
 router = APIRouter(prefix="/embeddings", tags=["Embeddings"])
 
+# Measured: one Gemini embedding call plus the 0.3s courtesy sleep in the
+# service. Only feeds the 202's ETA — the job's real progress comes from the
+# per-item advances.
+_SECONDS_PER_EMBEDDING = 1.0
 
-@router.post("/laptops/generate-all", dependencies=[Depends(get_current_admin)])
+
+@router.post(
+    "/laptops/generate-all",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def trigger_generate_all(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
-):
+    current_admin: User = Depends(get_current_admin),
+) -> JobAccepted:
     """
-    Triggers embedding generation for every laptop in the catalog.
+    Start embedding every laptop in the catalog.
 
-    WHY BackgroundTasks:
-    Embedding the full catalog requires many Gemini API calls and can take
-    minutes. BackgroundTasks lets FastAPI respond immediately (the work
-    continues after the HTTP response is sent). Same pattern used by the
-    benchmark scrapers in this codebase.
+    **Returns 202 immediately — it does not wait for the work.** Each laptop is
+    one throttled Gemini call, so a full catalog run takes minutes.
 
-    Admin-only: external API calls cost money and could hit rate limits
-    if triggered carelessly.
+    Poll `GET /api/v2/jobs/{job_id}` (returned as `poll_url`) for live counts
+    and per-item errors, the same as the scraper and processor. Before this,
+    the run left no job record at all: the only signal was watching the
+    embedded count climb on `GET /embeddings/laptops/status`, which meant
+    progress could not survive a page reload and a crashed run was
+    indistinguishable from a finished one.
+
+    `GET /embeddings/laptops/status` still works and is still the right thing
+    for overall coverage — it is just no longer the only way to follow a run.
+
+    Admin-only: external API calls cost money and could hit rate limits if
+    triggered carelessly.
     """
-    total = session.execute(select(func.count()).select_from(Laptop)).scalar()
-    background_tasks.add_task(generate_all_laptop_embeddings, session)
+    total = session.execute(select(func.count()).select_from(Laptop)).scalar() or 0
 
-    return {
-        "message": "Embedding generation started in background",
-        "total_laptops": total,
-        "tip": "Poll GET /embeddings/laptops/status to track progress.",
-    }
+    job = create_job(
+        session,
+        job_type=JobType.GENERATE_EMBEDDINGS,
+        total_count=total,
+        created_by=current_admin.id,
+        # One Gemini call plus the service's 0.3s courtesy sleep.
+        seconds_per_item=_SECONDS_PER_EMBEDDING,
+    )
+
+    def worker(work_session: Session, progress: JobProgress) -> dict:
+        return generate_all_laptop_embeddings(work_session, progress)
+
+    # `run_job` opens its own sessions. The previous version handed the
+    # request's session to the background task, which FastAPI closes once the
+    # response is sent — the task was working on a dead session.
+    background_tasks.add_task(run_job, job.id, worker)
+
+    return job_accepted(
+        job,
+        message=f"Embedding {total} laptop(s) — poll the job for progress.",
+    )
 
 
 @router.post("/laptops/{laptop_id}", dependencies=[Depends(get_current_admin)])

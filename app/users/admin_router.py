@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
+from app.common.filter_service import apply_filters, filter_query
 from app.common.pagination_service import Page, PaginationParams, count_total, paginate
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
@@ -18,6 +19,13 @@ router = APIRouter(prefix="/users", tags=["Admin - Users"])
 USER_SORTABLE_COLUMNS = {
     "username": User.username,
     "created_at": User.created_at,
+}
+
+# Allow-list for the filter params — see app.common.filter_service. Keys are the
+# public names, so `status` rather than the `status_filter` argument holding it.
+USER_FILTERABLE_COLUMNS = {
+    "role": User.role,
+    "status": User.status,
 }
 
 SELF_DEMOTION_MESSAGE = "Admins cannot demote or deactivate their own account."
@@ -89,8 +97,10 @@ def assert_can_delete_user(session: Session, target: User, current_admin: User) 
 @router.get("", response_model=Page[UserAdminRead], dependencies=[Depends(get_current_admin)])
 def list_users(
     search: Optional[str] = search_query("Matches username or email (case-insensitive)"),
-    role: Optional[str] = Query(default=None),
-    status_filter: Optional[str] = Query(default=None, alias="status", description="active, inactive, or suspended"),
+    role: Optional[str] = filter_query("admin or user"),
+    status_filter: Optional[str] = filter_query(
+        "active, inactive, or suspended", alias="status"
+    ),
     sort_by: Optional[str] = Query(default=None, description="One of: username, created_at"),
     sort_dir: SortDirection = sort_dir_query(default=SortDirection.desc),
     pagination: PaginationParams = Depends(),
@@ -99,11 +109,12 @@ def list_users(
     """List users with optional search/role/status filters (admin only)."""
     statement = select(User)
 
+    statement = apply_filters(
+        statement,
+        {"role": role, "status": status_filter},
+        USER_FILTERABLE_COLUMNS,
+    )
     statement = apply_search(statement, search, [User.username, User.email])
-    if role:
-        statement = statement.where(User.role == role)
-    if status_filter:
-        statement = statement.where(User.status == status_filter)
 
     total = count_total(session, statement)
 

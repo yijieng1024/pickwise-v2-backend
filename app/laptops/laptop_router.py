@@ -9,6 +9,7 @@ from app.laptops.laptop_models import (
 from app.laptops.brand_model import LaptopBrand
 from app.embeddings.service import embed_text
 from app.scraper.models import RawScrapLaptop
+from app.common.filter_service import apply_filters, apply_range, filter_query
 from app.common.pagination_service import count_total
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
@@ -24,6 +25,19 @@ LAPTOP_SORTABLE_COLUMNS = {
     "product_name": Laptop.product_name,
     "price_rm": Laptop.price_rm,
     "created_at": Laptop.created_at,
+}
+
+# Allow-list for the filter params — see app.common.filter_service. Price is a
+# range rather than an equality, so it goes through apply_range and is not here.
+LAPTOP_FILTERABLE_COLUMNS = {
+    "brand_id": Laptop.brand_id,
+    "ram_gb": Laptop.ram_gb,
+    "storage_type": Laptop.storage_type,
+}
+
+RAW_SCRAP_FILTERABLE_COLUMNS = {
+    "processing_status": RawScrapLaptop.processing_status,
+    "brand_id": RawScrapLaptop.brand_id,
 }
 
 @router.post("/", response_model=LaptopRead, status_code=201, dependencies=[Depends(get_current_admin)])
@@ -42,6 +56,11 @@ def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session))
 def list_laptops(
     response: Response,
     search: Optional[str] = search_query("Matches product name, model code, or brand name"),
+    brand_id: Optional[UUID] = filter_query("Only laptops from this brand"),
+    ram_gb: Optional[int] = filter_query("Exact RAM size in GB"),
+    storage_type: Optional[str] = filter_query("e.g. SSD, HDD"),
+    price_min: Optional[float] = filter_query("Lowest price in RM (inclusive)", ge=0),
+    price_max: Optional[float] = filter_query("Highest price in RM (inclusive)", ge=0),
     sort_by: Optional[str] = Query(default=None, description="One of: product_name, price_rm, created_at"),
     sort_dir: SortDirection = sort_dir_query(),
     skip: Optional[int] = Query(default=None, ge=0, description="Omit to get every row (default, unpaginated)"),
@@ -52,8 +71,9 @@ def list_laptops(
     All params are optional and additive: called with no query params, this
     returns the full unpaginated/unfiltered catalog exactly as before — every
     existing caller (client-side browse/filter, admin dashboard counts) keeps
-    working unchanged. Pass search/sort_by/sort_dir/skip/limit to opt into
-    server-side filtering, sorting, and slicing.
+    working unchanged. Pass search/brand_id/ram_gb/storage_type/price_min/
+    price_max/sort_by/sort_dir/skip/limit to opt into server-side filtering,
+    sorting, and slicing.
 
     The body stays a bare array (unchanged contract) — the filtered row count
     travels via the `X-Total-Count` response header instead, so callers that
@@ -63,8 +83,15 @@ def list_laptops(
     # Joined so search can also match the brand name (the old client-side
     # search did this too — kept for parity now that search moved server-side).
     statement = select(Laptop).join(LaptopBrand, Laptop.brand_id == LaptopBrand.id)  # type: ignore[arg-type]
+    statement = apply_filters(
+        statement,
+        {"brand_id": brand_id, "ram_gb": ram_gb, "storage_type": storage_type},
+        LAPTOP_FILTERABLE_COLUMNS,
+    )
+    statement = apply_range(statement, Laptop.price_rm, price_min, price_max)  # type: ignore[arg-type]
     statement = apply_search(statement, search, [Laptop.product_name, Laptop.model_code, LaptopBrand.name])
 
+    # After filter+search, before sort/slice — so this is the filtered total.
     response.headers["X-Total-Count"] = str(count_total(session, statement))
 
     statement = apply_sort(statement, sort_by, sort_dir, LAPTOP_SORTABLE_COLUMNS, Laptop.created_at)
@@ -109,10 +136,10 @@ def hybrid_search(request: HybridSearchRequest, session: Session = Depends(get_s
 @router.get("/raw-scrap-laptops", dependencies=[Depends(get_current_admin)])
 def list_raw_scrap_laptops(
     response: Response,
-    processing_status: Optional[str] = Query(
-        default=None,
-        description="pending | processing | completed | failed",
+    processing_status: Optional[str] = filter_query(
+        "pending | processing | completed | failed"
     ),
+    brand_id: Optional[UUID] = filter_query("Only records for this brand"),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=1000),
     session: Session = Depends(get_session),
@@ -125,8 +152,11 @@ def list_raw_scrap_laptops(
     had to pull the whole table just to count rows per status.
     """
     statement = select(RawScrapLaptop)
-    if processing_status is not None:
-        statement = statement.where(RawScrapLaptop.processing_status == processing_status)
+    statement = apply_filters(
+        statement,
+        {"processing_status": processing_status, "brand_id": brand_id},
+        RAW_SCRAP_FILTERABLE_COLUMNS,
+    )
 
     response.headers["X-Total-Count"] = str(count_total(session, statement))
 

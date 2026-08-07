@@ -49,8 +49,15 @@ class JobType:
     CATEGORIZE_UNTAGGED = "processor.categorize_untagged"
     BULK_SCRAPE = "scraper.bulk_scrape"
     SCRAPE_TARGETS = "scraper.scrape_targets"
+    GENERATE_EMBEDDINGS = "embeddings.generate_all"
 
-    ALL = (PROCESS_PENDING, CATEGORIZE_UNTAGGED, BULK_SCRAPE, SCRAPE_TARGETS)
+    ALL = (
+        PROCESS_PENDING,
+        CATEGORIZE_UNTAGGED,
+        BULK_SCRAPE,
+        SCRAPE_TARGETS,
+        GENERATE_EMBEDDINGS,
+    )
 
 
 class BackgroundJob(SQLModel, table=True):

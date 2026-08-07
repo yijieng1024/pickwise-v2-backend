@@ -13,6 +13,8 @@ from fastapi import (
 from lxml import html as lxml_html
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
+from app.common.filter_service import apply_filters, filter_query
+from app.common.pagination_service import count_total
 from app.database import get_session
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -49,6 +51,13 @@ from app.users.models import User
 from .bulk_scraper import _success_status, run_bulk_scrape, run_scrape_for_targets
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
+
+# Allow-list for the filter params — see app.common.filter_service.
+TARGET_FILTERABLE_COLUMNS = {
+    "brand_id": ScrapeTarget.brand_id,
+    "scrape_status": ScrapeTarget.scrape_status,
+    "is_active": ScrapeTarget.is_active,
+}
 
 # Rough per-target cost for the ETA shown to the admin. Live Playwright scrapes
 # dominate this; Acer targets are parsed from stored HTML and are near-instant,
@@ -545,16 +554,13 @@ def scrape_target_status_counts(
 @router.get("/targets", dependencies=[Depends(get_current_admin)])
 def list_scrape_targets(
     session: Session = Depends(get_session),
-    brand_id: Optional[UUID] = Query(None, description="Filter by brand"),
-    scrape_status: Optional[str] = Query(
-        None,
-        description=(
-            "pending | html_uploaded | parsed | completed | failed | skipped. "
-            "`failed` surfaces targets whose HTML is missing or unparseable; "
-            "`html_uploaded` are uploaded but not yet parsed."
-        ),
+    brand_id: Optional[UUID] = filter_query("Filter by brand"),
+    scrape_status: Optional[str] = filter_query(
+        "pending | html_uploaded | parsed | completed | failed | skipped. "
+        "`failed` surfaces targets whose HTML is missing or unparseable; "
+        "`html_uploaded` are uploaded but not yet parsed."
     ),
-    is_active: Optional[bool] = Query(None, description="Filter by active flag"),
+    is_active: Optional[bool] = filter_query("Filter by active flag"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -564,20 +570,22 @@ def list_scrape_targets(
     This is what the admin UI reads to show what the crawler found, so
     individual laptops can be selected and scraped via POST /scraper/scrape-targets.
     """
-    filters = []
-    if brand_id is not None:
-        filters.append(ScrapeTarget.brand_id == brand_id)
-    if scrape_status is not None:
-        filters.append(ScrapeTarget.scrape_status == scrape_status)
-    if is_active is not None:
-        filters.append(ScrapeTarget.is_active == is_active)
+    statement = apply_filters(
+        select(ScrapeTarget),
+        {
+            "brand_id": brand_id,
+            "scrape_status": scrape_status,
+            "is_active": is_active,
+        },
+        TARGET_FILTERABLE_COLUMNS,
+    )
 
-    total = len(session.exec(select(ScrapeTarget).where(*filters)).all())
+    # Was `len(session.exec(...).all())`, which pulled every matching row into
+    # Python just to size it — the queue is already several hundred rows.
+    total = count_total(session, statement)
 
     targets = session.exec(
-        select(ScrapeTarget)
-        .where(*filters)
-        .order_by(ScrapeTarget.created_at.desc())  # type: ignore[attr-defined]
+        statement.order_by(ScrapeTarget.created_at.desc())  # type: ignore[attr-defined]
         .offset(offset)
         .limit(limit)
     ).all()

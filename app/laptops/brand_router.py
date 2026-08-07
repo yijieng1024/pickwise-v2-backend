@@ -3,12 +3,16 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.laptops.laptop_models import Laptop
 from app.laptops.brand_model import LaptopBrand, BrandRead, BrandCreate, BrandUpdate
-from typing import List
+from app.common.filter_service import apply_filters, filter_query
+from typing import List, Optional
 from uuid import UUID
 
 from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/brands", tags=["Laptop Brands"])
+
+# Allow-list for the filter params — see app.common.filter_service.
+BRAND_FILTERABLE_COLUMNS = {"is_active": LaptopBrand.is_active}
 
 
 @router.post("", response_model=BrandRead, dependencies=[Depends(get_current_admin)], status_code=201)
@@ -36,14 +40,15 @@ def create_brand(brand: BrandCreate, session: Session = Depends(get_session)):
 def list_brands(
     offset: int = 0,
     limit: int = 100,
-    is_active: bool = None, # type: ignore
+    # Was `is_active: bool = None` with a type: ignore, which documented itself
+    # in OpenAPI as a plain bool and gave generated clients no way to express
+    # "either". Optional[bool] defaulting to None says what it means.
+    is_active: Optional[bool] = filter_query("true, false, or omit for both"),
     session: Session = Depends(get_session),
 ):
     """List all laptop brands with optional filtering."""
     query = select(LaptopBrand)
-
-    if is_active is not None:
-        query = query.where(LaptopBrand.is_active == is_active)
+    query = apply_filters(query, {"is_active": is_active}, BRAND_FILTERABLE_COLUMNS)
 
     query = query.offset(offset).limit(limit)
     brands = session.exec(query).all()

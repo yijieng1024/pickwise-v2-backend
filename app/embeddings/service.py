@@ -1,9 +1,15 @@
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from sqlmodel import Session, select
+
+if TYPE_CHECKING:
+    # Type-only: importing job_service at runtime would make this module depend
+    # on the job machinery it is merely reporting to.
+    from app.common.job_service import JobProgress
 
 from app.config import settings
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
@@ -95,13 +101,19 @@ def upsert_laptop_embedding(session: Session, laptop_id: UUID, vector: list[floa
     session.commit()
 
 
-def generate_all_laptop_embeddings(session: Session) -> dict:
+def generate_all_laptop_embeddings(
+    session: Session, progress: Optional["JobProgress"] = None
+) -> dict:
     """
-    WHY this runs as a background task (called from router via BackgroundTasks):
-    Each embedding requires one API call to Gemini. With 50 laptops that is
-    50 network round-trips — could take 30–60 seconds. We never block the HTTP
-    response for that long. FastAPI BackgroundTasks lets the API return
-    immediately while this continues running after the response is sent.
+    WHY this runs as a background task (driven by job_service.run_job):
+    Each embedding requires one API call to Gemini. With 277 laptops that is
+    277 network round-trips — minutes of work. We never block the HTTP response
+    for that long; the router returns 202 with a job to poll.
+
+    *progress* is optional so this stays callable directly (tests, a shell, a
+    future CLI). When supplied, each laptop reports through it, which is what
+    turns `GET /jobs/{id}` into a live progress feed instead of the caller
+    having to watch the embedded count climb.
 
     WHY we pre-fetch all brands in one query:
     Without this, each laptop triggers a separate DB query for its brand name
@@ -117,6 +129,11 @@ def generate_all_laptop_embeddings(session: Session) -> dict:
     brands = session.exec(select(LaptopBrand)).all()
     brand_map = {b.id: b.name for b in brands}
 
+    # The router estimated from a count taken before the job started; correct it
+    # to what this run will actually touch.
+    if progress is not None:
+        progress.set_total(len(laptops))
+
     succeeded, failed = 0, 0
     errors = []
 
@@ -127,10 +144,20 @@ def generate_all_laptop_embeddings(session: Session) -> dict:
             vector = embed_text(text)
             upsert_laptop_embedding(session, laptop.id, vector)
             succeeded += 1
+            if progress is not None:
+                progress.advance(succeeded=True)
             time.sleep(0.3)  # respect Gemini rate limits
         except Exception as e:
             failed += 1
             errors.append({"laptop_id": str(laptop.id), "error": str(e)})
+            if progress is not None:
+                # `item` is what the jobs UI shows beside the error, so name the
+                # laptop rather than its uuid.
+                progress.advance(
+                    succeeded=False,
+                    item=f"{brand_map.get(laptop.brand_id, '')} {laptop.product_name}".strip(),
+                    error=str(e),
+                )
 
     return {
         "total": len(laptops),

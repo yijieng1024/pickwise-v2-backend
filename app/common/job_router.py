@@ -15,6 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
+from app.common.filter_service import apply_filters, apply_in, filter_query
 from app.common.job_model import BackgroundJob, JobRead, JobStatus
 from app.common.pagination_service import Page, PaginationParams, count_total, paginate
 from app.database import get_session
@@ -22,14 +23,19 @@ from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/jobs", tags=["Admin - Jobs"])
 
+# Allow-list for apply_filters. Keys are the public filter names, which is why
+# `status` appears here rather than the `status_filter` argument that carries it.
+JOB_FILTERABLE_COLUMNS = {
+    "job_type": BackgroundJob.job_type,
+    "status": BackgroundJob.status,
+}
+
 
 @router.get("", response_model=Page[JobRead], dependencies=[Depends(get_current_admin)])
 def list_jobs(
-    job_type: Optional[str] = Query(default=None, description="e.g. processor.process_pending"),
-    status_filter: Optional[str] = Query(
-        default=None,
-        alias="status",
-        description="queued | processing | completed | failed",
+    job_type: Optional[str] = filter_query("e.g. processor.process_pending"),
+    status_filter: Optional[str] = filter_query(
+        "queued | processing | completed | failed", alias="status"
     ),
     active_only: bool = Query(
         default=False, description="Only jobs still queued or processing"
@@ -45,13 +51,18 @@ def list_jobs(
     """
     statement = select(BackgroundJob)
 
-    if job_type:
-        statement = statement.where(BackgroundJob.job_type == job_type)
-    if status_filter:
-        statement = statement.where(BackgroundJob.status == status_filter)
+    statement = apply_filters(
+        statement,
+        {"job_type": job_type, "status": status_filter},
+        JOB_FILTERABLE_COLUMNS,
+    )
+    # `active_only` is a shorthand for two statuses rather than a column of its
+    # own, so it goes through apply_in instead of the field -> value map.
     if active_only:
-        statement = statement.where(
-            BackgroundJob.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING])  # type: ignore[attr-defined]
+        statement = apply_in(
+            statement,
+            BackgroundJob.status,  # type: ignore[arg-type]
+            [JobStatus.QUEUED, JobStatus.PROCESSING],
         )
 
     total = count_total(session, statement)

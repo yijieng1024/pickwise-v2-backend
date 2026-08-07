@@ -180,14 +180,16 @@ Turns messy vendor text into real catalog entries, and auto-assigns use-case tag
 
 | Method | Endpoint | What it does | Notes |
 |---|---|---|---|
-| `POST` | `/embeddings/laptops/generate-all` | Makes every laptop searchable by the chatbot | 🚀 |
+| `POST` | `/embeddings/laptops/generate-all` | Makes every laptop searchable by the chatbot | 🔄 |
 | `POST` | `/embeddings/laptops/{laptop_id}` | Same, one laptop | 🚀 |
 | `GET` | `/embeddings/laptops/status` | How many laptops are searchable vs. total | *(public — no admin token needed)* |
 | `POST` | `/laptops/pick-scores/generate-all` | Recalculates the 0–100 scores shown on laptop cards | ⏳ |
 
-**These two return immediately** (🚀) but the work continues invisibly. There is **no progress feed** — the only way to know is to poll `/embeddings/laptops/status` and watch the "embedded" count climb.
+**Embeddings now returns 202 with a job** (🔄) — poll `GET /jobs/{job_id}` for live counts and per-item errors, exactly like the scraper and processor. It previously fired and forgot, so the only signal was watching the "embedded" count climb; that also meant progress could not survive a reload and a crashed run looked identical to a finished one. (It was additionally handing the *request's* session to the background task, which FastAPI closes once the response is sent.)
 
-> **Design this explicitly:** after triggering, switch to a polling progress display driven by that status endpoint. Without it the admin has no idea whether anything happened, and will press the button repeatedly.
+**PickScores still return immediately** (🚀) with no job record — that one is pure arithmetic and finishes in seconds, so the status endpoint is enough.
+
+> `/embeddings/laptops/status` is still the right source for **overall coverage** — the job only knows about its own run, not embeddings written before it. Show both: the job for "is this run going", the status endpoint for "how much of the catalog is searchable".
 
 PickScores are pure arithmetic — no AI, no waiting on an external service — so this one is comparatively quick and completely safe to re-run.
 
@@ -400,6 +402,38 @@ Stop when `status` is `completed` or `failed`. A finished job always reads `100.
 ---
 
 ## 10. Cross-cutting rules
+
+**Listing endpoints share four services** in `app/common/`, applied in this order:
+
+```
+filter_service  ->  search_service  ->  count_total  ->  sorting_service  ->  pagination_service
+```
+
+The order matters: filter and search both narrow the row set, so both must run
+*before* `count_total()` or the `total` / `X-Total-Count` a UI shows for "X of Y"
+counts the unfiltered table. Sort runs after the count and before the slice, so
+the page window lands on rows in the requested order.
+
+Each route declares its own allow-list — `*_FILTERABLE_COLUMNS` and
+`*_SORTABLE_COLUMNS` — so a caller can never filter or sort on a column that
+isn't meant to be exposed, and a typo'd field gets a `400` naming the valid
+options instead of silently returning unfiltered rows.
+
+| Service | Params it standardises | Notes |
+|---|---|---|
+| `filter_service` | route-specific, via `filter_query()` | `None` means "not supplied"; `False`/`0` are real values and *are* applied. A list value becomes `IN (...)`; an empty list is skipped rather than matching nothing. `apply_range()` for price/date bounds, `apply_in()` for a route-computed set. |
+| `search_service` | `search` | Case-insensitive `ILIKE` across the columns the route names |
+| `sorting_service` | `sort_by`, `sort_dir` | `400` on an unknown `sort_by` |
+| `pagination_service` | `skip`, `limit` | `Page[T]` envelope, or `X-Total-Count` where the body must stay a bare array |
+
+Filters currently exposed: `/laptops/` (`brand_id`, `ram_gb`, `storage_type`,
+`price_min`, `price_max`), `/brands` (`is_active`), `/jobs` (`job_type`,
+`status`, `active_only`), `/users` (`role`, `status`), `/agent/monitoring/runs`
+(`status`), `/laptops/raw-scrap-laptops` (`processing_status`, `brand_id`),
+`/scraper/targets` (`brand_id`, `scrape_status`, `is_active`).
+
+All filter params are optional and additive — every existing caller that passes
+none keeps the behaviour it had.
 
 **Response codes and how they should feel**
 
