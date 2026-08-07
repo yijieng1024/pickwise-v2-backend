@@ -9,7 +9,10 @@ from app.database import get_session
 from app.laptops.laptop_category_model import LaptopCategory
 from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
+from app.common.rate_limit import seconds_per_call
 from app.processor.engine import (
+    _CATEGORIZE_TOKENS_PER_CALL,
+    _EXTRACTION_TOKENS_PER_CALL,
     categorize_untagged_laptops,
     process_pending_laptops,
     process_raw_laptop_data,
@@ -23,9 +26,16 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/processor", tags=["Processor"])
 
 # Gemma 4 31B free-tier limits (gemma-4-31b-it):
-#  15 RPM  →  minimum 4 s between requests; the engine uses 5 s for safety
-#  1500 RPD →  default batch of 100 per run (~8 min); hard cap at 1500
-_SECONDS_PER_ITEM      = 5
+#  16K TPM  →  the binding limit; the engine's rate limiter paces against it
+#  1500 RPD →  default batch of 100 per run; hard cap at 1500
+#
+# Derived from the same limiter the engine actually uses rather than restated,
+# so the ETA in the 202 cannot drift away from the pacing it describes. It was
+# a hardcoded 5, which under-reported the real runtime by ~2.6x once pacing
+# moved onto the token budget.
+_SECONDS_PER_ITEM      = seconds_per_call(_EXTRACTION_TOKENS_PER_CALL)
+# Categorisation sends a much smaller prompt, so it is paced faster.
+_SECONDS_PER_TAG_ITEM  = seconds_per_call(_CATEGORIZE_TOKENS_PER_CALL)
 _DEFAULT_BATCH_LIMIT   = 100
 _MAX_BATCH_LIMIT       = 1500
 
@@ -71,9 +81,10 @@ def process_all_pending_laptops(
     Start processing pending scraped records through the AI extractor.
 
     **Returns 202 immediately — it does not wait for the work.** Each record
-    costs one throttled LLM call (~5 s), so a default batch of 100 runs for
-    roughly 8 minutes; holding the connection open for that long risks a proxy
-    or network timeout, and offered no progress feedback.
+    costs one throttled LLM call, paced against the 16K TPM free-tier budget
+    rather than a fixed delay, so a default batch of 100 runs for roughly 20
+    minutes; holding the connection open for that long risks a proxy or
+    network timeout, and offered no progress feedback.
 
     Poll `GET /api/v2/jobs/{job_id}` (returned as `poll_url`) for live counts,
     per-item errors and a percentage. Stop polling when `status` is
@@ -134,8 +145,9 @@ def categorize_untagged(
     """
     Backfill category tags for laptops with no `laptop_categories` link.
 
-    **Returns 202 immediately** — one throttled LLM call per laptop, same
-    timing profile as `/process-pending`. Poll `poll_url` for progress.
+    **Returns 202 immediately** — one throttled LLM call per laptop. The
+    prompt is much smaller than extraction's, so this is paced faster and a
+    batch of 100 runs in roughly 8 minutes. Poll `poll_url` for progress.
 
     Tagging is additive: manually assigned tags are never removed, so this is
     safe to re-run until the job result reports `untagged_remaining: 0`.
@@ -154,7 +166,7 @@ def categorize_untagged(
         total_count=queued,
         params={"limit": limit},
         created_by=current_admin.id,
-        seconds_per_item=_SECONDS_PER_ITEM,
+        seconds_per_item=_SECONDS_PER_TAG_ITEM,
     )
 
     def worker(work_session: Session, progress: JobProgress) -> dict:

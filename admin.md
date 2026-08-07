@@ -165,7 +165,7 @@ Turns messy vendor text into real catalog entries, and auto-assigns use-case tag
 | `POST` | `/processor/process/{id}` | Process one record | 💸 inline |
 | `POST` | `/processor/categorize-untagged` | Add missing use-case tags to existing laptops. `limit` 1–1500, default 100 | 🔄💸 |
 
-**The timing reality:** the AI provider is on a free tier, so the backend deliberately waits **5 seconds between records**. A batch of 100 takes roughly 8 minutes — but the request no longer waits for it (🔄, see [§9](#9-long-running-operations--now-polled-background-jobs)).
+**The timing reality:** the AI provider is on a free tier, and the limit that actually binds is **16K tokens per minute**, not requests per minute. Pacing is derived from that budget (`app/common/rate_limit.py`) rather than a fixed delay, working out at ~13 s per record for extraction and ~4.5 s for tagging. A batch of 100 takes roughly 22 minutes — but the request no longer waits for it (🔄, see [§9](#9-long-running-operations--now-polled-background-jobs)).
 
 **Design implications:**
 - Let the admin **choose the batch size**, and show the estimate updating live as they change it — or just use `estimated_seconds` from the 202 response.

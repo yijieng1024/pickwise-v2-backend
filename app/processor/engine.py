@@ -7,6 +7,8 @@ from typing import List, Optional, cast
 from sqlmodel import Session, select
 
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+from app.common.rate_limit import build_gemma_limiter
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import settings
@@ -129,6 +131,7 @@ def process_raw_laptop_data(
         model="gemma-4-31b-it",
         temperature=0,
         google_api_key=settings.gemini_api_key,
+        rate_limiter=_EXTRACTION_LIMITER,
     )
 
     structured_llm = llm.with_structured_output(ExtractedLaptopFamily)
@@ -225,11 +228,7 @@ def process_raw_laptop_data(
                         ensure_ascii=False,
                         indent=2,
                     ),
-                    "raw_specs": json.dumps(
-                        raw_data.raw_specs_dump,
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
+                    "raw_specs": _bounded_json(raw_data.raw_specs_dump),
                     "available_categories": available_categories,
                 }
             ),
@@ -393,16 +392,53 @@ _CATEGORIZE_SYSTEM_PROMPT = """
     short Title Case use-case word — never a spec, chip, or brand name.
 """
 
-# Same Gemma free-tier pacing as the router's bulk processing: 15 RPM -> 5 s gap.
-_CATEGORIZE_DELAY_S = 5
 
 
 # Gemma 4 31B free-tier limits (gemma-4-31b-it):
-#   15 RPM  → minimum 4 s between requests; 5 s gives a safety margin
+#   16K TPM → the binding limit, and what _EXTRACTION_LIMITER paces against
+#   15 RPM  → the secondary ceiling; TPM binds first at these prompt sizes
 #   1500 RPD → hard ceiling on batch size, enforced by the router
-_INTER_REQUEST_DELAY_S = 5
+#
+# Pacing used to be a bare `time.sleep(5)` in the batch loop. Two problems:
+# it paced requests while the quota that actually bites is tokens, and it only
+# covered the one loop it lived in — the single-record route and the 429 retry
+# both went straight past it. Measured against the live table, 12 calls/min at
+# the median prompt was ~28K TPM, roughly 1.8x over the cap.
+#
+# The limiter now lives on the LLM (as it does for Pico in agent/graph.py), so
+# every call is paced whatever calls it.
 _RATE_LIMIT_KEYWORDS = ("429", "quota", "resource exhausted", "rate limit")
 _RETRY_WAIT_S = 65
+
+# Bound on the scraped spec blob we send. A request-based limiter can only
+# honour a token budget if calls have a known ceiling, and one unbounded record
+# breaks the arithmetic for everything: the largest row in the table serialises
+# to ~93K chars (~23K tokens), which alone exceeds the entire 16K/min budget —
+# that call could never have succeeded no matter how slowly it was paced.
+#
+# Measured over 209 records: p95 is 4.3K chars, p99 is 7.3K. An 8K cap
+# therefore truncates 2 rows (1%) and leaves everything else untouched.
+_MAX_SPEC_CHARS = 8_000
+_TRUNCATION_NOTE = "\n…[truncated: specs beyond this point were not sent to the model]"
+
+# Worst case after truncation: 2K tokens of specs + ~1.5K of system prompt and
+# structured-output schema. Sized from the worst case, not the median, because
+# the limiter cannot see token counts (see app/common/rate_limit.py).
+_EXTRACTION_TOKENS_PER_CALL = 3_500
+_EXTRACTION_LIMITER = build_gemma_limiter(tokens_per_call=_EXTRACTION_TOKENS_PER_CALL)
+
+# Categorisation sends a short spec summary plus the category list, so its
+# calls are much smaller and it is the RPM ceiling that binds there.
+_CATEGORIZE_TOKENS_PER_CALL = 1_200
+_CATEGORIZE_LIMITER = build_gemma_limiter(tokens_per_call=_CATEGORIZE_TOKENS_PER_CALL)
+
+
+def _bounded_json(payload, limit: int = _MAX_SPEC_CHARS) -> str:
+    """Serialise for the prompt, truncating anything past `limit` characters."""
+    blob = json.dumps(payload, ensure_ascii=False, indent=2)
+    if len(blob) <= limit:
+        return blob
+    return blob[:limit] + _TRUNCATION_NOTE
 
 
 def process_pending_laptops(session: Session, limit: int = 100, progress=None) -> dict:
@@ -443,10 +479,8 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
     requests_made = 0
 
     for i, record in enumerate(pending_records):
-        # Throttle: sleep before every request except the first
-        if i > 0:
-            time.sleep(_INTER_REQUEST_DELAY_S)
-
+        # No sleep here: _EXTRACTION_LIMITER on the LLM paces every call,
+        # including the retry below and the single-record route.
         res = process_raw_laptop_data(str(record.id), session)
         requests_made += 1
 
@@ -546,6 +580,7 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
         model="gemma-4-31b-it",
         temperature=0,
         google_api_key=settings.gemini_api_key,
+        rate_limiter=_CATEGORIZE_LIMITER,
     )
     structured_llm = llm.with_structured_output(ExtractedLaptopCategories)
     prompt_template = ChatPromptTemplate.from_messages(
@@ -571,9 +606,9 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
     links_added = 0
     errors: list[dict] = []
 
-    for i, laptop in enumerate(untagged):
-        if i > 0:
-            time.sleep(_CATEGORIZE_DELAY_S)
+    # No sleep between iterations: _CATEGORIZE_LIMITER on the LLM paces every
+    # call, so the single-laptop path and any retry are covered too.
+    for laptop in untagged:
         try:
             # Rebuilt each iteration: a tag created for laptop 1 is offered
             # to laptop 2 instead of being re-proposed under a variant name.
