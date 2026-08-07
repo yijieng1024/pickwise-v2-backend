@@ -409,8 +409,15 @@ async def upload_raw_html(
     Upload saved product pages (multipart/form-data) into `raw_product_htmls`.
 
     For brands that cannot be scraped live — today Acer, whose store answers
-    automated requests with a WAF block. Save the page in a normal browser
-    ("Webpage, HTML Only") and post it here.
+    automated requests with a WAF block. Capture the page in a normal browser
+    and post it here.
+
+    **Upload the original response, not a Ctrl+S save** (`view-source:<url>` →
+    Ctrl+S, or a same-origin `fetch` from the DevTools console). Chrome's Save
+    Page writes the rendered DOM, by which point Magento's gallery script has
+    consumed the `x-magento-init` block holding the image list — such a file
+    parses fine but arrives with 1–2 photos instead of 9–13. See the module
+    docstring in `app/scraper/acer_scraper.py` for the full workflow.
 
     Each file is identified by its own `<link rel="canonical">` tag, so
     **filenames are irrelevant**. That URL is matched back to a queued row in

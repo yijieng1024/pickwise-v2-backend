@@ -19,18 +19,45 @@ tried and both refused. So product pages are saved by hand from a normal
 browser, uploaded to the API, and stored in the `raw_product_htmls` table;
 this module parses the stored string.
 
-The Magento markup is fully server-rendered, so a saved page contains
-everything — specs, prices, and the gallery image list — with no JavaScript
-needed to reproduce it.
+**Capture the original response, not the rendered page.** The distinction
+decides whether images survive, and Ctrl+S gets it wrong: Chrome serialises
+the *live DOM*, and Magento's gallery script consumes its own
+`x-magento-init` block on init. Measured on three live product pages
+(2026-08-07): the original response carries 24 `x-magento-init` blocks and 9–13
+gallery photos; the same pages' DOM carries 0 and 0. Specs are unaffected —
+the attributes table is inert markup and survives either way, which is why a
+Ctrl+S page parses fine yet lands with 1–2 photos scraped from the og:/twitter:
+meta tags alone.
+
+Saving as "Webpage, Complete" makes it strictly worse: Chrome rewrites every
+img/@src to a *truncated* local filename in the `_files` sidecar
+(`…-non-fingerprint-with-ba(3).png`), so the CDN URL cannot even be
+reconstructed — the distinguishing part of the name is what gets cut.
 
 Workflow:
     1. Open a product URL in a normal browser. The catalogue is already queued
        in `laptop_scrape_urls` (GET /scraper/targets?brand_id=… lists it), so
        that table is the list to work through.
-    2. Ctrl+S → "Webpage, HTML Only", then POST the file(s) to
-       /scraper/upload-html. Filenames do not matter — each page identifies
-       itself by its <link rel="canonical"> tag, which is matched back to its
-       queued target. Uploading moves the target to `html_uploaded`.
+    2. Save the original source, by either route:
+         • view-source:<url> → Ctrl+S; or
+         • DevTools console on any store.acer.com page, which can do the whole
+           queue in one pass — a same-origin fetch carries the validated
+           `_abck` cookie, so it returns the real HTML the WAF would refuse an
+           external client:
+
+             for (const url of urls) {
+               const html = await (await fetch(url, {credentials:'include'})).text();
+               const a = document.createElement('a');
+               a.href = URL.createObjectURL(new Blob([html], {type:'text/html'}));
+               a.download = url.split('/').pop() + '.html';
+               a.click();
+             }
+
+       Then POST the file(s) to /scraper/upload-html. Filenames do not matter —
+       each page identifies itself by its <link rel="canonical"> tag, which is
+       matched back to its queued target. Uploading moves the target to
+       `html_uploaded`. (The console cannot POST here directly: the API's CORS
+       allowlist does not include store.acer.com.)
     3. POST /scraper/bulk-scrape (or /scraper/scrape-targets for a subset).
        Parsed targets become `parsed`; targets with no uploaded page come back
        `failed`, which the next bulk run retries — so uploading in batches
@@ -169,16 +196,20 @@ def _parse_image_urls(doc) -> list[str]:
     Three sources are tried in order and merged, because a page reaches us in
     one of two very different states:
 
-    1. `x-magento-init` JSON — present on a live scrape and on a page saved as
-       "Webpage, HTML Only", where the original source survives untouched.
-       This is the only source that yields the *whole* gallery.
+    1. `x-magento-init` JSON — the whole gallery (9–13 photos on a typical
+       product), and the only source that yields it. Present *only* when the
+       uploaded file is the original HTTP response; the gallery script deletes
+       this block as soon as it runs, so any DOM snapshot has already lost it.
+       See the module docstring for how to capture the response.
     2. The og:/twitter: meta tags — a single hero photo, but their absolute
        URLs survive every save mode because browsers do not rewrite <meta>.
-    3. Any attribute anywhere holding an absolute CDN product URL. This is the
-       net for pages saved as "Webpage, Complete", where the browser rewrites
-       every img/@src to a local path inside the sidecar `_files` folder that
-       is never uploaded. A couple of gallery nodes keep absolute URLs, and
-       they are all that is recoverable from such a save.
+    3. Any attribute anywhere holding an absolute CDN product URL. A net for
+       DOM snapshots, where source 1 is gone: a couple of gallery nodes keep
+       absolute URLs in a non-src attribute. Worth ~1 extra photo.
+
+    So a page saved with Ctrl+S yields 1–2 images and *looks* like a scraper
+    bug. It isn't — sources 2 and 3 are all that such a file contains. If a
+    result has ≤2 images, suspect the capture, not this function.
 
     Real photos live under /media/catalog/product/; anything else in the
     gallery is a promo banner. The same photo is served at several sizes via
@@ -323,10 +354,12 @@ async def scrape_acer_laptop_specs(
             {
                 "status": "failed",
                 "error": (
-                    f"No stored HTML for {url}. Open it in a browser, save it as "
-                    '"Webpage, HTML Only" and POST it to /scraper/upload-html, '
-                    "then re-run — this brand is parsed from uploaded HTML "
-                    "because the store's WAF refuses automated requests."
+                    f"No stored HTML for {url}. Open view-source:{url} in a "
+                    "browser, save that (not Ctrl+S on the page itself — it "
+                    "saves the rendered DOM, which has already lost the image "
+                    "gallery), and POST it to /scraper/upload-html, then "
+                    "re-run — this brand is parsed from uploaded HTML because "
+                    "the store's WAF refuses automated requests."
                 ),
             }
         ]
@@ -350,6 +383,20 @@ async def scrape_acer_laptop_specs(
                 ),
             }
         ]
+
+    # A DOM snapshot parses cleanly and silently loses the gallery, so the
+    # only signal is the count. Warn rather than fail: the specs and price are
+    # still good, and a 1-image record beats no record.
+    image_urls = data.get("image_urls") or []
+    if len(image_urls) <= 2 and "mage/gallery/gallery" not in str(page_html):
+        logger.warning(
+            "acer: %s yielded only %d image(s) and carries no gallery block — "
+            "the stored HTML looks like a Ctrl+S DOM snapshot rather than the "
+            "original response. Re-capture via view-source: to recover the "
+            "full gallery; specs and price are unaffected.",
+            url,
+            len(image_urls),
+        )
 
     # Price: finalPrice > basePrice > oldPrice
     prices: dict = data.get("prices") or {}
@@ -375,7 +422,7 @@ async def scrape_acer_laptop_specs(
             "status": "success",
             "product_name": data.get("product_name") or "Unknown Model",
             "raw_prices_list": [{"price": price_str}],
-            "image_urls": data.get("image_urls") or [],
+            "image_urls": image_urls,
             "raw_specs": specs,
             # Simple products — one SKU per page, so the bare URL is unique
             "source_url_suffix": "",
