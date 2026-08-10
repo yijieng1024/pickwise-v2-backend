@@ -128,7 +128,7 @@ inserted: 40    updated: 6
 | `POST` | `/scraper/scrape-targets` | Processes only the rows the admin ticked | 🔄 job |
 | `POST` | `/scraper/scrape-url` | One single web address | inline |
 | `GET` | `/scraper/raw-laptop/{id}` | Inspect one raw record in full | |
-| `GET` | `/laptops/raw-scrap-laptops` | Browse everything collected (`offset`, `limit` default 50) | |
+| `GET` | `/laptops/raw-scrap-laptops` | Browse everything collected. Filter by `processing_status`/`brand_id`, `search` on product name or source URL; `offset`, `limit` default 50, count in `X-Total-Count` | |
 
 🔄 = returns `202` with a `job_id`; see [§9](#9-long-running-operations--now-polled-background-jobs).
 
@@ -234,7 +234,8 @@ Deleting a brand still referenced by laptops returns **`409`**. Don't present th
 | Method | Endpoint | What it does |
 |---|---|---|
 | `POST` | `/customizations/` | Add one option to **many laptops at once** |
-| `POST` | `/customizations/bulk-by-pattern` | Add to every laptop whose model code matches a pattern |
+| `POST` | `/customizations/bulk-by-pattern` | Add to every laptop whose model code matches a pattern (case-sensitive `LIKE`) |
+| `GET` | `/customizations/bulk-by-pattern/preview` | Which laptops that pattern would hit, writing nothing — same predicate as the POST |
 | `GET` | `/customizations/laptop/{laptop_id}` | Options for one laptop |
 | `GET` | `/customizations/laptops-summary` | Overview of which laptops have options |
 | `PATCH` | `/customizations/{id}` | Edit one option |

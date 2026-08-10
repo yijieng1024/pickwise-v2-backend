@@ -38,6 +38,13 @@ class LaptopCustomizationSummary(SQLModel):
     model_code: str
     customization_count: int
 
+# Schema for the pattern-preview endpoint: just enough to identify each laptop
+# that POST /bulk-by-pattern would write to.
+class PatternMatchLaptop(SQLModel):
+    id: uuid.UUID
+    product_name: str
+    model_code: str
+
 # Schema for creating data (Supports assigning to multiple laptops at once!)
 class CustomizationBulkCreate(SQLModel):
     laptop_ids: List[uuid.UUID]  # Send 1 or many laptop IDs here

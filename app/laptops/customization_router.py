@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import Session, select, col
 from typing import List
 import uuid
 from app.database import get_session
 from app.laptops.laptop_models import Laptop
-from app.laptops.customization_model import CustomizationUpdate, CustomizationBulkCreate, CustomizationRead, LaptopCustomization, LaptopCustomizationSummary
+from app.laptops.customization_model import CustomizationUpdate, CustomizationBulkCreate, CustomizationRead, LaptopCustomization, LaptopCustomizationSummary, PatternMatchLaptop
 from app.laptops.customization_schema import CustomizationBulkCreateByPattern
 from app.taxonomy.category_model import Category
 from app.users.auth import get_current_admin
@@ -60,9 +60,38 @@ def create_customizations_for_laptops(
     return created_customizations
 
 
+def _laptops_matching_pattern(session: Session, target_pattern: str) -> List[Laptop]:
+    """
+    The laptops that POST /bulk-by-pattern would write to.
+
+    Shared with the preview endpoint deliberately. `.contains()` compiles to a
+    case-sensitive `LIKE '%…%'`, and the admin UI has to show exactly which
+    laptops the write will hit — it is bulk and has no undo. Re-implementing
+    this predicate anywhere else is how a preview silently stops matching the
+    write it claims to preview.
+    """
+    statement = select(Laptop).where(col(Laptop.model_code).contains(target_pattern))
+    return list(session.exec(statement).all())
+
+
+@router.get("/bulk-by-pattern/preview", response_model=List[PatternMatchLaptop], dependencies=[Depends(get_current_admin)])
+def preview_customizations_by_pattern(
+    target_pattern: str = Query(
+        min_length=1, description="Case-sensitive substring matched against model_code"
+    ),
+    session: Session = Depends(get_session),
+):
+    """
+    Which laptops POST /bulk-by-pattern would assign an option to, writing
+    nothing. Returns an empty list rather than a 404 when nothing matches —
+    "no matches yet" is the normal state while an admin is still typing.
+    """
+    return _laptops_matching_pattern(session, target_pattern)
+
+
 @router.post("/bulk-by-pattern", response_model=List[CustomizationRead], dependencies=[Depends(get_current_admin)])
 def create_customizations_by_pattern(
-    request: CustomizationBulkCreateByPattern, 
+    request: CustomizationBulkCreateByPattern,
     session: Session = Depends(get_session)
 ):
     """
@@ -70,10 +99,9 @@ def create_customizations_by_pattern(
     e.g., target_pattern="m5-max" will add this upgrade to all M5 Max laptops automatically.
     """
     created_customizations = []
-    
+
     # 1. Find all laptops matching the keyword in their model_code
-    statement = select(Laptop).where(col(Laptop.model_code).contains(request.target_pattern))
-    matching_laptops = session.exec(statement).all()
+    matching_laptops = _laptops_matching_pattern(session, request.target_pattern)
 
     if not matching_laptops:
         raise HTTPException(

@@ -140,6 +140,7 @@ def list_raw_scrap_laptops(
         "pending | processing | completed | failed"
     ),
     brand_id: Optional[UUID] = filter_query("Only records for this brand"),
+    search: Optional[str] = search_query("Matches raw product name or source URL"),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=1000),
     session: Session = Depends(get_session),
@@ -157,11 +158,20 @@ def list_raw_scrap_laptops(
         {"processing_status": processing_status, "brand_id": brand_id},
         RAW_SCRAP_FILTERABLE_COLUMNS,
     )
+    statement = apply_search(
+        statement, search, [RawScrapLaptop.raw_product_name, RawScrapLaptop.source_url]
+    )
 
     response.headers["X-Total-Count"] = str(count_total(session, statement))
 
+    # `id` breaks ties: a bulk scrape inserts many rows within the same clock
+    # tick, and ordering by created_at alone leaves their relative order
+    # undefined — so a paging client can see one row twice and miss another.
     statement = (
-        statement.order_by(RawScrapLaptop.created_at.desc())  # type: ignore[attr-defined]
+        statement.order_by(
+            RawScrapLaptop.created_at.desc(),  # type: ignore[attr-defined]
+            RawScrapLaptop.id,
+        )
         .offset(offset)
         .limit(limit)
     )
