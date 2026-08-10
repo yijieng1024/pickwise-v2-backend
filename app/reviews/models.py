@@ -91,6 +91,11 @@ class RawYoutubeReviewRead(SQLModel):
     video_title: str
     published_at: Optional[datetime]
     matched_laptop_id: Optional[uuid.UUID]
+    # Resolved from `matched_laptop_id` by the listing route, not stored on the
+    # table. Without it every client showing a match has to fetch the whole
+    # laptop catalog just to turn one id into a name. None when unmatched, or
+    # when the laptop has since been deleted.
+    matched_laptop_name: Optional[str] = None
     match_confidence: Optional[float]
     status: str
     created_at: datetime

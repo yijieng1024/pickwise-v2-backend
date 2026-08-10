@@ -183,6 +183,7 @@ Turns messy vendor text into real catalog entries, and auto-assigns use-case tag
 | `POST` | `/embeddings/laptops/generate-all` | Makes every laptop searchable by the chatbot | 🔄 |
 | `POST` | `/embeddings/laptops/{laptop_id}` | Same, one laptop | 🚀 |
 | `GET` | `/embeddings/laptops/status` | How many laptops are searchable vs. total | *(public — no admin token needed)* |
+| `GET` | `/embeddings/laptops/coverage-history?days=` | The same coverage, day by day, against catalog size | admin |
 | `POST` | `/laptops/pick-scores/generate-all` | Recalculates the 0–100 scores shown on laptop cards | ⏳ |
 
 **Embeddings now returns 202 with a job** (🔄) — poll `GET /jobs/{job_id}` for live counts and per-item errors, exactly like the scraper and processor. It previously fired and forgot, so the only signal was watching the "embedded" count climb; that also meant progress could not survive a reload and a crashed run looked identical to a finished one. (It was additionally handing the *request's* session to the background task, which FastAPI closes once the response is sent.)
@@ -190,6 +191,8 @@ Turns messy vendor text into real catalog entries, and auto-assigns use-case tag
 **PickScores still return immediately** (🚀) with no job record — that one is pure arithmetic and finishes in seconds, so the status endpoint is enough.
 
 > `/embeddings/laptops/status` is still the right source for **overall coverage** — the job only knows about its own run, not embeddings written before it. Show both: the job for "is this run going", the status endpoint for "how much of the catalog is searchable".
+
+**`coverage-history` reads as cohorts, not as a work log.** Laptops are bucketed by the day they entered the catalog, and `embedded_total` counts how many of those have a vector *right now* — so the gap between the two numbers on the last day equals `status.missing`, and *where* the gap opens says which laptops are unsearchable (recent arrivals waiting on a run, versus an old backlog nothing ever cleared). It is deliberately **not** bucketed by when each embedding was written: `laptop_embeddings` has only `updated_at`, and `upsert_laptop_embedding` overwrites it on every refresh, so one full re-run would restamp every row with today's date and flatten all history into a single vertical jump. Per-run history is already available as `GET /jobs?job_type=embeddings.generate_all`.
 
 PickScores are pure arithmetic — no AI, no waiting on an external service — so this one is comparatively quick and completely safe to re-run.
 
@@ -280,7 +283,7 @@ Finds real reviewer opinions and attaches them to laptops so the chatbot can quo
 | `PATCH` | `/reviews/channels/{id}` | Edit / deactivate a channel | |
 | `POST` | `/reviews/ingest/{laptop_id}` | Find videos for one laptop | 💸 |
 | `POST` | `/reviews/ingest-bulk` | Find videos across the catalog. `limit` 1–20, default 5; `skip_covered` default true | 💸 |
-| `GET` | `/reviews/raw` | Browse found videos (filter by `status`) | |
+| `GET` | `/reviews/raw` | Browse found videos. Filter by `status`, `search` on title; paginated via `skip`/`limit` (default 50) and returns a `{items, total, skip, limit}` envelope. Each row carries `matched_laptop_name` | |
 | `PATCH` | `/reviews/raw/{id}/match` | Manually attach a video to the right laptop | |
 | `POST` | `/reviews/rematch` | Re-run automatic matching on unmatched videos | |
 | `POST` | `/reviews/process/{id}` | Summarize one video's transcript | 💸 |

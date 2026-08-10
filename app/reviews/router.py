@@ -4,6 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.common.pagination_service import (
+    Page,
+    PaginationParams,
+    count_total,
+    paginate,
+)
+from app.common.search_service import apply_search, search_query
 from app.database import get_session
 from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
@@ -139,16 +146,78 @@ def ingest_bulk_endpoint(
 
 # --- Raw review management ---
 
-@router.get("/raw", response_model=list[RawYoutubeReviewRead])
+def _to_read(
+    review: RawYoutubeReview, laptop_name: str | None
+) -> RawYoutubeReviewRead:
+    """Read model for one raw review, with its matched laptop's name folded in."""
+    return RawYoutubeReviewRead(
+        id=review.id,
+        video_id=review.video_id,
+        channel_id=review.channel_id,
+        video_title=review.video_title,
+        published_at=review.published_at,
+        matched_laptop_id=review.matched_laptop_id,
+        matched_laptop_name=laptop_name,
+        match_confidence=review.match_confidence,
+        status=review.status,
+        created_at=review.created_at,
+    )
+
+
+@router.get("/raw", response_model=Page[RawYoutubeReviewRead])
 def list_raw_reviews(
-    status: str | None = None,
+    status: str | None = Query(
+        default=None, description="Filter by status: pending | matched | rejected"
+    ),
+    search: str | None = search_query("Matches video title"),
+    pagination: PaginationParams = Depends(),
     session: Session = Depends(get_session),
     _: None = Depends(get_current_admin),
 ):
-    stmt = select(RawYoutubeReview)
+    """
+    Paginated browse over ingested videos.
+
+    Returns a `Page` envelope rather than a bare array because the admin Match
+    Queue needs the filtered total to size its pager. It previously returned
+    every row unbounded and the table sliced it client-side, so opening the
+    screen downloaded the entire review table.
+    """
+    statement = select(RawYoutubeReview)
     if status:
-        stmt = stmt.where(RawYoutubeReview.status == status)
-    return session.exec(stmt).all()
+        statement = statement.where(RawYoutubeReview.status == status)
+    statement = apply_search(statement, search, [RawYoutubeReview.video_title])
+
+    total = count_total(session, statement)
+
+    # A deterministic order is required here, not cosmetic: with no ORDER BY,
+    # Postgres is free to return rows in a different order per query, so the
+    # same row can show up on two pages or on none. `id` breaks ties between
+    # rows sharing a created_at.
+    statement = statement.order_by(
+        RawYoutubeReview.created_at.desc(),  # type: ignore[attr-defined]
+        RawYoutubeReview.id,
+    )
+    reviews = session.exec(paginate(statement, pagination)).all()
+
+    # One lookup for the whole page rather than a query per row. Only the
+    # matched ids on this page are fetched, and only two columns of them.
+    laptop_ids = {r.matched_laptop_id for r in reviews if r.matched_laptop_id}
+    names: dict[uuid.UUID, str] = {}
+    if laptop_ids:
+        rows = session.exec(
+            select(Laptop.id, Laptop.product_name).where(
+                Laptop.id.in_(laptop_ids)  # type: ignore[attr-defined]
+            )
+        ).all()
+        names = {laptop_id: product_name for laptop_id, product_name in rows}
+
+    items = [
+        _to_read(r, names.get(r.matched_laptop_id) if r.matched_laptop_id else None)
+        for r in reviews
+    ]
+    return Page(
+        items=items, total=total, skip=pagination.skip, limit=pagination.limit
+    )
 
 
 @router.patch("/raw/{review_id}/match")
