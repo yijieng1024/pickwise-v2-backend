@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.agent.monitoring_service import MonitoringCallbackHandler
 from app.agent.tools import ALL_TOOLS, make_search_laptops
 from app.config import settings
+from app.database import session_scope
 from app.rag.models import ConversationLaptop, Message, MessageRole
 from app.laptops.laptop_models import Laptop
 from app.users.models import LaptopUserPreference
@@ -293,12 +294,18 @@ async def run_agent(
     message: str,
     history: list[Message],
     conv_laptops: list[ConversationLaptop],
-    session: Session,
     user_id: Optional[uuid.UUID] = None,
     handler: Optional[MonitoringCallbackHandler] = None,
 ) -> tuple[str, Optional[list[dict]]]:
     llm = build_agent_llm()
-    langchain_messages = _build_agent_input(message, history, conv_laptops, session, user_id)
+    # Own session, closed before the model turn starts: building the prompt is
+    # the only database work here, and a turn runs for tens of seconds. Taking
+    # the caller's session instead would pin a pooled connection for all of it
+    # (see the pool notes in app/database.py). The tools open their own.
+    with session_scope() as session:
+        langchain_messages = _build_agent_input(
+            message, history, conv_laptops, session, user_id
+        )
 
     agent = create_agent(llm, _agent_tools(user_id))
     config = {"callbacks": [handler]} if handler else None
@@ -314,7 +321,6 @@ async def stream_agent(
     message: str,
     history: list[Message],
     conv_laptops: list[ConversationLaptop],
-    session: Session,
     user_id: Optional[uuid.UUID] = None,
     handler: Optional[MonitoringCallbackHandler] = None,
 ):
@@ -340,7 +346,13 @@ async def stream_agent(
     search_laptops payload of the turn when its confidence was "high".
     """
     llm = build_agent_llm()
-    langchain_messages = _build_agent_input(message, history, conv_laptops, session, user_id)
+    # Same short scope as run_agent, and it matters more here: this generator
+    # is consumed for the whole SSE response, so a connection held across it
+    # would be held for the length of the stream.
+    with session_scope() as session:
+        langchain_messages = _build_agent_input(
+            message, history, conv_laptops, session, user_id
+        )
 
     agent = create_agent(llm, _agent_tools(user_id))
     config = {"callbacks": [handler]} if handler else None
