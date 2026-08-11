@@ -17,12 +17,18 @@ Session lifecycle — the reason this module exists rather than each router
 doing it inline:
 
 - The request's session is **closed** once the response is sent, so a
-  background task must never touch it. Both sessions here are opened inside
+  background task must never touch it. Every session here is opened inside
   the task.
-- Job bookkeeping gets its **own** session, separate from the worker's. If the
-  worker's session is poisoned by a failed flush, writing the failure to the
-  job row still succeeds — with a shared session the error report would be the
-  second casualty of the same exception.
+- Job bookkeeping never shares the worker's session. If the worker's session is
+  poisoned by a failed flush, writing the failure to the job row still succeeds
+  — with a shared session the error report would be the second casualty of the
+  same exception.
+- Bookkeeping opens a **new short session per update** rather than holding one
+  for the length of the job. A job runs for minutes to hours, and a bookkeeping
+  connection held that whole time is idle for essentially all of it while
+  counting against the pool (that, doubled per concurrent job, is what used to
+  exhaust it). A running job now occupies one pooled connection — the worker's
+  — plus a checkout of a few milliseconds per `advance()`.
 - `finally` guarantees a terminal status. A job can only stay `processing`
   if the process itself dies, and `reset_stale_jobs()` cleans those up on the
   next startup.
@@ -37,7 +43,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from app.common.job_model import BackgroundJob, JobAccepted, JobStatus
-from app.database import engine
+from app.database import engine, session_scope
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -60,29 +66,33 @@ class JobProgress:
     """
     Live counters for one running job.
 
-    Every `advance()` commits, because the whole point is that a poller sees
-    movement while the job runs. These operations are seconds-per-item (LLM
-    calls, page scrapes), so one small UPDATE per item is not measurable.
+    Every update commits, because the whole point is that a poller sees
+    movement while the job runs. Each one also opens and closes its own
+    session: these operations are seconds-per-item (LLM calls, page scrapes),
+    so neither the extra UPDATE nor the pool checkout around it is measurable,
+    and in exchange the job holds no idle bookkeeping connection between items.
     """
 
-    def __init__(self, session: Session, job_id: UUID):
-        self._session = session
+    def __init__(self, job_id: UUID):
         self._job_id = job_id
 
-    def _job(self) -> Optional[BackgroundJob]:
-        return self._session.get(BackgroundJob, self._job_id)
-
-    def _save(self, job: BackgroundJob) -> None:
-        self._session.add(job)
-        self._session.commit()
+    def _update(self, mutate: Callable[[BackgroundJob], None]) -> None:
+        """Apply *mutate* to the job row and commit, in a session of its own."""
+        with session_scope() as session:
+            job = session.get(BackgroundJob, self._job_id)
+            if job is None:
+                return
+            mutate(job)
+            session.add(job)
+            session.commit()
 
     def set_total(self, total: int) -> None:
         """Correct the estimate once the worker knows the real item count."""
-        job = self._job()
-        if job is None:
-            return
-        job.total_count = total
-        self._save(job)
+
+        def _apply(job: BackgroundJob) -> None:
+            job.total_count = total
+
+        self._update(_apply)
 
     def advance(
         self,
@@ -91,48 +101,45 @@ class JobProgress:
         item: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
-        job = self._job()
-        if job is None:
-            return
+        def _apply(job: BackgroundJob) -> None:
+            job.processed_count += 1
+            if succeeded:
+                job.succeeded_count += 1
+            else:
+                job.failed_count += 1
+                if error and len(job.errors) < _MAX_STORED_ERRORS:
+                    # Reassign rather than mutate — SQLAlchemy does not track
+                    # in-place edits of a JSONB list.
+                    job.errors = [
+                        *job.errors,
+                        {"item": item or "unknown", "error": error},
+                    ]
 
-        job.processed_count += 1
-        if succeeded:
-            job.succeeded_count += 1
-        else:
-            job.failed_count += 1
-            if error and len(job.errors) < _MAX_STORED_ERRORS:
-                # Reassign rather than mutate — SQLAlchemy does not track
-                # in-place edits of a JSONB list.
-                job.errors = [*job.errors, {"item": item or "unknown", "error": error}]
-
-        self._save(job)
+        self._update(_apply)
 
     def mark_processing(self) -> None:
-        job = self._job()
-        if job is None:
-            return
-        job.status = JobStatus.PROCESSING
-        job.started_at = _utcnow()
-        self._save(job)
+        def _apply(job: BackgroundJob) -> None:
+            job.status = JobStatus.PROCESSING
+            job.started_at = _utcnow()
+
+        self._update(_apply)
 
     def mark_completed(self, result: Optional[dict[str, Any]] = None) -> None:
-        job = self._job()
-        if job is None:
-            return
-        job.status = JobStatus.COMPLETED
-        job.finished_at = _utcnow()
-        if result is not None:
-            job.result = result
-        self._save(job)
+        def _apply(job: BackgroundJob) -> None:
+            job.status = JobStatus.COMPLETED
+            job.finished_at = _utcnow()
+            if result is not None:
+                job.result = result
+
+        self._update(_apply)
 
     def mark_failed(self, message: str) -> None:
-        job = self._job()
-        if job is None:
-            return
-        job.status = JobStatus.FAILED
-        job.finished_at = _utcnow()
-        job.error_message = message[:2000]
-        self._save(job)
+        def _apply(job: BackgroundJob) -> None:
+            job.status = JobStatus.FAILED
+            job.finished_at = _utcnow()
+            job.error_message = message[:2000]
+
+        self._update(_apply)
 
 
 # ---------------------------------------------------------------------------
@@ -205,32 +212,35 @@ def run_job(job_id: UUID, worker: Callable[[Session, JobProgress], Any]) -> None
     thread — safe because the scrapers already offload Playwright to their own
     loop (see scraper/playwright_utils.py).
     """
-    with Session(engine) as job_session:
-        progress = JobProgress(job_session, job_id)
-        progress.mark_processing()
+    progress = JobProgress(job_id)
+    progress.mark_processing()
 
+    try:
+        # The worker's session is the only connection this job holds for its
+        # full duration, and it is released the moment the work is done —
+        # before the completion bookkeeping below runs.
+        with Session(engine) as work_session:
+            if inspect.iscoroutinefunction(worker):
+                result = asyncio.run(worker(work_session, progress))
+            else:
+                result = worker(work_session, progress)
+
+        progress.mark_completed(result if isinstance(result, dict) else None)
+        logger.info("job %s (%s) completed", job_id, _job_type(job_id))
+
+    except Exception as e:
+        logger.exception("job %s failed", job_id)
         try:
-            with Session(engine) as work_session:
-                if inspect.iscoroutinefunction(worker):
-                    result = asyncio.run(worker(work_session, progress))
-                else:
-                    result = worker(work_session, progress)
+            progress.mark_failed(f"{type(e).__name__}: {e}")
+        except Exception:
+            # Bookkeeping itself failed — the finally below is the backstop.
+            logger.exception("could not record failure for job %s", job_id)
 
-            progress.mark_completed(result if isinstance(result, dict) else None)
-            logger.info("job %s (%s) completed", job_id, _job_type(job_session, job_id))
-
-        except Exception as e:
-            logger.exception("job %s failed", job_id)
-            try:
-                progress.mark_failed(f"{type(e).__name__}: {e}")
-            except Exception:
-                # Bookkeeping itself failed — the finally below is the backstop.
-                logger.exception("could not record failure for job %s", job_id)
-
-        finally:
-            # Backstop: no path may leave a job in a non-terminal state.
-            try:
-                job = job_session.get(BackgroundJob, job_id)
+    finally:
+        # Backstop: no path may leave a job in a non-terminal state.
+        try:
+            with session_scope() as session:
+                job = session.get(BackgroundJob, job_id)
                 if job is not None and job.status not in JobStatus.TERMINAL:
                     job.status = JobStatus.FAILED
                     job.finished_at = _utcnow()
@@ -238,15 +248,16 @@ def run_job(job_id: UUID, worker: Callable[[Session, JobProgress], Any]) -> None
                         job.error_message
                         or "Job ended without reporting a terminal status."
                     )
-                    job_session.add(job)
-                    job_session.commit()
-            except Exception:
-                logger.exception("could not finalise job %s", job_id)
+                    session.add(job)
+                    session.commit()
+        except Exception:
+            logger.exception("could not finalise job %s", job_id)
 
 
-def _job_type(session: Session, job_id: UUID) -> str:
-    job = session.get(BackgroundJob, job_id)
-    return job.job_type if job else "?"
+def _job_type(job_id: UUID) -> str:
+    with session_scope() as session:
+        job = session.get(BackgroundJob, job_id)
+        return job.job_type if job else "?"
 
 
 # ---------------------------------------------------------------------------

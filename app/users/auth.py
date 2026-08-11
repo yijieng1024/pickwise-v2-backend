@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlmodel import Session
 
 from app.config import settings
-from app.database import get_session
+from app.database import get_session, session_scope
 from app.users.models import User
 from app.config import settings
 
@@ -50,28 +50,26 @@ def verify_email_token(token: str) -> str | None:
     except jwt.InvalidTokenError:
         return None
 
-def get_current_user(
-    token: str = Depends(oauth2_scheme), 
-    session: Session = Depends(get_session)
-) -> User:
+def _resolve_user(token: str, session: Session) -> User:
+    """Decode *token* and load the account it names, or raise 401/403."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        
+
         user_identifier: str = payload.get("sub")  # type: ignore
-        
+
         if user_identifier is None:
             raise credentials_exception
-            
+
     except jwt.InvalidTokenError:
         # Catch expired or fake tokens
         raise credentials_exception
-    
+
     user = session.get(User, user_identifier)
 
     if user is None:
@@ -86,6 +84,32 @@ def get_current_user(
         )
 
     return user
+
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session)
+) -> User:
+    return _resolve_user(token, session)
+
+
+def get_current_user_detached(token: str = Depends(oauth2_scheme)) -> User:
+    """
+    `get_current_user` for endpoints that must not hold a pooled connection.
+
+    FastAPI caches dependencies per request, so an endpoint that drops
+    `Depends(get_session)` still keeps a connection checked out for the whole
+    response if it authenticates through `get_current_user` — the same session
+    object is shared. That is the wrong trade for a `StreamingResponse`, whose
+    "response" lasts as long as the SSE stream (see app/database.py).
+
+    The returned `User` is **detached**: its columns are readable, but it has
+    no session, so relationship access lazy-loads into an error and writes to
+    it are ignored unless it is merged into a live session. Depend on this only
+    where the account is read, not written.
+    """
+    with session_scope(expire_on_commit=False) as session:
+        return _resolve_user(token, session)
 
 def create_password_reset_token(email: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=15)
