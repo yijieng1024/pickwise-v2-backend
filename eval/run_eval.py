@@ -115,49 +115,157 @@ def _content_to_text(content) -> str:
     return str(content)
 
 
-async def call_agent(query: str) -> dict:
+async def call_agent_turns(queries: list[str]) -> list[dict]:
     """
-    In-process call to the LangGraph agent — equivalent to a first-turn
-    POST /agent/chat (no history, no shortlist pool). Built here instead of
-    reusing app.agent.graph.run_agent() because that only returns
-    (text, results) and exposes neither tool-call names nor raw tool outputs.
+    Multi-turn version: send each query in sequence, feeding the previous
+    turn's full message list back in as the next turn's input — equivalent
+    to a continuous POST /agent/chat conversation.
+
+    Each turn reports only the tool_calls / tool_outputs it newly produced.
+    Without the slice, turn 2 would still see turn 1's tool calls and any
+    forbid_tools check would fire falsely.
     """
     from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-
     from app.agent.graph import _SYSTEM_PROMPT
 
     agent = _get_agent()
-    result = await agent.ainvoke(
-        {
-            "messages": [
-                SystemMessage(content=_SYSTEM_PROMPT),
-                HumanMessage(content=query),
-            ]
-        }
-    )
-    messages = result["messages"]
-    text = _content_to_text(messages[-1].content)
-    tool_calls = [
-        tc["name"]
-        for m in messages
-        for tc in (getattr(m, "tool_calls", None) or [])
-    ]
-    tool_outputs = [str(m.content) for m in messages if isinstance(m, ToolMessage)]
-    return {"text": text, "tool_calls": tool_calls, "tool_outputs": tool_outputs}
+    messages = [SystemMessage(content=_SYSTEM_PROMPT)]
+    turn_results = []
 
+    for q in queries:
+        before = len(messages)
+        result = await agent.ainvoke(
+            {"messages": messages + [HumanMessage(content=q)]}
+        )
+        messages = result["messages"]
+        new = messages[before + 1:]  # skip the HumanMessage we just appended
+
+        turn_results.append({
+            "text": _content_to_text(messages[-1].content),
+            "tool_calls": [
+                tc["name"] for m in new
+                for tc in (getattr(m, "tool_calls", None) or [])
+            ],
+            "tool_outputs": [str(m.content) for m in new if isinstance(m, ToolMessage)],
+        })
+
+    return turn_results
+
+async def call_agent_turns_with_retry(queries: list[str], attempts: int = 3) -> list[dict]:
+    """Transient 503/429 from the shared Gemini pool otherwise costs a whole
+    eval item.
+
+    Retries from turn 1, not from the failed turn: the conversation is
+    stateful, so a half-finished message list cannot be resumed. Backoff is
+    longer than the judge's (10/20s vs 5/10s) because one agent turn is several
+    model calls — a 503 usually means the whole pool is congested, and retrying
+    quickly just hits the same wall.
+    """
+    for i in range(attempts):
+        try:
+            return await call_agent_turns(queries)
+        except Exception as e:
+            # 429 RESOURCE_EXHAUSTED means the quota window is spent — retrying
+            # inside seconds cannot succeed and just burns wall-clock time.
+            # Only 503-class congestion is worth backing off for.
+            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+                raise
+            if i == attempts - 1:
+                raise
+            await asyncio.sleep(10 * (i + 1))
 
 # ─────────────────────────────────────────────────────────────
 # 2. Rule-based checks (deterministic, zero cost)
 # ─────────────────────────────────────────────────────────────
 PRICE_RE = re.compile(r"RM\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE)
+# Grounding side: every number, not just RM-prefixed ones. The tool payloads
+# carry bare floats ("price_rm": 4999.0, "price_min_rm": ...), so an RM-only
+# scan of the tool outputs finds nothing and flags every correctly-cited
+# price as invented.
+NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
 def extract_prices(text: str) -> list[float]:
     return [float(m.replace(",", "")) for m in PRICE_RE.findall(text)]
 
 
-def rule_checks(item: dict, result: dict) -> list[dict]:
-    expect = item.get("expect", {})
+# ── RM figure grounding ────────────────────────────────────────────────
+# Money figures the model states must trace back to something a tool actually
+# returned. The model is fluent enough that an invented price range reads
+# exactly like a real one, so this is the one hallucination class worth a
+# deterministic check instead of leaving it to the judge.
+#
+# The segment regex also captures the tail of a range ("RM2,300 - RM2,500"),
+# where only the first number carries the RM prefix.
+_RM_SEGMENT = re.compile(r"RM\s?[\d,]+(?:\.\d+)?(?:\s*[-–~到至]\s*[\d,]+(?:\.\d+)?)?")
+_NUMBER = re.compile(r"[\d,]+(?:\.\d+)?")
+
+# Round figures below this are almost always the model reasoning about a delta
+# ("add RM500 and you get...") rather than quoting a price it should ground.
+_MIN_CHECKED_RM = 1000.0
+
+# Absorbs rounding: tool returns 3399.0, response says "RM3,400".
+_RM_TOLERANCE = 1.0
+
+
+def _rm_figures(text: str) -> set[float]:
+    """Every RM amount stated in the response, including range tails."""
+    out: set[float] = set()
+    for seg in _RM_SEGMENT.findall(text):
+        for n in _NUMBER.findall(seg):
+            try:
+                out.add(float(n.replace(",", "")))
+            except ValueError:
+                pass
+    return out
+
+
+def _grounded_rm_figures(tool_outputs: list[str]) -> set[float]:
+    """Every number appearing in the tool payloads.
+
+    Deliberately over-inclusive — it matches bare numbers, not just RM-prefixed
+    ones, because tool output is JSON ("price_rm": 3399.0) with no RM literal.
+    A false negative only means we miss a fabrication; a false positive would
+    flag an honest answer, which is the worse failure for a check meant to be
+    trusted without a human reading every case.
+    """
+    out: set[float] = set()
+    for o in tool_outputs:
+        for n in _NUMBER.findall(o):
+            try:
+                out.add(float(n.replace(",", "")))
+            except ValueError:
+                pass
+    return out
+
+
+def _ungrounded_rm(
+    response: str,
+    tool_texts: list[str],
+    user_texts: list[str],
+) -> list[float]:
+    """RM figures the response states that nothing supports.
+
+    Ground truth is three things, all cumulative across the conversation:
+      - tool output from this and every earlier turn (the agent legitimately
+        cites turn-1 results when answering turn 2)
+      - what the user themselves said (echoing back "your RM4,500 budget" is
+        not a fabrication)
+    """
+    grounded = _grounded_rm_figures(tool_texts) | _grounded_rm_figures(user_texts)
+    stated = {v for v in _rm_figures(response) if v >= _MIN_CHECKED_RM}
+    return sorted(
+        v for v in stated
+        if not any(abs(v - g) <= _RM_TOLERANCE for g in grounded)
+    )
+
+def rule_checks(
+    expect: dict,
+    category: str,
+    result: dict,
+    tool_texts: list[str],
+    user_texts: list[str],
+) -> list[dict]:
     checks = []
 
     checks.append({
@@ -187,7 +295,7 @@ def rule_checks(item: dict, result: dict) -> list[dict]:
     # market-price comparisons is normal behavior — its reasonableness is
     # left to the judge's rubric. constraint_relaxation queries legitimately
     # discuss over-budget numbers, so they are skipped.
-    if "budget_max" in expect and item["category"] != "constraint_relaxation":
+    if "budget_max" in expect and category != "constraint_relaxation":
         prices = extract_prices(result["text"])
         limit = expect["budget_max"] * 1.05
         cheapest_over = bool(prices) and min(prices) > limit
@@ -195,6 +303,16 @@ def rule_checks(item: dict, result: dict) -> list[dict]:
             "name": "primary_rec_within_budget",
             "passed": not cheapest_over,
             "detail": f"min_price={min(prices) if prices else None}, limit={limit}",
+        })
+
+    # Runs whenever any tool has produced output so far in the conversation —
+    # a later turn can quote figures from an earlier turn's results.
+    if tool_texts:
+        ungrounded = _ungrounded_rm(result["text"], tool_texts, user_texts)
+        checks.append({
+            "name": "rm_figures_grounded",
+            "passed": not ungrounded,
+            "detail": f"ungrounded={ungrounded}",
         })
 
     return checks
@@ -251,7 +369,7 @@ def _judge_api_key() -> str:
     return settings.gemini_api_key
 
 
-async def judge(item: dict, result: dict) -> dict:
+async def judge(query: str, rubric: str, result: dict) -> dict:
     from google import genai
 
     await _get_rate_limiter().aacquire()  # shares the quota pool with the agent
@@ -267,11 +385,11 @@ async def judge(item: dict, result: dict) -> dict:
         o[:4500] for o in result.get("tool_outputs", [])
     )[:27000] or "(no tool calls)"
     prompt = JUDGE_PROMPT.format(
-        query=item["query"],
+        query=query,
         tool_calls=result["tool_calls"],
         tool_outputs=tool_outputs,
         response=result["text"][:6000],
-        rubric=item["expect"]["rubric"],
+        rubric=rubric,
     )
     resp = await client.aio.models.generate_content(model=JUDGE_MODEL, contents=prompt)
     raw = resp.text.strip()
@@ -283,12 +401,12 @@ async def judge(item: dict, result: dict) -> dict:
         return {"passed": None, "reason": f"unparseable judge output: {raw[:200]}"}
 
 
-async def judge_with_retry(item: dict, result: dict, attempts: int = 3) -> dict:
+async def judge_with_retry(query: str, rubric: str, result: dict, attempts: int = 3) -> dict:
     """Retry transient errors (e.g. 500) with backoff; if all attempts fail,
     record as unscored (passed=None) instead of crashing the run."""
     for i in range(attempts):
         try:
-            return await judge(item, result)
+            return await judge(query, rubric, result)
         except Exception as e:
             if i == attempts - 1:
                 return {"passed": None, "reason": f"judge_error: {type(e).__name__}: {e}"}
@@ -298,53 +416,91 @@ async def judge_with_retry(item: dict, result: dict, attempts: int = 3) -> dict:
 # ─────────────────────────────────────────────────────────────
 # 4. Run
 # ─────────────────────────────────────────────────────────────
+def _turns_of(item: dict) -> list[dict]:
+    """Normalize a single-turn item into a one-turn `turns` list so run_one
+    only ever handles one shape."""
+    if "turns" in item:
+        return item["turns"]
+    return [{"query": item["query"], "expect": item.get("expect", {})}]
+
+
 async def run_one(item: dict, use_judge: bool) -> dict:
     t0 = time.perf_counter()
+    turns = _turns_of(item)
+
     try:
-        result = await call_agent(item["query"])
-        result.setdefault("tool_outputs", [])
+        results = await call_agent_turns_with_retry([t["query"] for t in turns])
         error = None
     except Exception as e:  # record agent crashes without aborting the run
-        result = {"text": "", "tool_calls": [], "tool_outputs": []}
+        results = [{"text": "", "tool_calls": [], "tool_outputs": []} for _ in turns]
         error = f"{type(e).__name__}: {e}"
     latency = round(time.perf_counter() - t0, 2)
 
-    checks = rule_checks(item, result) if not error else []
-    judge_result = None
-    if use_judge and not error and "rubric" in item.get("expect", {}):
-        judge_result = await judge_with_retry(item, result)
+    turn_entries = []
+    # Grounding accumulates across the conversation: a turn answered from the
+    # existing shortlist pool calls no tool, so its own tool_outputs are empty
+    # and the prices it cites were established earlier.
+    tool_texts: list[str] = []
+    user_texts: list[str] = []
+    for turn, result in zip(turns, results):
+        expect = turn.get("expect", {})
+        tool_texts.extend(result["tool_outputs"])
+        user_texts.append(turn["query"])
+        checks = (
+            rule_checks(expect, item["category"], result, tool_texts, user_texts)
+            if not error else []
+        )
+        judge_result = None
+        if use_judge and not error and "rubric" in expect:
+            judge_result = await judge_with_retry(turn["query"], expect["rubric"], result)
+        turn_entries.append({
+            "query": turn["query"],
+            "rule_checks": checks,
+            "judge": judge_result,
+            "tool_calls": result["tool_calls"],
+            "tool_outputs": result["tool_outputs"],
+            "response": result["text"],
+        })
 
-    rule_pass = all(c["passed"] for c in checks) if checks else False
-    judge_pass = judge_result["passed"] if judge_result else None  # None = unscored
-    # `status` is the single source of truth. An entry with no real verdict
-    # (agent error, or judge attempted but never returned) must never surface
-    # as passed — it gets passed=None and is excluded from headline counts.
+    # Aggregate: any failing turn fails the whole item. A conversation is a
+    # single unit to the user — asking a good clarifying question in turn 1
+    # and then dropping the thread in turn 2 is still a failure.
+    all_checks = [c for te in turn_entries for c in te["rule_checks"]]
+    verdicts = [te["judge"]["passed"] for te in turn_entries if te["judge"] is not None]
+
     if error:
         status = "error"
-    elif not rule_pass:
-        status = "failed"  # deterministic rule failure stands even if the judge is unscored
-    elif judge_result is not None and judge_pass is None:
+    elif not (all(c["passed"] for c in all_checks) if all_checks else False):
+        status = "failed"  # deterministic rule failure stands even if a judge is unscored
+    elif any(v is None for v in verdicts):
         status = "unscored"
+    elif any(v is False for v in verdicts):
+        status = "failed"
     else:
-        status = "passed" if judge_pass is not False else "failed"
+        status = "passed"
 
+    last = turn_entries[-1]
     return {
         "id": item["id"],
         "category": item["category"],
         "lang": item.get("lang"),
-        "query": item["query"],
+        "query": " ⟶ ".join(t["query"] for t in turns),
         "status": status,
         "passed": {"passed": True, "failed": False}.get(status),  # None if unscored/error
         "unscored": status == "unscored",
-        "rule_checks": checks,
-        "judge": judge_result,
+        "turns": turn_entries,      # full per-turn detail
+        # Legacy fields below keep cmd_run / print_summary / cmd_compare working
+        # unchanged. `judge` surfaces the first non-passing turn so the terminal
+        # line points at the turn that actually broke; falls back to the last.
+        "rule_checks": all_checks,
+        "judge": next((te["judge"] for te in turn_entries
+                       if te["judge"] and te["judge"]["passed"] is not True), last["judge"]),
         "latency_s": latency,
-        "tool_calls": result["tool_calls"],
-        "tool_outputs": result["tool_outputs"],
-        "response": result["text"],
+        "tool_calls": last["tool_calls"],
+        "tool_outputs": last["tool_outputs"],
+        "response": last["response"],
         "error": error,
     }
-
 
 async def cmd_run(args):
     global MAX_RPM

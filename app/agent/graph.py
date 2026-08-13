@@ -142,6 +142,12 @@ _SYSTEM_PROMPT = (
     "Be concise. Always show prices in RM. Include the model code when "
     "referencing a specific Apple laptop so the user (or you) can use it with "
     "calculate_custom_apple_price."
+    "PRICE CLAIMS"
+    "Never state a price, price range, or starting from figure that did not come from a tool result in this conversation. This includes market context,"
+    "suggested budget tiers and comparisons to models not in the results. If the user needs price information you do not have, call search_malaysian_market_price."
+    "If it returns nothing usable, say you don't have that data. Do not estimate, "
+    "and do not fall back on general knowledge about laptop prices. You may do arithmetic on figures already in the conversation "
+    "(e.g.: that's about RM900 more than your budget)."
 )
 
 _SEARCH_LAPTOPS_TOOL_NAME = "search_laptops"

@@ -250,3 +250,161 @@
     tools: [search_laptops]
     budget_max: 6000
     rubric: "Recommends suitable machines under RM6000; for thermals either cites real review evidence (calling get_review_evidence) or honestly notes no review data — fabricated review claims = fail"
+
+# ── F. multi_turn ─────────────────────────────
+# Items carry `turns` instead of a single `query`; each turn has its own
+# expect block. Covers what single-turn items structurally cannot: the gate's
+# clarify-then-recover loop, shortlist-pool reuse, and mid-conversation
+# constraint corrections. Mirrored zh/en so language bias stays visible.
+
+- id: multi_zh_001          # gate → clarify → recover
+  category: multi_turn
+  lang: zh
+  turns:
+    - query: "RM2000 以内,要 RTX 4060 独显的游戏本"
+      expect:
+        tools: [search_laptops]
+        rubric: "说明此预算下没有符合的机型,并主动询问可以放宽哪一项(预算或 GPU);不可只说找不到就结束"
+    - query: "好吧,预算可以加到 RM4500"
+      expect:
+        tools: [search_laptops]
+        rubric: "承接上一轮的追问,以 RM4500 重新搜寻并给出具体推荐;不可要求使用者重述需求"
+
+- id: multi_zh_002          # shortlist-pool reuse — must NOT re-search
+  category: multi_turn
+  lang: zh
+  turns:
+    - query: "RM4000 以内适合写代码的笔电"
+      expect:
+        tools: [search_laptops]
+        budget_max: 4000
+        rubric: "推荐 1-3 台 RM4000 以内的机型"
+    - query: "你刚才第二台的重量是多少?"
+      expect:
+        forbid_tools: [search_laptops]
+        rubric: "直接根据上一轮已列出的机型回答重量,不重新搜寻;若资料中没有重量则诚实说明"
+
+- id: multi_zh_003          # user rejects the auto-relaxation
+  category: multi_turn
+  lang: zh
+  turns:
+    - query: "RM2500 以内要能剪 4K 影片的笔电"
+      expect:
+        tools: [search_laptops]
+        rubric: "诚实说明此预算难以满足 4K 剪辑,给出放宽预算或降低期待的选项"
+    - query: "不行,我最多只能 RM2500,超过一分都不行"
+      expect:
+        rubric: "尊重使用者的硬性预算,只在 RM2500 以内给建议或明说没有合适选项;不可再推荐超过 RM2500 的机型"
+
+- id: multi_en_001          # vague → converge in one follow-up
+  category: multi_turn
+  lang: en
+  turns:
+    - query: "any good laptop?"
+      expect:
+        rubric: "Asks for budget and use case instead of recommending blindly"
+    - query: "around RM5000, mainly for video editing"
+      expect:
+        tools: [search_laptops]
+        budget_max: 5000
+        rubric: "Uses both details from this turn without asking again, recommends creator-class machines under RM5000"
+
+- id: multi_en_002          # mid-conversation constraint change — SHOULD re-search
+  category: multi_turn
+  lang: en
+  turns:
+    - query: "Laptop for university under RM4500"
+      expect:
+        tools: [search_laptops]
+        budget_max: 4500
+        rubric: "Recommends 1-3 laptops under RM4500 suitable for university use"
+    - query: "Actually I carry it around all day, can you find lighter ones?"
+      expect:
+        tools: [search_laptops]
+        budget_max: 4500
+        rubric: "Recognises this as a new constraint and searches again for lighter machines, keeping the RM4500 budget from the earlier turn; does not just re-list the same results"
+
+- id: multi_en_003          # gate → clarify → recover (English mirror of multi_zh_001)
+  category: multi_turn
+  lang: en
+  turns:
+    - query: "MacBook Pro under RM3000"
+      expect:
+        tools: [search_laptops]
+        rubric: "States clearly that no MacBook Pro fits RM3000 and asks which requirement can flex — budget or model"
+    - query: "I can stretch to RM5500 if needed"
+      expect:
+        tools: [search_laptops]
+        rubric: "Picks up the raised budget from the previous turn and gives concrete options, without asking the user to repeat their needs"
+
+# ── G. decision_support ───────────────────────
+# Buyers are often mid- or late-funnel, not at the start: they already have a
+# shortlist and want a decision, a sufficiency verdict, or validation of a
+# choice. The other categories all assume a cold "tell me what to buy" opener.
+# Some rubrics deliberately probe data the catalog does NOT hold (battery life,
+# upgradeability, warranty) — the expected behaviour is an honest admission,
+# never a fabricated spec.
+
+- id: ds_zh_001             # Q4: which of these two — multi-turn
+  category: decision_support
+  lang: zh
+  turns:
+    - query: "RM5000 以内适合剪片的笔电"
+      expect:
+        tools: [search_laptops]
+        budget_max: 5000
+        rubric: "推荐 2-3 台 RM5000 以内的机型"
+    - query: "第一台和第二台我该选哪个?"
+      expect:
+        forbid_tools: [search_laptops]
+        rubric: "用具体差异(重量/效能/价格)直接比较两台,并连结使用情境给出倾向;不重新搜寻,不以「看你需求」含糊带过"
+
+- id: ds_zh_002             # Q1: is it enough for me
+  category: decision_support
+  lang: zh
+  query: "我平时开 20 个 Chrome 分页加 VS Code,16GB 够吗?预算 RM4000"
+  expect:
+    tools: [search_laptops]
+    budget_max: 4000
+    rubric: "直接回答「够 / 不够 / 刚好」并说明余裕,而不是只罗列规格;并推荐符合预算的机型"
+
+- id: ds_zh_003             # Q6: validating a choice found elsewhere
+  category: decision_support
+  lang: zh
+  query: "我在店里看到一台 RM3299 的 Asus Vivobook 14,值得买吗?"
+  expect:
+    rubric: "若资料库有该机型,给出判断并对比同价位替代品;若没有,诚实说明查不到该型号,不编造规格或价格"
+
+- id: ds_en_001             # Q5: will it last — probes data the catalog lacks
+  category: decision_support
+  lang: en
+  turns:
+    - query: "Programming laptop under RM4000"
+      expect:
+        tools: [search_laptops]
+        budget_max: 4000
+        rubric: "Recommends 1-3 laptops under RM4000 suited to programming"
+    - query: "Will this still be fine in 3 years? Can I upgrade the RAM later?"
+      expect:
+        rubric: "Reasons about longevity from the specs it actually has (RAM, storage, CPU class); states honestly that it has no upgradeability or warranty data rather than guessing whether the RAM is soldered"
+
+- id: ds_en_002             # Q3: what will annoy me daily
+  category: decision_support
+  lang: en
+  query: "What's actually annoying about the Asus Zenbook 14 OLED day to day?"
+  expect:
+    tools: [get_review_evidence]
+    rubric: "Cites concrete day-to-day complaints traceable to review evidence (fan noise, ports, brightness, trackpad etc); if evidence is thin, says so instead of inventing drawbacks"
+
+- id: ds_en_003             # Q2: timing — buy now or wait — multi-turn
+  category: decision_support
+  lang: en
+  turns:
+    - query: "Best value laptop around RM4500 for general work"
+      expect:
+        tools: [search_laptops]
+        budget_max: 4500
+        rubric: "Recommends 1-3 laptops around RM4500 with reasons"
+    - query: "Should I buy now or wait for a newer model?"
+      expect:
+        rubric: "Acknowledges it has no product-roadmap or release-cycle data and says so plainly; may offer current market-price context if it calls the price tool, but must not invent launch dates or predicted price drops"
