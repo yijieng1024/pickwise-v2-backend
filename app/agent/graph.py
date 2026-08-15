@@ -13,7 +13,7 @@ from app.agent.tools import ALL_TOOLS, make_search_laptops
 from app.config import settings
 from app.database import session_scope
 from app.rag.models import ConversationLaptop, Message, MessageRole
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.users.models import LaptopUserPreference
 
 # How many prior turns (user + assistant messages combined) to replay into
@@ -234,7 +234,11 @@ def _pool_block(conv_laptops: list[ConversationLaptop], session: Session) -> Opt
     lines = []
     for cl in conv_laptops:
         laptop = session.get(Laptop, cl.laptop_id)
-        if not laptop:
+        # Skip deleted rows, and anything no longer active: the pool is the
+        # agent's answer-from-memory path for follow-ups, so leaving a retired
+        # listing here is the one remaining way it could recommend a laptop
+        # that search_laptops would never return.
+        if not laptop or laptop.status != LaptopStatus.ACTIVE.value:
             continue
         lines.append(
             f"- laptop_id={laptop.id} | {laptop.product_name} | RM {laptop.price_rm:.0f} | "

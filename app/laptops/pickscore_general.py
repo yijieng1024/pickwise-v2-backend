@@ -13,12 +13,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, JSON, UniqueConstraint
-from sqlmodel import Field, Session, SQLModel, select
+from sqlmodel import Session, select
 
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.brand_model import LaptopBrand
-from app.laptops.laptop_models import Laptop
+# LaptopPickScore is declared in laptop_models (see the comment on the class)
+# and re-exported here, so `from app.laptops.pickscore_general import
+# LaptopPickScore` — what pickscore_router and alembic/env.py do — still works.
+from app.laptops.laptop_models import Laptop, LaptopPickScore  # noqa: F401
 from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
 
@@ -54,21 +56,6 @@ USE_CASE_PRIORITIES: dict[str, dict[str, float]] = {
         "portability": 6, "battery": 6, "screen_size": 4, "brand": 2,
     },
 }
-
-
-class LaptopPickScore(SQLModel, table=True):
-    __tablename__ = "laptop_pick_scores"  # type: ignore
-    __table_args__ = (
-        UniqueConstraint("laptop_id", "use_case", name="uq_laptop_pick_scores_laptop_use_case"),
-    )
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
-    use_case: str = Field(index=True)  # slug from USE_CASE_PRIORITIES
-    score: int
-    breakdown: list = Field(default_factory=list, sa_column=Column(JSON))
-    flags: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 def generate_all_pick_scores(session: Session) -> dict:

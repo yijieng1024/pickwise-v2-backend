@@ -12,7 +12,7 @@ from sqlmodel import Session
 
 from app.embeddings.service import embed_text
 from app.laptops.brand_model import LaptopBrand
-from app.laptops.laptop_models import Laptop, LaptopEmbedding
+from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopStatus
 
 # Wide net — retrieve many candidates so the reranker has room to work.
 # Precision is NOT the goal here; recall is.
@@ -58,7 +58,10 @@ def retrieve_candidates(
     Embed the query and run pgvector cosine similarity search.
 
     Hard filters (budget_max, brand) are applied at the SQL level — they are
-    absolute constraints that the reranker must never override.
+    absolute constraints that the reranker must never override. So is the
+    active-status filter: an inactive/suspended laptop is never recommendable,
+    and filtering here (rather than in the tool) covers the relaxation retries
+    and the offline pipeline eval, which re-enter through this same function.
 
     Falls back to an unfiltered relational query (all laptops ordered by price)
     if the Gemini embedding call times out or fails, so the conversation never
@@ -75,6 +78,7 @@ def retrieve_candidates(
         sa_select(Laptop, LaptopBrand.name, distance_col.label("distance"))  # type: ignore
         .join(LaptopEmbedding, LaptopEmbedding.laptop_id == Laptop.id)
         .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)
     )
 
     if budget_max is not None:
@@ -107,6 +111,7 @@ def _relational_fallback(
     stmt = (
         select(Laptop, LaptopBrand.name)
         .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)
     )
     if budget_max is not None:
         stmt = stmt.where(Laptop.price_rm <= budget_max)

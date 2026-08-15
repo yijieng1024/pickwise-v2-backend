@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 # Safe one-way import: agent.router consumes rag.service/models, never this
 # router, so borrowing its card schema keeps the two endpoints' shapes locked.
 from app.agent.router import AgentLaptopCard
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.rag import service
 from app.rag.models import ConversationLaptop, ConversationRead, ConversationSummary
 from app.database import get_session
@@ -75,13 +75,18 @@ def get_conversation_laptops(
 ):
     """The conversation's persisted laptop shortlist pool — the same cards
     (and order) the agent's `done` event carries, so the frontend can restore
-    the shortlist rail when reopening a past conversation."""
+    the shortlist rail when reopening a past conversation.
+
+    Only `active` laptops come back — a listing retired since the conversation
+    happened is dropped rather than restored as a dead card, matching the
+    filter the agent's own pool and search apply."""
     conv = service.get_conversation(conversation_id, current_user, session)
 
     rows = session.exec(
         select(ConversationLaptop, Laptop)
         .join(Laptop, ConversationLaptop.laptop_id == Laptop.id)  # type: ignore[arg-type]
         .where(ConversationLaptop.conversation_id == conv.id)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)
         .order_by(ConversationLaptop.similarity_score.desc().nullslast())  # type: ignore[union-attr]
     ).all()
     return [AgentLaptopCard(
