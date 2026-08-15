@@ -28,8 +28,7 @@ from app.rag.reranker import RankedCandidate
 # gate except borderline household items at ~0.54 — acceptable because the
 # agent's scope-enforcement prompt refuses non-laptop requests before
 # search_laptops is ever called. (History: 0.40 for gemini-embedding-001,
-# 0.20 for nemotron-embed.) Re-run the NDCG calibration (run_ndcg.py) for a
-# proper tune, and re-derive whenever the embedding model changes again.
+# 0.20 for nemotron-embed.) TODO: NDCG calibration not implemented.
 RELEVANCE_THRESHOLD = 0.53
 
 

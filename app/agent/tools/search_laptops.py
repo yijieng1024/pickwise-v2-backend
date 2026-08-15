@@ -97,6 +97,7 @@ def _to_result_dict(rc: RankedCandidate) -> dict:
         "storage_gb": laptop.ssd_gb,
         "storage_type": laptop.storage_type,
         "weight_kg": laptop.weight_kg,
+        "battery_wh": laptop.battery_wh,
         "display_size_inch": laptop.display_size_inch,
         "similarity_score": rc.similarity_score,
     }
@@ -110,6 +111,9 @@ _SEARCH_LAPTOPS_DOC = """
     Args:
         user_query: The user's natural-language description of what they want
             (e.g. "lightweight laptop for programming and long battery life").
+        weight_max: Max weight in kg. Use when the user asks for something
+                    light/portable (e.g. 1.5 for "thin and light"). May be
+                    auto-relaxed in 0.2kg steps if nothing viable is found.
         budget_max: Maximum price in RM. Applied as a hard filter, but may be
             auto-relaxed in small steps if nothing viable is found.
         brand: Brand name (e.g. "Apple", "Asus"). Treated as a soft preference,
@@ -140,6 +144,7 @@ _SEARCH_LAPTOPS_DOC = """
 def _run_search(
     user_query: str,
     budget_max: Optional[float] = None,
+    weight_max: Optional[float] = None,
     brand: Optional[str] = None,
     purpose: Optional[str] = None,
     top_k: int = 10,
@@ -147,7 +152,7 @@ def _run_search(
 ) -> dict:
     constraints = UserConstraints(
         budget=budget_max,
-        weight_limit=None,
+        weight_limit=weight_max,
         purpose=_normalize_purpose(purpose),
         brand_preferences=[brand.lower()] if brand else [],
     )
@@ -228,11 +233,12 @@ def _make_search_fn(user_id: Optional[uuid.UUID]):
     def search_laptops(
         user_query: str,
         budget_max: Optional[float] = None,
+        weight_max: Optional[float] = None,
         brand: Optional[str] = None,
         purpose: Optional[str] = None,
         top_k: int = 10,
     ) -> dict:
-        return _run_search(user_query, budget_max, brand, purpose, top_k, user_id)
+        return _run_search(user_query, budget_max, weight_max, brand, purpose, top_k, user_id)
 
     search_laptops.__doc__ = _SEARCH_LAPTOPS_DOC
     return search_laptops

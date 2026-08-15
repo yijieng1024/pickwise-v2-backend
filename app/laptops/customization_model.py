@@ -59,3 +59,11 @@ class CustomizationUpdate(SQLModel):
     option_name: Optional[str] = None
     price_add_rm: Optional[float] = None
     dependency_note: Optional[str] = None
+
+
+# Deferred import so this module can be an entry point on its own: the
+# relationships above name "Laptop"/"Category" as strings, which SQLAlchemy can
+# only resolve once those classes are imported. Bottom of the file, after
+# LaptopCustomization exists, because laptop_models imports it straight back.
+# It also pulls in Category transitively (laptop_models does the same trick).
+from app.laptops.laptop_models import Laptop  # noqa: E402,F401

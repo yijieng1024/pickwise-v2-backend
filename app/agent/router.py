@@ -13,7 +13,7 @@ from app.agent.monitoring_service import MonitoringCallbackHandler, log_agent_ru
 from app.rag import service
 from app.rag.models import Conversation, ConversationLaptop, Message, MessageRole
 from app.database import session_scope
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.logger import get_logger
 from app.users.auth import get_current_user_detached
 from app.users.models import User
@@ -154,11 +154,15 @@ def _persist_assistant_turn(
             return cards
 
         # No new search this turn — return the persisted shortlist pool so the
-        # frontend keeps its cards on follow-up questions.
+        # frontend keeps its cards on follow-up questions. Status-filtered like
+        # every other recommendation surface: a laptop deactivated after it was
+        # shortlisted drops out of the rail rather than lingering as a card the
+        # user can still click through to.
         pool_rows = session.exec(
             select(ConversationLaptop, Laptop)
             .join(Laptop, ConversationLaptop.laptop_id == Laptop.id)  # type: ignore[arg-type]
             .where(ConversationLaptop.conversation_id == conv_id)
+            .where(Laptop.status == LaptopStatus.ACTIVE.value)
             .order_by(ConversationLaptop.similarity_score.desc().nullslast())  # type: ignore[union-attr]
         ).all()
         return [AgentLaptopCard(

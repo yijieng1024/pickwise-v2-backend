@@ -19,7 +19,15 @@ class Category(SQLModel, table=True):
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    laptops: List["Laptop"] = Relationship(back_populates="categories", link_model=LaptopCategory)
+    # overlaps: Laptop.category_links maps the same junction table directly (it
+    # exists so deleting a laptop cascades its laptop_categories rows away).
+    # Both writing laptop_categories.laptop_id is intentional, so declare the
+    # overlap rather than let SQLAlchemy warn about it on every configure.
+    laptops: List["Laptop"] = Relationship(
+        back_populates="categories",
+        link_model=LaptopCategory,
+        sa_relationship_kwargs={"overlaps": "category_links"},
+    )
     customizations: List["LaptopCustomization"] = Relationship(back_populates="category")
 
 
@@ -42,3 +50,10 @@ class CategoryUpdate(SQLModel):
 class CategoryRead(CategoryBase):
     id: uuid.UUID
     created_at: datetime
+
+
+# Deferred import so this module can be an entry point on its own — Category's
+# relationships name "Laptop"/"LaptopCustomization" as strings and SQLAlchemy
+# resolves those only against imported classes. Bottom of the file, after
+# Category exists, because laptop_models imports it straight back.
+from app.laptops.laptop_models import Laptop  # noqa: E402,F401
