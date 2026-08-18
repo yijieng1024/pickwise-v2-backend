@@ -1,11 +1,11 @@
 from sqlalchemy import func, select as sa_select
 from sqlmodel import Session, select
 
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.pickscore.schemas import ScorableProduct
 from app.pickscore.ranges_cache import get_cached_ranges, set_cached_ranges
-from app.pickscore.benchmark_service import resolve_benchmark
+from app.pickscore.benchmark_service import resolve_benchmark, resolve_gpu_benchmark
 
 _CACHE_KEY = "laptop_ranges"
 
@@ -26,10 +26,11 @@ def laptop_to_scorable(laptop: Laptop, brand_name: str) -> ScorableProduct:
     )
 
 
-def get_laptop_ranges(session: Session) -> dict:
-    cached = get_cached_ranges(_CACHE_KEY)
-    if cached:
-        return cached
+def get_laptop_ranges(session: Session, force_refresh: bool = False) -> dict:
+    if not force_refresh:
+        cached = get_cached_ranges(_CACHE_KEY)
+        if cached:
+            return cached
 
     laptop_row = session.execute(
         sa_select(
@@ -42,7 +43,7 @@ def get_laptop_ranges(session: Session) -> dict:
             func.min(Laptop.ssd_gb),    func.max(Laptop.ssd_gb),
             func.min(Laptop.weight_kg), func.max(Laptop.weight_kg),
             func.min(Laptop.battery_wh),func.max(Laptop.battery_wh),
-        )
+        ).where(Laptop.status == LaptopStatus.ACTIVE.value)
     ).one()
 
     # Fetch full benchmark lists once
@@ -51,17 +52,25 @@ def get_laptop_ranges(session: Session) -> dict:
 
     # Resolve benchmark scores for laptops actually in the catalog so the
     # normalization range reflects laptop-class hardware, not desktop/server CPUs
-    catalog_rows = session.execute(sa_select(Laptop.processor_model, Laptop.gpu_model)).all()
+    catalog_rows = session.execute(sa_select(Laptop.processor_model, Laptop.gpu_model)
+                                   .where(Laptop.status == LaptopStatus.ACTIVE.value)
+                                   ).all()
     cpu_models = {row[0] for row in catalog_rows if row[0]}
-    gpu_models = {row[1] for row in catalog_rows if row[1]}
+    # (cpu, gpu) pairs, not GPU strings alone: an anchorless GPU name is only
+    # resolvable through the CPU it is fused to, so the range layer has to ask
+    # the same question the engine asks. Sharing resolve_gpu_benchmark is also
+    # what keeps Apple out of the denominator without a brand special-case —
+    # "10-core GPU" has no anchor, Apple has no integrated-GPU row, so it
+    # resolves to None and never reaches min()/max().
+    gpu_pairs = {(row[0], row[1]) for row in catalog_rows if row[1]}
 
     cpu_scores = [
         r["score"] for model in cpu_models
         if (r := resolve_benchmark(model, cpu_benchmarks))["score"] is not None
     ]
     gpu_scores = [
-        r["score"] for model in gpu_models
-        if (r := resolve_benchmark(model, gpu_benchmarks))["score"] is not None
+        r["score"] for cpu, gpu in gpu_pairs
+        if (r := resolve_gpu_benchmark(gpu, cpu, gpu_benchmarks))["score"] is not None
     ]
 
     # Fall back to global table range if no catalog laptops matched

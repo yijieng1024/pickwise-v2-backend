@@ -15,3 +15,9 @@ def get_cached_ranges(cache_key: str) -> Optional[dict]:
 
 def set_cached_ranges(cache_key: str, data: dict) -> None:
     _caches[cache_key] = (data, time.time())
+
+def invalidate_cached_ranges(cache_key: Optional[str] = None) -> None:
+    if cache_key is None:
+        _caches.clear()
+    else:
+        _caches.pop(cache_key, None)

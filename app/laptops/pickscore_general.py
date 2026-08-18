@@ -20,7 +20,7 @@ from app.laptops.brand_model import LaptopBrand
 # LaptopPickScore is declared in laptop_models (see the comment on the class)
 # and re-exported here, so `from app.laptops.pickscore_general import
 # LaptopPickScore` — what pickscore_router and alembic/env.py do — still works.
-from app.laptops.laptop_models import Laptop, LaptopPickScore  # noqa: F401
+from app.laptops.laptop_models import Laptop, LaptopPickScore, LaptopStatus  # noqa: F401
 from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
 
@@ -64,11 +64,11 @@ def generate_all_pick_scores(session: Session) -> dict:
     every use-case profile. Ranges and benchmark lists are fetched once and
     reused across the whole catalog (same pattern as the batch endpoint).
     """
-    ranges = get_laptop_ranges(session)
+    ranges = get_laptop_ranges(session, force_refresh=True)
     cpu_bm = [(r.cpu_name, r.cpu_mark) for r in session.exec(select(CPUBenchmark)).all()]
     gpu_bm = [(r.gpu_name, r.gpu_mark) for r in session.exec(select(GPUBenchmark)).all()]
 
-    laptops = session.exec(select(Laptop)).all()
+    laptops = session.exec(select(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)).all()
     brands = session.exec(select(LaptopBrand)).all()
     brand_map = {b.id: b.name for b in brands}
 
@@ -138,6 +138,7 @@ def get_ranking_for_use_case(
         .join(Laptop, Laptop.id == LaptopPickScore.laptop_id)  # type: ignore[arg-type]
         .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)  # type: ignore[arg-type]
         .where(LaptopPickScore.use_case == use_case)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)
     )
     rows = [(row[0], row[1], row[2]) for row in session.exec(stmt).all()]
 
