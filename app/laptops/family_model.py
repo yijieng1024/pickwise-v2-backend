@@ -106,6 +106,43 @@ class FamilyLaptopsAssign(SQLModel):
     laptop_ids: List[uuid.UUID]
 
 
+class FamilyLaptopsMove(SQLModel):
+    """Body of POST /families/laptops/move — the same bulk move as
+    POST /families/{id}/laptops, but with the destination in the body so one
+    call can also RELEASE the selection (`target_family_id: null`).
+
+    That is what makes it usable from the screens where the destination is not
+    the page you are on: the unassigned backlog, and a family detail view
+    whose "remove selected" is a move to nowhere.
+
+    `target_family_id` is nullable but REQUIRED — no default. Releasing every
+    selected laptop is not something a caller should be able to do by
+    forgetting a field; sending `null` has to be a decision."""
+    laptop_ids: List[uuid.UUID]
+    target_family_id: Optional[uuid.UUID]
+
+
+class EmptiedFamily(SQLModel):
+    """A family the move left with zero members. Reported, not deleted —
+    deleting it is the admin's explicit second half of a merge, and an empty
+    family is a legitimate state (POST /families creates one)."""
+    family_id: uuid.UUID
+    name: str
+
+
+class LaptopsMoveResult(SQLModel):
+    target_family_id: Optional[uuid.UUID]
+    target_family_name: Optional[str]
+    # Laptops whose family_id actually changed, vs. those already in the
+    # target. Re-sending a selection is a no-op, so `moved: 0` is a success.
+    moved: int
+    unchanged: int
+    emptied_families: List[EmptiedFamily] = Field(default_factory=list)
+    # The destination after the move, so the screen can repaint from one
+    # response. Null when the laptops were released to unassigned.
+    target: Optional[FamilyDetail] = None
+
+
 class UnassignedLaptop(SQLModel):
     laptop_id: uuid.UUID
     brand_id: uuid.UUID

@@ -18,7 +18,7 @@ import uuid
 from collections import defaultdict
 from typing import Callable, Iterable, Optional, TypeVar
 
-from sqlalchemy import select as sa_select
+from sqlalchemy import func, select as sa_select
 from sqlmodel import Session
 
 from app.laptops.family_key import family_key
@@ -68,6 +68,94 @@ def resolve_family_id(
             found.add(family_id)
 
     return found.pop() if len(found) == 1 else None
+
+
+def move_laptops(
+    session: Session,
+    laptop_ids: Iterable[uuid.UUID],
+    target_family_id: Optional[uuid.UUID],
+) -> dict:
+    """
+    Move several laptops into one family at once, or release them all to
+    unassigned when `target_family_id` is None.
+
+    This is the write half of every merge, so it lives here rather than in the
+    router: both membership endpoints call it, and the two rules below must
+    not drift apart between them.
+
+      - ALL OR NOTHING on unknown ids. A merge that applied to nine of ten
+        selected laptops leaves a family half-moved and no record of which
+        half, so an unknown id writes nothing and is handed back to the caller
+        to turn into a 404. (Duplicate ids in one request are the same
+        assignment twice and are collapsed instead.)
+      - The SOURCE families a move empties are reported, because deleting an
+        emptied family is the second half of the merge and the caller cannot
+        see it from the target family alone. They are reported, never deleted:
+        removing a family is an explicit admin action (DELETE /families/{id}),
+        and an empty family is a legitimate state — it is what
+        POST /families creates.
+
+    Returns {moved, unchanged, missing, emptied_family_ids}, where `unchanged`
+    counts laptops already in the target (re-sending a selection is a no-op,
+    not an error) and `missing` is empty on any run that wrote anything.
+    """
+    wanted = list(dict.fromkeys(laptop_ids))
+    if not wanted:
+        return {"moved": 0, "unchanged": 0, "missing": [], "emptied_family_ids": []}
+
+    found = {
+        laptop.id: laptop
+        for laptop in session.execute(
+            sa_select(Laptop).where(Laptop.id.in_(wanted))  # type: ignore[union-attr]
+        ).scalars().all()
+    }
+    missing = [i for i in wanted if i not in found]
+    if missing:
+        return {
+            "moved": 0,
+            "unchanged": 0,
+            "missing": missing,
+            "emptied_family_ids": [],
+        }
+
+    # Captured before the write, and with the target excluded — a laptop that
+    # never left the target family cannot have emptied it.
+    sources = {
+        laptop.family_id for laptop in found.values() if laptop.family_id is not None
+    } - {target_family_id}
+
+    moved = unchanged = 0
+    for laptop in found.values():
+        if laptop.family_id == target_family_id:
+            unchanged += 1
+            continue
+        laptop.family_id = target_family_id
+        session.add(laptop)
+        moved += 1
+
+    emptied: list[uuid.UUID] = []
+    if sources:
+        # The count below has to see the reassignments, and they are still
+        # pending in the session until flushed.
+        session.flush()
+        remaining = dict(
+            session.execute(
+                sa_select(Laptop.family_id, func.count(Laptop.id))
+                .where(Laptop.family_id.in_(sources))  # type: ignore[union-attr]
+                .group_by(Laptop.family_id)
+            ).all()
+        )
+        emptied = sorted(
+            (fid for fid in sources if remaining.get(fid, 0) == 0), key=str
+        )
+
+    session.commit()
+    return {
+        "moved": moved,
+        "unchanged": unchanged,
+        "missing": [],
+        "emptied_family_ids": emptied,
+    }
 
 
 def regroup_unassigned(session: Session) -> dict:

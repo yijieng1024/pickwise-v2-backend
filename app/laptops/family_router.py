@@ -28,18 +28,21 @@ from app.database import get_session
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_key import family_key
 from app.laptops.family_model import (
+    EmptiedFamily,
     FamilyCreate,
     FamilyDetail,
     FamilyLaptopsAssign,
+    FamilyLaptopsMove,
     FamilyMember,
     FamilyRead,
     FamilyUpdate,
     LaptopFamily,
+    LaptopsMoveResult,
     RegroupResult,
     UnassignedLaptop,
     UnassignedSummary,
 )
-from app.laptops.family_service import regroup_unassigned
+from app.laptops.family_service import move_laptops, regroup_unassigned
 from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
 from app.users.auth import get_current_admin
@@ -112,9 +115,36 @@ def _assert_name_free(
         )
 
 
+def _assert_all_found(missing: list[uuid.UUID]) -> None:
+    """Unknown ids 404 before anything is written — `move_laptops` writes
+    nothing when any id is unknown, so a typo can never leave a merge
+    half-applied. Same up-front validation the job endpoints use."""
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown laptop id(s): {', '.join(str(i) for i in missing)}",
+        )
+
+
+def _emptied(session: Session, family_ids: list[uuid.UUID]) -> List[EmptiedFamily]:
+    """Name the families a move emptied, so the caller can offer the DELETE
+    that finishes the merge without a second round trip."""
+    if not family_ids:
+        return []
+    rows = session.execute(
+        sa_select(LaptopFamily)
+        .where(LaptopFamily.id.in_(family_ids))  # type: ignore[union-attr]
+        .order_by(LaptopFamily.name, LaptopFamily.id)
+    ).scalars().all()
+    return [EmptiedFamily(family_id=f.id, name=f.name) for f in rows]
+
+
 # --- Static paths first ------------------------------------------------------
 # /unassigned and /regroup must be declared above /{family_id}, or FastAPI
 # matches the path param first and 422s trying to parse them as a UUID.
+# /laptops/move is two segments and cannot collide with /{family_id}/laptops
+# (the second segment differs), but it is declared here with the others so the
+# rule stays "static paths go first" rather than "static paths go first, except".
 
 @router.get("/unassigned", response_model=UnassignedSummary)
 def list_unassigned(
@@ -189,6 +219,66 @@ def regroup(session: Session = Depends(get_session)):
         result["families_created"], result["laptops_assigned"], result["left_null"],
     )
     return RegroupResult(**result)
+
+
+@router.post(
+    "/laptops/move",
+    response_model=LaptopsMoveResult,
+    dependencies=[Depends(get_current_admin)],
+)
+def move_family_laptops(
+    payload: FamilyLaptopsMove,
+    session: Session = Depends(get_session),
+):
+    """
+    Move a selection of laptops in one request — the bulk operation behind an
+    admin screen's checkbox column.
+
+    Destination is in the body, not the path, which is the whole point of this
+    route existing alongside POST /families/{id}/laptops: it can be called
+    from a screen that is not the destination (the unassigned backlog), it can
+    move members straight out of one family into another, and
+    `target_family_id: null` releases the selection to unassigned — the bulk
+    counterpart of DELETE /families/{id}/laptops/{laptop_id}.
+
+    Members may come from any number of source families; the ones the move
+    leaves empty come back in `emptied_families`, which is the list of
+    DELETEs that finish a merge. Nothing is deleted here.
+
+    All or nothing: one unknown laptop id 404s and writes nothing.
+    """
+    if not payload.laptop_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No laptop ids given"
+        )
+
+    target = (
+        _get_family(session, payload.target_family_id)
+        if payload.target_family_id is not None
+        else None
+    )
+
+    result = move_laptops(session, payload.laptop_ids, payload.target_family_id)
+    _assert_all_found(result["missing"])
+
+    logger.info(
+        "families: moved %s laptop(s) to %s; %s already there, %s source family/families emptied",
+        result["moved"],
+        target.name if target else "unassigned",
+        result["unchanged"],
+        len(result["emptied_family_ids"]),
+    )
+
+    return LaptopsMoveResult(
+        target_family_id=payload.target_family_id,
+        target_family_name=target.name if target else None,
+        moved=result["moved"],
+        unchanged=result["unchanged"],
+        emptied_families=_emptied(session, result["emptied_family_ids"]),
+        # Reading the destination back keeps a merge to one round trip; a
+        # release has no destination to read.
+        target=get_family(payload.target_family_id, session) if target else None,
+    )
 
 
 # --- Collection --------------------------------------------------------------
@@ -392,7 +482,9 @@ def add_laptops(
     is the first half of a merge; the second is deleting the emptied family.
 
     Unknown ids 404 before anything is written, so a typo cannot leave a merge
-    half-applied — the same up-front validation the job endpoints use.
+    half-applied — `family_service.move_laptops` owns that rule, shared with
+    POST /families/laptops/move. Use that route instead when you need to know
+    which source families the move emptied, or to release a selection.
     """
     _get_family(session, family_id)
 
@@ -401,26 +493,8 @@ def add_laptops(
             status_code=status.HTTP_400_BAD_REQUEST, detail="No laptop ids given"
         )
 
-    # Duplicate ids in one request are harmless (the same assignment twice),
-    # so they are collapsed rather than rejected.
-    wanted = list(dict.fromkeys(payload.laptop_ids))
-    found = {
-        laptop.id: laptop
-        for laptop in session.execute(
-            sa_select(Laptop).where(Laptop.id.in_(wanted))  # type: ignore[union-attr]
-        ).scalars().all()
-    }
-    missing = [str(i) for i in wanted if i not in found]
-    if missing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Unknown laptop id(s): {', '.join(missing)}",
-        )
-
-    for laptop in found.values():
-        laptop.family_id = family_id
-        session.add(laptop)
-    session.commit()
+    result = move_laptops(session, payload.laptop_ids, family_id)
+    _assert_all_found(result["missing"])
 
     return get_family(family_id, session)
 
