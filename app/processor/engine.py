@@ -12,6 +12,7 @@ from app.common.rate_limit import build_gemma_limiter
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import settings
+from app.laptops.family_service import resolve_family_id
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
@@ -343,6 +344,16 @@ def process_raw_laptop_data(
                 updated_count += 1
             else:
                 new_laptop = Laptop(**laptop_data)
+                # Family: adopt the one its already-grouped siblings agree on,
+                # or stay null. laptop_data deliberately carries no family_id,
+                # so the update branch above never touches an admin's manual
+                # grouping — only a brand new row is placed, and only when the
+                # evidence is unambiguous. A null shows up in the
+                # /families/regroup backlog; a wrong guess would silently hide
+                # the machine behind another family's representative.
+                new_laptop.family_id = resolve_family_id(
+                    session, new_laptop.product_name
+                )
                 session.add(new_laptop)
                 session.commit()
                 session.refresh(new_laptop)

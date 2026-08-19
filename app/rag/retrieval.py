@@ -86,7 +86,11 @@ def retrieve_candidates(
     if brand is not None:
         stmt = stmt.where(LaptopBrand.name.ilike(brand))
 
-    stmt = stmt.order_by(distance_col.asc()).limit(recall_size)
+    # Laptop.id closes the order: configurations of one machine embed to very
+    # similar (sometimes identical) vectors, so cosine distance ties, and an
+    # unbroken tie makes the recall window's contents vary between identical
+    # queries.
+    stmt = stmt.order_by(distance_col.asc(), Laptop.id).limit(recall_size)
     rows = session.execute(stmt).all()
 
     return [
@@ -117,7 +121,7 @@ def _relational_fallback(
         stmt = stmt.where(Laptop.price_rm <= budget_max)
     if brand is not None:
         stmt = stmt.where(LaptopBrand.name.ilike(brand))
-    stmt = stmt.order_by(Laptop.price_rm.asc()).limit(limit)  # type: ignore
+    stmt = stmt.order_by(Laptop.price_rm.asc(), Laptop.id).limit(limit)  # type: ignore
 
     rows = session.execute(stmt).all()
     # cosine_distance=0.5 → similarity_score=0.5 (neutral, not misleading)

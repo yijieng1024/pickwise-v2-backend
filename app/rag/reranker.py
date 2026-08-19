@@ -172,5 +172,13 @@ def rerank(
             _brand_name=c.brand_name,
         ))
 
-    ranked.sort(key=lambda x: x.final_score, reverse=True)
+    # laptop_id closes the order. final_score ties are routine here — two
+    # configurations of one machine share a product name and often an
+    # identical embedding, so they arrive with the same similarity and take
+    # the same penalties — and a bare sort on the score alone falls through to
+    # whatever order Postgres happened to return, which it does not guarantee.
+    # Downstream that means the shortlist reshuffles between identical
+    # requests, and family deduplication picks a different representative each
+    # time.
+    ranked.sort(key=lambda x: (-x.final_score, x.laptop_id))
     return ranked

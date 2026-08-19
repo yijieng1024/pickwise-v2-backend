@@ -51,6 +51,7 @@ def apply_sort(
     sort_dir: SortDirection,
     sortable_columns: Dict[str, InstrumentedAttribute],
     default_column: InstrumentedAttribute,
+    tiebreak: Optional[InstrumentedAttribute] = None,
 ):
     """
     Adds `ORDER BY <column> ASC|DESC` to a statement.
@@ -60,6 +61,14 @@ def apply_sort(
     unintended/unindexed column or silently ignoring the request. When
     `sort_by` is omitted, falls back to `default_column` — still respecting
     `sort_dir`, so callers can flip a default-sorted list without naming it.
+
+    `tiebreak` — pass the table's primary key on any route that paginates.
+    None of the sortable columns are unique (dozens of laptops share a price,
+    a name, a creation timestamp), and rows tied on the sort column fall
+    through to whatever order Postgres returns, which it does not guarantee
+    and which is free to differ between the OFFSET 0 query and the OFFSET 20
+    one — so a tied row can appear on two pages or on neither. Appending a
+    unique column makes the order total and the paging stable.
     """
     if sort_by is None:
         column = default_column
@@ -71,4 +80,10 @@ def apply_sort(
                 detail=f"Invalid sort_by '{sort_by}'. Choose one of: {', '.join(sortable_columns)}",
             )
 
-    return statement.order_by(column.desc() if sort_dir == SortDirection.desc else column.asc())
+    statement = statement.order_by(
+        column.desc() if sort_dir == SortDirection.desc else column.asc()
+    )
+    # Always ascending: the tiebreak exists to be deterministic, not to be
+    # meaningful, and flipping it with sort_dir would only make it harder to
+    # reason about which of two tied rows comes first.
+    return statement.order_by(tiebreak.asc()) if tiebreak is not None else statement
