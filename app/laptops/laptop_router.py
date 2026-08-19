@@ -7,6 +7,7 @@ from app.laptops.laptop_models import (
     LaptopEmbedding, LaptopStatus, HybridSearchRequest, LaptopSearchResult
 )
 from app.laptops.brand_model import LaptopBrand
+from app.laptops.family_service import resolve_family_id
 from app.embeddings.service import embed_text
 from app.rag.models import ConversationLaptop
 from app.reviews.models import LaptopReviewChunk, LaptopReviewSummary, RawYoutubeReview
@@ -47,6 +48,11 @@ RAW_SCRAP_FILTERABLE_COLUMNS = {
 @router.post("/", response_model=LaptopRead, status_code=201, dependencies=[Depends(get_current_admin)])
 def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session)):
     db_laptop = Laptop.model_validate(laptop)
+    if db_laptop.family_id is None:
+        # Same rule the AI processor applies to an ingested row: adopt the
+        # family the laptop's already-grouped siblings agree on, or leave it
+        # null for the /families/regroup backlog. Never guess between two.
+        db_laptop.family_id = resolve_family_id(session, db_laptop.product_name)
     session.add(db_laptop)
     session.commit()
     session.refresh(db_laptop)
@@ -112,7 +118,10 @@ def list_laptops(
     # After filter+search, before sort/slice — so this is the filtered total.
     response.headers["X-Total-Count"] = str(count_total(session, statement))
 
-    statement = apply_sort(statement, sort_by, sort_dir, LAPTOP_SORTABLE_COLUMNS, Laptop.created_at)
+    statement = apply_sort(
+        statement, sort_by, sort_dir, LAPTOP_SORTABLE_COLUMNS, Laptop.created_at,
+        tiebreak=Laptop.id,  # this route paginates; see apply_sort's `tiebreak`
+    )
 
     if skip is not None:
         statement = statement.offset(skip)

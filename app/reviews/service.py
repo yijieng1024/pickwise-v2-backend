@@ -6,6 +6,12 @@ from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.customization_model import LaptopCustomization  # noqa: F401
+# The single definition of the model-line key, shared with the laptop_family
+# grouping (app/laptops/family_service.py). Two copies drifted apart is the
+# whole reason it moved out of this module: this pipeline searches YouTube
+# once per key, family grouping seeds one product line per key, and a key that
+# means two different things in two places is a bug nobody would notice.
+from app.laptops.family_key import family_key
 from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
 from app.reviews.discovery import discover_videos
@@ -16,22 +22,10 @@ from app.reviews.transcript import fetch_transcript
 logger = get_logger(__name__)
 
 
-def _family_key(product_name: str) -> str:
-    """
-    Collapse config variants into one YouTube-search family: reviewers cover
-    "ASUS TUF Gaming F15", not each RAM/SSD/CPU configuration — and discovery
-    costs 100 quota units per channel per query, so searching per variant
-    would burn the 10k daily quota on duplicate queries. Everything from the
-    first parenthesis on is config noise for search purposes.
-    """
-    base = product_name.split("(")[0]
-    return " ".join(base.lower().split())
-
-
 def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> dict:
     """
     Run the discovery + transcript + match pipeline across the catalog, one
-    search per laptop *family* (see _family_key). Discovered videos are
+    search per laptop *family* (see family_key). Discovered videos are
     matched against the whole catalog by the matcher, so one family search
     can populate raw reviews for several variants.
 
@@ -53,7 +47,7 @@ def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> 
     laptops = session.exec(select(Laptop)).all()
     families: dict[str, Laptop] = {}
     for laptop in laptops:
-        families.setdefault(_family_key(laptop.product_name), laptop)
+        families.setdefault(family_key(laptop.product_name), laptop)
 
     covered: set[str] = set()
     if skip_covered:
@@ -61,7 +55,7 @@ def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> 
             select(Laptop)
             .join(RawYoutubeReview, RawYoutubeReview.matched_laptop_id == Laptop.id)  # type: ignore[arg-type]
         ).all()
-        covered = {_family_key(l.product_name) for l in matched_laptops}
+        covered = {family_key(l.product_name) for l in matched_laptops}
 
     todo = [(key, laptop) for key, laptop in families.items() if key not in covered]
     todo = todo[:limit]

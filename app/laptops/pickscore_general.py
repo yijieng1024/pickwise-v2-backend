@@ -17,10 +17,11 @@ from sqlmodel import Session, select
 
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.brand_model import LaptopBrand
+from app.laptops.family_service import deduplicate_by_family
 # LaptopPickScore is declared in laptop_models (see the comment on the class)
 # and re-exported here, so `from app.laptops.pickscore_general import
 # LaptopPickScore` — what pickscore_router and alembic/env.py do — still works.
-from app.laptops.laptop_models import Laptop, LaptopPickScore  # noqa: F401
+from app.laptops.laptop_models import Laptop, LaptopPickScore, LaptopStatus  # noqa: F401
 from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
 
@@ -64,11 +65,11 @@ def generate_all_pick_scores(session: Session) -> dict:
     every use-case profile. Ranges and benchmark lists are fetched once and
     reused across the whole catalog (same pattern as the batch endpoint).
     """
-    ranges = get_laptop_ranges(session)
+    ranges = get_laptop_ranges(session, force_refresh=True)
     cpu_bm = [(r.cpu_name, r.cpu_mark) for r in session.exec(select(CPUBenchmark)).all()]
     gpu_bm = [(r.gpu_name, r.gpu_mark) for r in session.exec(select(GPUBenchmark)).all()]
 
-    laptops = session.exec(select(Laptop)).all()
+    laptops = session.exec(select(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)).all()
     brands = session.exec(select(LaptopBrand)).all()
     brand_map = {b.id: b.name for b in brands}
 
@@ -132,12 +133,19 @@ def get_ranking_for_use_case(
     for ARM), which made M5 MacBooks outrank RTX 5090 machines. A proxied GPU
     score is not evidence of gaming performance, so for the gaming use case
     proxy-scored laptops sort after every real-benchmark laptop.
+
+    One laptop per family: configurations of one machine score within a point
+    or two of each other, so an undeduplicated top-10 was mostly one product
+    listed ten times. The family's highest scorer represents it — there is no
+    query budget here to pick a member against, unlike the agent's search.
+    Laptops with no family are left ungrouped rather than guessed at.
     """
     stmt = (
         select(LaptopPickScore, Laptop, LaptopBrand.name)
         .join(Laptop, Laptop.id == LaptopPickScore.laptop_id)  # type: ignore[arg-type]
         .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)  # type: ignore[arg-type]
         .where(LaptopPickScore.use_case == use_case)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)
     )
     rows = [(row[0], row[1], row[2]) for row in session.exec(stmt).all()]
 
@@ -147,6 +155,16 @@ def get_ranking_for_use_case(
             bool(t[0].flags.get("gpu_score_is_proxy")) if demote_proxy else False,
             -t[0].score,
             t[1].price_rm,
+            # Closes the order. Sibling configurations routinely tie on all
+            # three keys above, and without this the tail falls through to
+            # database return order, which Postgres does not guarantee — so
+            # the ranking (and which member survives deduplication below)
+            # would drift between identical requests.
+            str(t[1].id),
         )
     )
+
+    # Before the slice, never after: deduplicating a top-10 that is already
+    # cut would return three products, not ten.
+    rows = deduplicate_by_family(rows, family_id_of=lambda t: t[1].family_id)
     return rows[:limit]

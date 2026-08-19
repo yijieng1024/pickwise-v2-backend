@@ -42,6 +42,14 @@ def _validate_status(value: Optional[str]) -> Optional[str]:
 class LaptopBase(SQLModel):
     # Part 1: Core Identifiers & Categorization
     brand_id: uuid.UUID = Field(foreign_key="laptop_brands.id")
+    # The coarse product line this configuration belongs to (see
+    # app/laptops/family_model.py). Nullable on purpose and null by default:
+    # a null passes through family deduplication untouched, while a WRONG
+    # family_id silently hides a machine the user could have bought. Nothing
+    # guesses — POST /families/regroup surfaces the nulls as a work queue.
+    family_id: Optional[uuid.UUID] = Field(
+        default=None, foreign_key="laptop_family.id", index=True, nullable=True
+    )
     model_code: str = Field(unique=True, index=True)
     product_name: str
     release_year: Optional[int] = None
@@ -339,3 +347,9 @@ class LaptopUpdate(SQLModel):
 # LaptopPickScore needs no entry here: it is declared in this module.
 from app.laptops.customization_model import LaptopCustomization  # noqa: E402,F401
 from app.taxonomy.category_model import Category  # noqa: E402,F401
+# laptop_family is not a relationship target — laptops.family_id is a plain FK
+# column and members are read with an explicit join — but the ForeignKey still
+# names a table, and alembic/create_all can only resolve that name against a
+# table already registered in SQLModel.metadata. Importing the module here
+# guarantees it is, whichever of these modules a script enters through.
+from app.laptops.family_model import LaptopFamily  # noqa: E402,F401

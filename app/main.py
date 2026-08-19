@@ -7,6 +7,7 @@ from app.logger import setup_logging
 from app.laptops.customization_router import router as customization_router
 from app.laptops.laptop_router import router as laptops_router
 from app.laptops.brand_router import router as brands_router
+from app.laptops.family_router import router as families_router
 from app.users.router import router as users_router
 from app.users.admin_router import router as users_admin_router
 from app.scraper.router import router as scraper_router
@@ -48,7 +49,9 @@ app.add_middleware(
     # exposed. X-Total-Count carries the row count for list endpoints that
     # deliberately kept a bare-array response body (see /laptops/,
     # /benchmarks/cpu, /benchmarks/gpu) instead of a {items,total} envelope.
-    expose_headers=["X-Total-Count"],
+    # X-Unassigned-Count rides along on GET /families with the null-family
+    # backlog, so the admin screen can show it without a second round trip.
+    expose_headers=["X-Total-Count", "X-Unassigned-Count"],
 )
 
 # declare routes before including routers to avoid circular imports
@@ -56,6 +59,7 @@ app.include_router(users_router, prefix=API_PREFIX)
 app.include_router(users_admin_router, prefix=API_PREFIX)
 app.include_router(laptops_router, prefix=API_PREFIX)
 app.include_router(brands_router, prefix=API_PREFIX)
+app.include_router(families_router, prefix=API_PREFIX)
 app.include_router(customization_router, prefix=API_PREFIX)
 app.include_router(scraper_router, prefix=API_PREFIX)
 app.include_router(processor_router, prefix=API_PREFIX)

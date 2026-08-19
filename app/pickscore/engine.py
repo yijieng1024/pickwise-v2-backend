@@ -1,6 +1,6 @@
 from typing import Optional
 from app.users.models import LaptopUserPreference
-from app.pickscore.benchmark_service import resolve_benchmark
+from app.pickscore.benchmark_service import resolve_benchmark, resolve_gpu_benchmark
 from app.pickscore.schemas import ScorableProduct, FactorBreakdown, PickScoreResponse
 
 # General mode base weights (N-i rule, 8 factors)
@@ -103,21 +103,67 @@ def _score_cpu(product: ScorableProduct, ranges: dict, cpu_benchmarks: list[tupl
     return score, result
 
 
+# Why a GPU score is what it is, in the words a laptop buyer would need. Keyed
+# on resolve_gpu_benchmark's `resolution`, so the reason travels with the number
+# instead of being re-derived here -- re-deriving it would mean a second copy of
+# the key normalization, which is how the last four benchmark defects happened.
+_GPU_NOTES: dict[str, Optional[str]] = {
+    "direct": None,
+    "laptop_variant": None,
+    "apple_equivalent": (
+        "Apple Silicon GPU — PassMark has no ARM entries, so this is the "
+        "closest non-Apple laptop GPU on a benchmark both have run"
+    ),
+    "integrated": (
+        "Integrated graphics — scored via the CPU's known iGPU "
+        "(the GPU name carries no model number)"
+    ),
+    "unresolved": (
+        "GPU could not be identified — scored as neutral (50) and flagged "
+        "as unverified"
+    ),
+}
+
+
 def _score_gpu(
     product: ScorableProduct,
     ranges: dict,
     gpu_benchmarks: list[tuple[str, int]],
-    cpu_score: float,
-) -> tuple[float, bool]:
-    # Apple Silicon GPU lives on the same SoC as the CPU — PassMark has no
-    # separate GPU entries for ARM-based Apple chips, so any fuzzy match would
-    # be a false positive. Always proxy via CPU score for Apple.
-    if product.brand_name.lower() == "apple":
-        return cpu_score, True
-    result = resolve_benchmark(product.gpu_model, gpu_benchmarks)
+) -> tuple[float, bool, Optional[str]]:
+    """
+    Returns (score, is_proxy, note).
+
+    The Apple short-circuit that used to sit at the top of this function
+    returned cpu_score directly as the GPU score. Under percentile
+    normalization a top-end Apple CPU sits near the 95th percentile, so the
+    Gaming preset counted the same number twice — cpu (weight 8) and gpu
+    (weight 10), half the preset — which put the MacBook Pro M5 Max above
+    every ROG Strix SCAR. Apple GPUs now resolve through
+    _APPLE_GPU_EQUIVALENT like any other part (ADR-0010, ADR-0011).
+
+    `is_proxy` still covers three situations — an Apple cross-architecture
+    equivalent, an integrated GPU resolved through its CPU, and a GPU that
+    did not resolve at all. They share the flag because
+    get_ranking_for_use_case demotes it in the gaming sort and all three
+    deserve that demotion; the note is what keeps them distinguishable to a
+    reader. Splitting them properly means a `gpu_resolution` field on
+    PickScoreResponse.flags and a change to every consumer of it.
+    """
+    result = resolve_gpu_benchmark(product.gpu_model, product.cpu_model, gpu_benchmarks)
+    note = _GPU_NOTES.get(result.get("resolution"))
+
     if result["score"] is not None:
-        return _normalize(float(result["score"]), ranges["gpu_mark"]["min"], ranges["gpu_mark"]["max"]), False
-    return 50.0, False
+        score = _normalize(
+            float(result["score"]),
+            ranges["gpu_mark"]["min"],
+            ranges["gpu_mark"]["max"],
+        )
+        return score, result["is_proxy"], note
+
+    # was `return 50.0, False` — a neutral 50 outranks a real RTX 3050 (30.4)
+    # and RTX 4050 (48.0) on the current gpu_mark range, so an unresolved GPU
+    # must at least be flagged.
+    return 50.0, True, note
 
 
 def _score_ram_storage(product: ScorableProduct, ranges: dict) -> float:
@@ -208,7 +254,7 @@ def calculate_pick_score(
     mode = "personalized" if user_pref else "general"
 
     cpu_score, _ = _score_cpu(product, ranges, cpu_benchmarks)
-    gpu_score, gpu_is_proxy = _score_gpu(product, ranges, gpu_benchmarks, cpu_score)
+    gpu_score, gpu_is_proxy, gpu_note = _score_gpu(product, ranges, gpu_benchmarks)
     price_score, price_note = _score_price(product, user_pref, ranges, mode)
 
     factor_scores = {
@@ -224,7 +270,7 @@ def calculate_pick_score(
 
     factor_notes: dict[str, Optional[str]] = {
         "price": price_note,
-        "gpu":   "Apple Silicon GPU — proxied via CPU score (no PassMark data for ARM)" if gpu_is_proxy else None,
+        "gpu":   gpu_note,
     }
 
     weights = _compute_weights(user_pref, mode, priority_override)

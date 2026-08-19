@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.pickscore_adapter import laptop_to_scorable, get_laptop_ranges
 from app.laptops.pickscore_general import (
@@ -171,9 +171,12 @@ def get_pick_score_status(session: Session = Depends(get_session)) -> Dict[str, 
     Counts DISTINCT laptop_id: the table holds one row per laptop × use case,
     so a raw row count would report several times the catalog size.
     """
-    total_laptops = session.execute(select(func.count()).select_from(Laptop)).scalar() or 0
+    total_laptops = session.execute(select(func.count()).select_from(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)).scalar() or 0
     scored = session.execute(
         select(func.count(func.distinct(LaptopPickScore.laptop_id)))
+        .select_from(LaptopPickScore)
+        .join(Laptop, Laptop.id == LaptopPickScore.laptop_id)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)
     ).scalar() or 0
 
     return {

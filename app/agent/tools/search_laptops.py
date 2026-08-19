@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.brand_model import LaptopBrand
+from app.laptops.family_service import closest_to_budget, deduplicate_by_family
 from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
 from app.users.models import LaptopUserPreference
@@ -174,6 +175,17 @@ def _run_search(
             relaxation = relax_and_retry(user_query, constraints, session)
             ranked = relaxation.candidates if relaxation else []
 
+        # The ceiling the surviving candidates were actually retrieved under —
+        # relaxation may have raised it. Family deduplication picks the member
+        # nearest this, so it has to be the budget in force, not the one the
+        # user first said, or the representative would be chosen against a
+        # constraint no candidate was filtered by.
+        effective_budget = (
+            relaxation.relaxed_value
+            if relaxation is not None and relaxation.relaxed_field == "budget"
+            else budget_max
+        )
+
         gate = relevance_gate(ranked)
 
         try:
@@ -198,11 +210,32 @@ def _run_search(
                 "relaxation_notice": None,
             }
 
+        # Collapse configuration variants before the slice, never after: the
+        # catalog stores one row per RAM/SSD/CPU config, so a single machine
+        # can fill five of six shortlist slots and crowd out every alternative.
+        # Deduplicating after the cut would just leave a shorter list of the
+        # same one product. Laptops with no family pass through ungrouped —
+        # see family_service for why guessing is worse than leaving them.
+        #
+        # With a budget stated, each family is represented by the config
+        # nearest that budget rather than by its best-ranked (usually
+        # cheapest-matching) member, so a family spanning RM 4,500-8,000
+        # answers a RM 5,000 question and a RM 8,000 one differently.
+        deduped = deduplicate_by_family(
+            gate.candidates,
+            family_id_of=lambda rc: rc._laptop.family_id,  # type: ignore[attr-defined]
+            prefer=(
+                closest_to_budget(lambda rc: rc.price_rm, effective_budget)
+                if effective_budget is not None
+                else None
+            ),
+        )
+
         # Hard ceiling regardless of the top_k the LLM requests: every result
         # is re-sent in context on each follow-up reasoning step, so this is
         # the single biggest lever on tokens-per-minute. Six is plenty for a
         # chat shortlist (the frontend renders these as cards).
-        top = gate.candidates[: min(top_k, _MAX_RESULTS)]
+        top = deduped[: min(top_k, _MAX_RESULTS)]
 
         # PickScore failure must not take down the search itself — results
         # just go out unscored (pick_score stays absent, persisted as NULL).
