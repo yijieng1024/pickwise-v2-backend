@@ -121,15 +121,58 @@ def _score_price(
     ranges: dict,
     mode: str,
 ) -> tuple[float, Optional[str]]:
+    """
+    One curve, optionally attenuated by the user's budget.
+
+    Both modes start from the same inverse percentile of the price against the
+    catalog, and a stated budget max scales that base down once the price goes
+    over it. The personalized branch used to return a flat 100.0 for anything
+    within budget, which had two costs. It disagreed with general mode by 47
+    points on the same machine once _normalize moved to percentile (ADR-0011) —
+    the largest inconsistency in the engine, in the mode that matters most,
+    since the personalized score is the "For you" number and ADR-0006 positions
+    PickScore as a per-user buy indicator. And it made price stop discriminating
+    exactly where it should: every affordable laptop scored 100, so within a
+    budget the highest-weighted factor in office_study and general_use (weight
+    9) contributed an identical constant to every candidate.
+
+    DECAY_K keeps its meaning — zero at 50% over budget — but multiplies a real
+    score instead of subtracting from a constant.
+
+    The percentile is taken against the whole catalog, never the affordable
+    subset. Ranking a laptop only against what a particular user can afford
+    would give the same machine a different price score for every visitor, and
+    could not be precomputed or compared across users.
+
+    Note that budget["min"] is read nowhere here. Whether stating a floor should
+    lift the score of a more expensive machine is a product question and is
+    deliberately left open — with max null (the open-ended "> RM5000" band) a
+    user who said they have a high budget currently gets the plain catalog
+    curve, which rewards cheapness.
+    """
     if product.price == 0.0:
         return 50.0, "Price unavailable — factor skipped, scored as neutral (50)"
-    if mode == "personalized" and user_pref and user_pref.budget and user_pref.budget.get("max") is not None:
-        budget_max = float(user_pref.budget["max"])
-        if product.price <= budget_max:
-            return 100.0, None
-        over_ratio = (product.price - budget_max) / budget_max
-        return max(0.0, 100.0 - DECAY_K * over_ratio * 100.0), None
-    return _normalize(product.price, ranges["price"], inverse=True), None
+
+    base = _normalize(product.price, ranges["price"], inverse=True)
+
+    budget_max: Optional[float] = None
+    if mode == "personalized" and user_pref and user_pref.budget:
+        stated = user_pref.budget.get("max")
+        # A max of 0 is not a budget of nothing, it is an unusable value —
+        # treated as unstated rather than dividing by it below.
+        if stated is not None and float(stated) > 0:
+            budget_max = float(stated)
+
+    if budget_max is None or product.price <= budget_max:
+        return base, None
+
+    over_ratio = (product.price - budget_max) / budget_max
+    penalty = max(0.0, 1.0 - DECAY_K * over_ratio)
+    return base * penalty, (
+        "RM{:,.0f} is {:.0f}% over the stated RM{:,.0f} budget".format(
+            product.price, over_ratio * 100.0, budget_max
+        )
+    )
 
 
 def _score_cpu(product: ScorableProduct, ranges: dict, cpu_benchmarks: list[tuple[str, int]]) -> tuple[float, dict]:
