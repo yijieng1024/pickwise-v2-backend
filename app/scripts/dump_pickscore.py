@@ -39,8 +39,10 @@ from app.laptops.laptop_models import Laptop
 from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
 
-# Columns feeding min-max normalization. Only price_rm is guarded against zeros
-# upstream, so the rest can have their floor set by missing data.
+# Columns feeding normalization. Only price_rm is guarded against zeros
+# upstream, so the rest still carry theirs into the distribution — under
+# percentile that no longer drags a whole factor's scale, but a 0 kg laptop
+# still takes the top portability rank.
 _NORMALIZED_COLUMNS = ("price_rm", "ram_gb", "ssd_gb", "weight_kg", "battery_wh")
 
 SEP = "=" * 68
@@ -63,6 +65,10 @@ def _load_use_case_priorities():
     five times.
     """
     candidates = (
+        # Where they actually live. The three below were the guesses this
+        # script was written with; they are kept so a checkout that moves the
+        # table still resolves it.
+        ("app.laptops.pickscore_general", "USE_CASE_PRIORITIES"),
         ("app.pickscore.engine", "USE_CASE_PRIORITIES"),
         ("app.pickscore.presets", "USE_CASE_PRIORITIES"),
         ("app.pickscore.constants", "USE_CASE_PRIORITIES"),
@@ -82,7 +88,12 @@ def dump_ranges(session):
     _rule("CATALOG NORMALIZATION RANGES")
     if isinstance(ranges, dict):
         for key, value in ranges.items():
-            print("  {:<14} {}".format(key, value))
+            # `n` is the size of the sorted distribution _normalize ranks
+            # against (ADR-0011). Printing the list itself would bury this
+            # report under seven columns of ~238 floats; n=0 is the thing
+            # worth seeing, because it means that factor fell back to min-max.
+            print("  {:<14} min={:<12} max={:<12} n={}".format(
+                key, value["min"], value["max"], len(value.get("values", []))))
     else:
         print("  {}".format(ranges))
     print()
@@ -188,8 +199,10 @@ def dump_benchmark_lookup(laptop, gpu_benchmarks, cpu_benchmarks):
 
 
 def dump_breakdown(product, ranges, cpu_benchmarks, gpu_benchmarks,
-                   user_pref=None, title="PICK SCORE (general mode)"):
-    resp = calculate_pick_score(product, user_pref, ranges, cpu_benchmarks, gpu_benchmarks)
+                   user_pref=None, title="PICK SCORE (general mode)",
+                   priority_override=None):
+    resp = calculate_pick_score(product, user_pref, ranges, cpu_benchmarks,
+                                gpu_benchmarks, priority_override=priority_override)
 
     _rule("{}: {}".format(title, resp.score))
     print("  {:<22}{:>12}{:>15}".format("factor", "raw_score", "contribution"))
@@ -217,12 +230,14 @@ def dump_use_cases(product, ranges, cpu_benchmarks, gpu_benchmarks):
 
     for case_name, priorities in presets.items():
         print("  {}: {}".format(case_name, priorities))
-        # Adapt this call if the engine consumes presets in a different shape
-        # than a preference object. The comparison below is the actual point.
+        # priority_override, NOT user_pref: a use-case profile is a general-mode
+        # base-weight swap. Passing it as user_pref flips the engine into
+        # personalized mode and then dereferences .budget on a plain dict.
         raw_by_case[case_name] = dump_breakdown(
             product, ranges, cpu_benchmarks, gpu_benchmarks,
-            user_pref=priorities,
+            user_pref=None,
             title="PICK SCORE ({})".format(case_name),
+            priority_override=priorities,
         )
 
     # The question this whole section exists to answer.

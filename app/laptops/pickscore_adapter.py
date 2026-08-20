@@ -26,74 +26,119 @@ def laptop_to_scorable(laptop: Laptop, brand_name: str) -> ScorableProduct:
     )
 
 
+def _distribution(values: list[float]) -> dict:
+    """
+    One factor's range: the sorted value list the engine ranks against, plus
+    the min and max that list implies.
+
+    `values` is the whole distribution because _normalize scores by percentile
+    rank (ADR-0011) — min-max made each factor's scale a function of exactly
+    two rows, and for price, capacity and weight those two rows are outliers.
+    `min`/`max` are kept because _score_price's personalized branch and the
+    diagnostic scripts still read them, and because they are the min-max
+    fallback _normalize uses if a distribution is ever missing.
+
+    One entry per laptop, not per distinct value: a configuration that eight
+    machines share should weigh eight times as much on the curve as one that
+    is unique.
+    """
+    if not values:
+        return {"min": 0.0, "max": 0.0, "values": []}
+    ordered = sorted(values)
+    return {"min": ordered[0], "max": ordered[-1], "values": ordered}
+
+
 def get_laptop_ranges(session: Session, force_refresh: bool = False) -> dict:
     if not force_refresh:
         cached = get_cached_ranges(_CACHE_KEY)
         if cached:
             return cached
 
-    laptop_row = session.execute(
+    # One row per active laptop, and every distribution is built from it, so
+    # the min/max can never disagree with the values list they summarize.
+    catalog_rows = session.execute(
         sa_select(
-            # price_rm = 0 means "price unknown" (scored neutral 50 by the
-            # engine) — it must not drag the min down or every real price
-            # normalizes against a fictional free laptop.
-            func.min(Laptop.price_rm).filter(Laptop.price_rm > 0),
-            func.max(Laptop.price_rm),
-            func.min(Laptop.ram_gb),    func.max(Laptop.ram_gb),
-            func.min(Laptop.ssd_gb),    func.max(Laptop.ssd_gb),
-            func.min(Laptop.weight_kg), func.max(Laptop.weight_kg),
-            func.min(Laptop.battery_wh),func.max(Laptop.battery_wh),
+            Laptop.price_rm, Laptop.ram_gb, Laptop.ssd_gb,
+            Laptop.weight_kg, Laptop.battery_wh,
+            Laptop.processor_model, Laptop.gpu_model,
         ).where(Laptop.status == LaptopStatus.ACTIVE.value)
-    ).one()
+    ).all()
 
     # Fetch full benchmark lists once
     cpu_benchmarks = [(r.cpu_name, r.cpu_mark) for r in session.exec(select(CPUBenchmark)).all()]
     gpu_benchmarks = [(r.gpu_name, r.gpu_mark) for r in session.exec(select(GPUBenchmark)).all()]
 
     # Resolve benchmark scores for laptops actually in the catalog so the
-    # normalization range reflects laptop-class hardware, not desktop/server CPUs
-    catalog_rows = session.execute(sa_select(Laptop.processor_model, Laptop.gpu_model)
-                                   .where(Laptop.status == LaptopStatus.ACTIVE.value)
-                                   ).all()
-    cpu_models = {row[0] for row in catalog_rows if row[0]}
-    # (cpu, gpu) pairs, not GPU strings alone: an anchorless GPU name is only
-    # resolvable through the CPU it is fused to, so the range layer has to ask
-    # the same question the engine asks. Sharing resolve_gpu_benchmark is also
-    # what keeps Apple out of the denominator without a brand special-case —
-    # "10-core GPU" has no anchor, Apple has no integrated-GPU row, so it
-    # resolves to None and never reaches min()/max().
-    gpu_pairs = {(row[0], row[1]) for row in catalog_rows if row[1]}
+    # normalization range reflects laptop-class hardware, not desktop/server
+    # CPUs. Memoized on the model string / (cpu, gpu) pair so the per-laptop
+    # distribution costs the same number of fuzzy matches the old per-distinct
+    # -model range did.
+    _cpu_marks: dict[str, object] = {}
+    _gpu_marks: dict[tuple, object] = {}
 
-    cpu_scores = [
-        r["score"] for model in cpu_models
-        if (r := resolve_benchmark(model, cpu_benchmarks))["score"] is not None
-    ]
-    gpu_scores = [
-        r["score"] for cpu, gpu in gpu_pairs
-        if (r := resolve_gpu_benchmark(gpu, cpu, gpu_benchmarks))["score"] is not None
-    ]
+    def cpu_mark(model: str):
+        if model not in _cpu_marks:
+            _cpu_marks[model] = resolve_benchmark(model, cpu_benchmarks)["score"]
+        return _cpu_marks[model]
 
-    # Fall back to global table range if no catalog laptops matched
-    if cpu_scores:
-        cpu_min, cpu_max = min(cpu_scores), max(cpu_scores)
-    else:
+    def gpu_mark(cpu: str, gpu: str):
+        # (cpu, gpu) pairs, not GPU strings alone: an anchorless GPU name is
+        # only resolvable through the CPU it is fused to, so the range layer
+        # has to ask the same question the engine asks. Sharing
+        # resolve_gpu_benchmark is also what keeps an unresolvable GPU out of
+        # the denominator without a brand special-case.
+        key = (cpu, gpu)
+        if key not in _gpu_marks:
+            _gpu_marks[key] = resolve_gpu_benchmark(gpu, cpu, gpu_benchmarks)["score"]
+        return _gpu_marks[key]
+
+    prices: list[float] = []
+    rams: list[float] = []
+    storages: list[float] = []
+    weights: list[float] = []
+    batteries: list[float] = []
+    cpu_scores: list[float] = []
+    gpu_scores: list[float] = []
+
+    for price_rm, ram_gb, ssd_gb, weight_kg, battery_wh, cpu_model, gpu_model in catalog_rows:
+        # price_rm = 0 means "price unknown" (scored neutral 50 by the engine)
+        # — it must not drag the floor down or every real price normalizes
+        # against a fictional free laptop.
+        if price_rm is not None and price_rm > 0:
+            prices.append(float(price_rm))
+        for bucket, value in ((rams, ram_gb), (storages, ssd_gb),
+                              (weights, weight_kg), (batteries, battery_wh)):
+            if value is not None:
+                bucket.append(float(value))
+
+        if cpu_model and (mark := cpu_mark(cpu_model)) is not None:
+            cpu_scores.append(float(mark))
+        if gpu_model and (mark := gpu_mark(cpu_model or "", gpu_model)) is not None:
+            gpu_scores.append(float(mark))
+
+    # Fall back to the global benchmark table if no catalog laptop resolved.
+    # There is no per-laptop distribution to fall back to in that case, so the
+    # empty `values` list sends _normalize down its min-max path.
+    if not cpu_scores:
         fallback = session.execute(sa_select(func.min(CPUBenchmark.cpu_mark), func.max(CPUBenchmark.cpu_mark))).one()
-        cpu_min, cpu_max = fallback[0] or 0, fallback[1] or 0
-
-    if gpu_scores:
-        gpu_min, gpu_max = min(gpu_scores), max(gpu_scores)
+        cpu_range = {"min": float(fallback[0] or 0), "max": float(fallback[1] or 0), "values": []}
     else:
+        cpu_range = _distribution(cpu_scores)
+
+    if not gpu_scores:
         fallback = session.execute(sa_select(func.min(GPUBenchmark.gpu_mark), func.max(GPUBenchmark.gpu_mark))).one()
-        gpu_min, gpu_max = fallback[0] or 0, fallback[1] or 0
+        gpu_range = {"min": float(fallback[0] or 0), "max": float(fallback[1] or 0), "values": []}
+    else:
+        gpu_range = _distribution(gpu_scores)
 
     ranges = {
-        "price":      {"min": laptop_row[0] or 0.0, "max": laptop_row[1] or 0.0},
-        "ram_gb":     {"min": laptop_row[2] or 0,   "max": laptop_row[3] or 0},
-        "storage_gb": {"min": laptop_row[4] or 0,   "max": laptop_row[5] or 0},
-        "weight_kg":  {"min": laptop_row[6] or 0.0, "max": laptop_row[7] or 0.0},
-        "battery_wh": {"min": laptop_row[8] or 0.0, "max": laptop_row[9] or 0.0},
-        "cpu_mark":   {"min": cpu_min, "max": cpu_max},
-        "gpu_mark":   {"min": gpu_min, "max": gpu_max},
+        "price":      _distribution(prices),
+        "ram_gb":     _distribution(rams),
+        "storage_gb": _distribution(storages),
+        "weight_kg":  _distribution(weights),
+        "battery_wh": _distribution(batteries),
+        "cpu_mark":   cpu_range,
+        "gpu_mark":   gpu_range,
     }
     set_cached_ranges(_CACHE_KEY, ranges)
     return ranges

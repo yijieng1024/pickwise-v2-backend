@@ -178,10 +178,10 @@ def build_distributions(session, ranges, cpu_bm, gpu_bm):
     """
     One sorted value list per factor, keyed by the factor's (min, max) pair.
 
-    The engine's `_normalize(value, min_val, max_val, inverse)` does not say
-    which factor it is scoring, and every `_score_*` funnels through it. Keying
-    on the range pair lets one patched function serve all six factors without
-    touching engine code — the alternative, reimplementing the scoring here,
+    The engine's `_normalize(value, factor_range, inverse)` does not say which
+    factor it is scoring, and every `_score_*` funnels through it. Keying on
+    the range's (min, max) pair lets one patched function serve all six factors
+    without touching engine code — the alternative, reimplementing the scoring here,
     would risk diverging from the engine, which is the exact class of bug the
     last two days were spent removing.
     """
@@ -230,16 +230,28 @@ def build_distributions(session, ranges, cpu_bm, gpu_bm):
 def patch_normalize(curve, by_range):
     """
     `curve` is either one function applied to every factor, or a dict mapping
-    range name to function. The engine's `_normalize` does not say which factor
-    it is scoring, so the (min, max) pair identifies it — build_distributions
-    asserts that pair is unique.
+    range name to function.
+
+    The engine's `_normalize` takes the factor's whole range dict but still
+    does not say which factor that is, so the (min, max) pair inside it
+    identifies the factor — build_distributions asserts that pair is unique.
+
+    The distribution handed to the curve is this script's own
+    (build_distributions), never `factor_range["values"]`. That is the point:
+    since ADR-0011 the engine computes percentile itself, so reusing its list
+    would make the 'percentile' column a tautology instead of an independent
+    check on the implementation.
     """
-    def patched(value, min_val, max_val, inverse=False):
-        if value is None or max_val <= min_val:
+    def patched(value, factor_range, inverse=False):
+        if value is None:
             return 50.0
-        factor, dist = by_range.get((float(min_val), float(max_val)), (None, []))
+        min_val = float((factor_range or {}).get("min", 0.0))
+        max_val = float((factor_range or {}).get("max", 0.0))
+        if max_val <= min_val:
+            return 50.0
+        factor, dist = by_range.get((min_val, max_val), (None, []))
         fn = curve.get(factor, curve_minmax) if isinstance(curve, dict) else curve
-        score = fn(float(value), float(min_val), float(max_val), dist)
+        score = fn(float(value), min_val, max_val, dist)
         return 100.0 - score if inverse else score
 
     pickscore_engine._normalize = patched
@@ -388,7 +400,14 @@ def main():
         for key, value in ranges.items():
             _, values = by_range.get(
                 (float(value["min"]), float(value["max"])), (None, []))
-            print("  {:<14}{}   n={}".format(key, value, len(values)))
+            # min/max only: since ADR-0011 the range dict also carries the
+            # engine's own sorted value list, and printing it would bury the
+            # report under seven lists of ~238 floats. `n` is this script's
+            # independently built distribution; `engine_n` is the engine's, and
+            # the two disagreeing is itself a finding.
+            print("  {:<14}{{'min': {}, 'max': {}}}   n={}  engine_n={}".format(
+                key, value["min"], value["max"], len(values),
+                len(value.get("values", []))))
         print()
 
         per_curve_scores, per_curve_raws = {}, {}
