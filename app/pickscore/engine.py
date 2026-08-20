@@ -1,3 +1,4 @@
+import bisect
 from typing import Optional
 from app.users.models import LaptopUserPreference
 from app.pickscore.benchmark_service import resolve_benchmark, resolve_gpu_benchmark
@@ -53,12 +54,46 @@ PORTABILITY_MULTIPLIERS: dict[str, float] = {
 DECAY_K = 2
 
 
-def _normalize(value: Optional[float], min_val: float, max_val: float, inverse: bool = False) -> float:
+def _normalize(value: Optional[float], factor_range: dict, inverse: bool = False) -> float:
+    """
+    Percentile rank within the catalog's distribution for this factor.
+
+    `factor_range` is one entry of get_laptop_ranges' dict — {"min", "max",
+    "values"}, where `values` is that factor's sorted value across every active
+    laptop. It is passed whole rather than as two scalars because ranking needs
+    the distribution, not the bounds.
+
+    This replaced min-max (ADR-0011). Min-max set each factor's scale from
+    exactly two rows, and for price, ram/storage and weight those two rows are
+    outliers — one RM36,999 workstation, one 128GB/4TB configuration, one
+    3.73 kg desktop replacement. The measured effect was that price spread only
+    34 points across the catalog while gpu spread 77, so the presets weighted
+    the eight factors as though they were comparable when they were not, and a
+    gaming laptop scored highest on Office & Study.
+
+    The min-max branch below is a fallback for a range dict with no
+    distribution — the benchmark-table fallback in get_laptop_ranges, or a
+    partially populated dict from a caller that predates this change. The
+    engine must not fail on one, and min-max is still better than a flat 50.
+    """
     if value is None:
         return 50.0
-    if max_val <= min_val:
-        return 50.0
-    score = (value - min_val) / (max_val - min_val) * 100.0
+
+    values = factor_range.get("values") if factor_range else None
+    if values:
+        value = float(value)
+        # Midpoint of the tied block, so two identical configurations score
+        # identically instead of depending on sort order.
+        below = bisect.bisect_left(values, value)
+        equal = bisect.bisect_right(values, value) - below
+        score = (below + equal / 2.0) / len(values) * 100.0
+    else:
+        min_val = float((factor_range or {}).get("min", 0.0))
+        max_val = float((factor_range or {}).get("max", 0.0))
+        if max_val <= min_val:
+            return 50.0
+        score = (float(value) - min_val) / (max_val - min_val) * 100.0
+
     score = max(0.0, min(100.0, score))
     return 100.0 - score if inverse else score
 
@@ -94,12 +129,12 @@ def _score_price(
             return 100.0, None
         over_ratio = (product.price - budget_max) / budget_max
         return max(0.0, 100.0 - DECAY_K * over_ratio * 100.0), None
-    return _normalize(product.price, ranges["price"]["min"], ranges["price"]["max"], inverse=True), None
+    return _normalize(product.price, ranges["price"], inverse=True), None
 
 
 def _score_cpu(product: ScorableProduct, ranges: dict, cpu_benchmarks: list[tuple[str, int]]) -> tuple[float, dict]:
     result = resolve_benchmark(product.cpu_model, cpu_benchmarks)
-    score = _normalize(float(result["score"]), ranges["cpu_mark"]["min"], ranges["cpu_mark"]["max"]) if result["score"] is not None else 50.0
+    score = _normalize(float(result["score"]), ranges["cpu_mark"]) if result["score"] is not None else 50.0
     return score, result
 
 
@@ -153,11 +188,7 @@ def _score_gpu(
     note = _GPU_NOTES.get(result.get("resolution"))
 
     if result["score"] is not None:
-        score = _normalize(
-            float(result["score"]),
-            ranges["gpu_mark"]["min"],
-            ranges["gpu_mark"]["max"],
-        )
+        score = _normalize(float(result["score"]), ranges["gpu_mark"])
         return score, result["is_proxy"], note
 
     # was `return 50.0, False` — a neutral 50 outranks a real RTX 3050 (30.4)
@@ -167,19 +198,19 @@ def _score_gpu(
 
 
 def _score_ram_storage(product: ScorableProduct, ranges: dict) -> float:
-    ram_score = _normalize(float(product.ram_gb), ranges["ram_gb"]["min"], ranges["ram_gb"]["max"])
-    storage_score = _normalize(float(product.storage_gb), ranges["storage_gb"]["min"], ranges["storage_gb"]["max"])
+    ram_score = _normalize(float(product.ram_gb), ranges["ram_gb"])
+    storage_score = _normalize(float(product.storage_gb), ranges["storage_gb"])
     if product.storage_type and "hdd" in product.storage_type.lower():
         storage_score = max(0.0, storage_score - 15.0)
     return ram_score * 0.6 + storage_score * 0.4
 
 
 def _score_portability(product: ScorableProduct, ranges: dict) -> float:
-    return _normalize(product.weight_kg, ranges["weight_kg"]["min"], ranges["weight_kg"]["max"], inverse=True)
+    return _normalize(product.weight_kg, ranges["weight_kg"], inverse=True)
 
 
 def _score_battery(product: ScorableProduct, ranges: dict) -> float:
-    return _normalize(product.battery_wh, ranges["battery_wh"]["min"], ranges["battery_wh"]["max"])
+    return _normalize(product.battery_wh, ranges["battery_wh"])
 
 
 def _score_screen_size(product: ScorableProduct, user_pref: Optional[LaptopUserPreference], mode: str) -> float:
