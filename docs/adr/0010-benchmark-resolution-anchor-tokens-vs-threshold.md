@@ -1,6 +1,6 @@
 # ADR-0010: Resolve benchmarks by structure, not by confidence
 
-- **Status:** Accepted
+- **Status:** Accepted — amended 2026-08-21 (see Amendment)
 - **Date:** 2026-08-17
 - **Related:** ADR-0004 (gating threshold 0.53), ADR-0006 (PickScore positioning),
   ADR-0009 (laptop status), ADR-0011 (normalization curve)
@@ -303,11 +303,12 @@ no signal that it happened, and it would have to be re-applied before every
 range recalculation to keep the engine and the ranges consistent.
 
 **Proxying integrated GPUs through the CPU score the way Apple rows are.** The
-Apple branch returns `cpu_score` directly as the GPU score, which is defensible
-for an ARM SoC where PassMark has no separate GPU entry. Applied to x86 it
-would be badly wrong: a Ryzen AI 7 350 has a strong CPU and an integrated GPU
-nowhere near a discrete part. The map resolves CPU → iGPU *name* and then looks
-that name up normally, so the middle step is not skipped.
+Apple branch returned `cpu_score` directly as the GPU score, which looked
+defensible for an ARM SoC where PassMark has no separate GPU entry. Applied to
+x86 it would be badly wrong: a Ryzen AI 7 350 has a strong CPU and an
+integrated GPU nowhere near a discrete part. The map resolves CPU → iGPU *name*
+and then looks that name up normally, so the middle step is not skipped.
+*Amended 2026-08-21: the Apple branch itself was removed. See the Amendment.*
 
 **Fuzzy-matching inside the laptop-variant rule.** The rule compares exactly
 after removing the suffix. A fuzzy comparison would let `rtx 5070` match
@@ -319,3 +320,87 @@ Unresolved was never what actually happened: `AMD Radeon Graphics` resolved to
 75 across 25 laptops and `Intel Arc Graphics` to a generic 3,211 across 13, so
 "left unresolved" meant "resolved to something arbitrary". The precision does
 exist — just not in the GPU string.
+
+## Amendment — 2026-08-21
+
+Three things were added after this ADR was accepted. Two of them are further
+instances of its central claim, and one closes a case it had left as
+defensible.
+
+### The Apple proxy was removed, not kept
+
+The decision above left `_score_gpu`'s Apple branch in place, returning
+`cpu_score` as the GPU score on the grounds that PassMark has no ARM entries to
+point at. ADR-0011 showed why that could not survive percentile normalization:
+a top-end Apple CPU sits near the 95th percentile, so Gaming counted the same
+number twice — cpu at weight 8 and gpu at weight 10, half the preset.
+
+The fix is the same shape as `_INTEGRATED_GPU_BY_CPU`. `_APPLE_GPU_EQUIVALENT`
+maps each of the seven Apple GPU strings to the laptop part that scored closest
+to it on a benchmark both have run — 3DMark Steel Nomad and Steel Nomad Light,
+which Notebookcheck publishes for Apple and NVIDIA/Intel parts side by side.
+Unlike the integrated map it is keyed on the *GPU* string, because Apple's core
+count identifies the part where "AMD Radeon Graphics" does not.
+
+| Catalog string | Anchor | Mark | Evidence |
+|---|---|---|---|
+| 40-core GPU | RTX 5070 Ti Laptop | 22,465 | SNL 17,022 vs 17,324 (−1.7%); SN 4,158 vs 3,865 |
+| 32-core GPU | RTX 5070 Laptop | 19,146 | ratio from the 40-core, cross-source |
+| 20-core GPU | RTX 4060 Laptop | 17,367 | SNL 10,018 vs 9,584 (+4.5%) |
+| 16-core GPU | RTX 5050 Laptop | 14,176 | no published benchmark; M4's 16-of-20 cut, ratio 0.857 |
+| 10-core GPU | Adreno X2-90 | 7,618 | SN 1,125 vs 1,180 (−4.7%) |
+| 8-core GPU | Intel Arc 140T GPU | 6,607 | SN 941 vs 812 |
+| 5-core GPU | Intel UHD Graphics | 1,533 | below every laptop GPU with an SNL score; class placement |
+
+These are cross-architecture estimates, not measurements of the same silicon,
+and two of the seven are derived rather than observed. That is worse precision
+than the integrated map and better than what it replaced — a number that was
+not a GPU measurement at all.
+
+### Two more mismatches at high confidence
+
+The section above lists four defects that a confidence threshold could not
+catch. Building the Apple map produced two more, both in map targets rather
+than catalog strings, and both at or near maximum confidence:
+
+| Target as written | Resolved | Should have been | Confidence |
+|---|---|---|---|
+| `NVIDIA RTX 500 Ada Generation Laptop GPU` | 11,193 | — | 0.95 |
+| `Intel Arc 140T` | 5,634 | `Intel Arc 140T GPU`, 6,607 | 1.0 |
+
+The first was chosen by Steel Nomad proximity and turned out to have a G3D mark
+far out of line with it — the 8-core Apple GPU ended up scoring 47% *above* the
+stronger 10-core. The second is the same silicon listed twice by PassMark under
+names differing by one word, 17% apart, with the shorter name matching exactly.
+
+Neither is detectable from a score. Together with the original four they bring
+the count to six mismatches at 0.855, 0.855, 0.95, 1.0, 1.0 and 1.0 — the
+evidence for the central claim is now stronger than when it was written.
+
+### The validator asserts identity, not similarity
+
+`audit_integrated_gpu.py --validate-only` originally passed an entry if it
+resolved above a confidence floor. That is the wrong test, and the `Intel Arc
+140T` case is why: it resolved at confidence 1.0 to the wrong row.
+`resolve_benchmark` now returns `matched_name`, and the assertion is
+`matched_name == target`. A map target is a name we chose from the table, so
+exact equality is available here in a way it never is for a catalog string.
+
+Two further checks were added because name resolution alone cannot see either:
+
+- **Apple ladder monotonicity.** Core count and resolved mark must move
+  together. The 8-core-above-10-core inversion passed every name check.
+- **Ambiguous targets.** Any target that is a strict prefix of another
+  benchmark row is flagged. Six exist — `Intel Arc`, `Intel Arc 140V GPU`,
+  `Intel Iris Xe`, `Intel UHD Graphics`, `Radeon 610M`, `Radeon 660M` — and all
+  six currently resolve correctly by exact match, so this measures fragility
+  rather than error. It would fire the moment PassMark renamed or removed one
+  of those rows.
+
+### A limit worth recording
+
+The per-CPU sibling rows show that a generic benchmark row is an aggregate, not
+a measurement of one machine: `Radeon 610M` ranges from 1,237 to 5,947 across
+the CPUs it ships with, 4.8×. Nine map entries point at generic rows of this
+kind. The map resolves *which part*, not *how that part performs in this
+chassis*, and no amount of care in choosing the target changes that.

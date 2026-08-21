@@ -1,6 +1,6 @@
 # ADR-0009: A `status` column with two kinds of hidden
 
-- **Status:** Accepted
+- **Status:** Accepted — amended 2026-08-21 (see Amendment)
 - **Date:** 2026-08-17
 - **Related:** ADR-0006 (PickScore positioning — supersedes one of its
   decisions), ADR-0010 (benchmark resolution), ADR-0011 (normalization curve)
@@ -142,15 +142,8 @@ four other ranges since changed underneath them.
 
 **Known gaps**
 
-- The enum was written with the value `suspend` while the data holds
-  `suspended`, which is also what `users.status` uses. One of the two has to
-  move; `suspended` is the better target, since two columns of the same name
-  and meaning holding different strings will silently break any query, helper
-  or admin component that spans both tables.
-- The 409 message from the delete guard reads "Set status to 'inactive' to
-  retire it instead." By the semantics above, retiring is `suspended`;
-  `inactive` is the price queue. As written, the guard teaches callers to file
-  discontinued machines into a queue for a price that will never come.
+- *Resolved 2026-08-21, see Amendment:* the `suspend`/`suspended` split, and
+  the 409 message naming the wrong state.
 - `laptop_pick_scores.breakdown` and `flags` are Postgres `json` rather than
   `jsonb`, so the staleness and fallback checks above need an explicit cast and
   cannot use an index. Worth a migration only if those checks become routine.
@@ -182,3 +175,38 @@ silently un-retires discontinued machines.
 **Regenerating pick scores for every status.** Considered and rejected above:
 promotion forces a full regeneration regardless, so the extra rows would be
 recomputed the moment they became visible.
+
+## Amendment — 2026-08-21
+
+Two of the known gaps above were left as observations rather than decisions.
+Both are resolved here, and one measurement has moved.
+
+**The enum value is `suspended`.** The code was written `suspend` while the
+data holds `suspended`, which is also what `users.status` uses. Aligning on
+`suspended` is not cosmetic: two columns of the same name and meaning holding
+different strings will silently break any query, helper or admin component
+that spans both tables, and a plain VARCHAR gives no constraint to catch it.
+The code moves to match the data, since the data is already correct and
+already deployed.
+
+**The delete guard's 409 message names `suspended`, not `inactive`.** As
+originally written it read "Set status to 'inactive' to retire it instead",
+which by this ADR's own semantics files a discontinued machine into a queue
+for a price that will never arrive. The two hidden states exist precisely so
+that this distinction survives, and the one message a caller sees at the moment
+of choosing between them was pointing at the wrong one.
+
+**What the surrounding work confirmed.** Family deduplication and percentile
+normalization both shipped on 2026-08-17 against a catalog whose status
+assignments held through deployment — the production ranking reproduced the
+local scores exactly, which it could not have done if `server_default='active'`
+had silently flattened the 24 suspended and 12 inactive rows into the range
+calculation. The replay step this ADR warns about was necessary and was done.
+
+**One path this ADR did not enumerate.** It lists where the status filter is
+applied but does not mention that personalized PickScores are persisted
+per-thread: `search_laptops` scores personalized when the requesting user has a
+preference row, and `agent/router.py:135` writes that number into
+`conversation_laptops.pick_score`. That is a snapshot, refreshed by the thread's
+next search, so it is stale for the same reason and on the same terms as the
+non-active rows in `laptop_pick_scores` — accepted rather than backfilled.

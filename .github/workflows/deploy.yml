@@ -16,6 +16,7 @@ on:
       - README.md
       - Progress.md
       - eval/runs
+      - docs/**
 
 env:
   REGISTRY: ghcr.io

@@ -1,6 +1,6 @@
 # ADR-0011: Normalize by percentile rank, not by min-max
 
-- **Status:** Accepted
+- **Status:** Implemented 2026-08-17, verified — see Implementation
 - **Date:** 2026-08-17
 - **Related:** ADR-0006 (PickScore positioning — this closes its outstanding
   diagnosis), ADR-0009 (laptop status), ADR-0010 (benchmark resolution)
@@ -200,10 +200,13 @@ see below.
   when nothing about the machine changed. Either it should require a margin
   over the runner-up, or the five bars should be shown without a winner. This
   is not a normalization problem and is not fixed here.
-- `_score_price` in personalized mode never reaches `_normalize` at all: within
-  a stated budget it returns a flat 100.0, which is zero discrimination, and
-  above it decays by `DECAY_K`. So personalized and general mode now use two
-  entirely different price curves. This needs its own decision.
+- *Resolved on implementation:* `_score_price` in personalized mode never
+  reached `_normalize` at all — within a stated budget it returned a flat
+  100.0, zero discrimination, so the two modes disagreed by 47 points on the
+  same machine. It now takes the same percentile base and applies `DECAY_K` as
+  a multiplier on it. What remains undecided is the open-ended `> RM5000`
+  band, where `max` is null so the personalized branch does not engage at all
+  and the score still rewards cheapness for a user who said the opposite.
 - `screen_size` and `brand` return a constant 50 in general mode. They
   contribute no discrimination and only dilute the other factors — 6 of 43
   weight in `general_use`, about 14%, spent on two constants.
@@ -244,3 +247,50 @@ so the presets stop distinguishing anything rather than ranking correctly. Gap
 size was the wrong success criterion. The right one is whether a machine scores
 highest on its own use case, and only full percentile achieves that (Gaming 62,
 six points clear of General Use at 56).
+
+## Implementation — 2026-08-17
+
+Shipped the same day, together with family deduplication and the personalized
+price fix, and deployed on 2026-08-17.
+
+**Verified against an independent implementation.** All 238 active laptops × 5
+use cases were compared between the engine and `simulate_normalization.py`'s
+patched curve: 1,190 comparisons, 0 differences. The reference machine's five
+scores landed exactly on the values predicted above (57 / 59 / 62 / 61 / 56),
+which they could not have if the engine and the simulation disagreed.
+
+**The raw scores, which are the finding in one column:**
+
+| Factor | min-max | percentile | What min-max was claiming |
+|---|---|---|---|
+| price | 87.4 | **52.9** | that an RM5,899 machine is cheap |
+| ram_storage | 15.3 | **50.5** | that 16GB/1TB is a poor configuration |
+| portability | 52.0 | **20.0** | that 2.2 kg is mid-weight |
+| cpu | 52.8 | 70.6 | |
+| gpu | 57.0 | 75.8 | |
+| battery | 84.2 | 84.9 | |
+
+Min-max described this machine as cheap, poorly specified and of middling
+weight. It is mid-priced, median-specified and heavy.
+
+**Where it showed.** Office & Study shares 1 of 10 entries with its previous
+top ten; Gaming shares 7 of 10, because that list rides `gpu`, whose spread
+barely moved. The change landed exactly where the effective-variance diagnosis
+said it would, and nowhere else.
+
+**The Apple branch was resolved differently from the way this ADR framed it.**
+The decision above offered two routes — stop the proxy being a GPU score, or
+make the demotion follow the gpu weight. Neither was taken. Instead Apple GPUs
+now resolve to real benchmark equivalents through `_APPLE_GPU_EQUIVALENT`
+(ADR-0010), so there is no proxy to demote: the double-count cannot arise
+because the GPU score is no longer the CPU score. On the deployed ranking the
+16" MacBook Pro M5 Max does not appear in Gaming's top ten at all, and it
+leads `creative_work` on a measured GPU equivalent rather than a duplicated
+CPU number — which is a defensible result rather than a distortion.
+
+**Two figures in the tables above have since drifted.** The `gpu` min-max
+spread now reads 64.8 rather than 76.5 and the percentile spread 81.5 rather
+than 79.5, because the eighteen Apple machines entered the gpu distribution
+when their equivalents landed. The reference machine's scores reproduce under
+both curves regardless, so the evidence stands; the spread figures are a
+snapshot of a catalog that has changed underneath them.
