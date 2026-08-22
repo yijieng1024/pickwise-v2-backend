@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.common.pagination_service import (
@@ -29,6 +29,7 @@ from app.reviews.models import (
 from app.reviews.matcher import match_laptop
 from app.reviews.processor import process_raw_review
 from app.reviews.service import ingest_bulk, ingest_for_laptop
+from app.reviews.transcript import TERMINAL_FAILURES, fetch_transcript
 from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])

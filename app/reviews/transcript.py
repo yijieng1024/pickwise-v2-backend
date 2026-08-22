@@ -17,6 +17,7 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
+_PROXY_WARNED = False
 
 class TranscriptFailure(str, Enum):
     """Why a transcript fetch produced nothing.
@@ -133,11 +134,12 @@ def fetch_transcript(video_id: str) -> TranscriptResult:
             failure = TranscriptFailure.UNKNOWN
         logger.warning(
             "Transcript fetch failed for %s: %s (%s) → %s",
-            video_id, name, e, failure.value,
+            video_id, name, failure.value, str(e).split("\n")[0],
         )
         return TranscriptResult(None, failure)
 
 def _build_api() -> YouTubeTranscriptApi:
+    global _PROXY_WARNED
     if settings.webshare_proxy_username and settings.webshare_proxy_password:
         return YouTubeTranscriptApi(
             proxy_config=WebshareProxyConfig(
@@ -161,4 +163,9 @@ def _build_api() -> YouTubeTranscriptApi:
         "Webshare proxy not configured — using a direct connection. "
         "This works locally but will be IP-blocked on Render."
     )
+
+    if not _PROXY_WARNED:
+        logger.warning("Webshare proxy not configured — ...")
+        _PROXY_WARNED = True
+
     return YouTubeTranscriptApi()
