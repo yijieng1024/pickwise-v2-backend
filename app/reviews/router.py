@@ -460,3 +460,59 @@ def aggregate_laptop(
         "strengths": summary.aggregated_strengths,
         "weaknesses": summary.aggregated_weaknesses,
     }
+
+@router.post("/retry-transcripts")
+def retry_transcripts(
+    limit: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """
+    Re-fetch transcripts for rejected reviews whose failure was operational
+    rather than a genuine caption gap. Costs zero YouTube API quota — the
+    transcript endpoint is not metered — which is why this is separate from
+    ingest, where a retry would first pay 100 units per channel for a search
+    it does not need.
+
+    Rows with failure_reason NULL are included: they predate the field, so
+    their reason was erased by the old blanket exception handler and we
+    cannot assume they were terminal.
+    """
+    terminal = {f.value for f in TERMINAL_FAILURES}
+
+    candidates = session.exec(
+        select(RawYoutubeReview)
+        .where(RawYoutubeReview.status == "rejected")
+        .where(
+            or_(
+                RawYoutubeReview.failure_reason.is_(None),      # type: ignore[union-attr]
+                RawYoutubeReview.failure_reason.notin_(terminal),  # type: ignore[union-attr]
+            )
+        )
+        .order_by(RawYoutubeReview.created_at, RawYoutubeReview.id)  # type: ignore[arg-type]
+        .limit(limit)
+    ).all()
+
+    recovered, still_failing = 0, {}
+    for review in candidates:
+        result = fetch_transcript(review.video_id)
+        review.transcript_attempts += 1
+        if result.ok:
+            review.raw_transcript = {"segments": result.segments}
+            review.transcript_language = result.language_code
+            review.failure_reason = None
+            review.status = "pending"   # deliberately NOT "matched"
+            recovered += 1
+        else:
+            review.failure_reason = result.failure.value
+            still_failing[result.failure.value] = (
+                still_failing.get(result.failure.value, 0) + 1
+            )
+        session.add(review)
+
+    session.commit()
+    return {
+        "attempted": len(candidates),
+        "recovered": recovered,
+        "still_failing": still_failing,
+    }

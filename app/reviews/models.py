@@ -35,6 +35,21 @@ class RawYoutubeReview(SQLModel, table=True):
     match_confidence: Optional[float] = None
     status: str = Field(default="pending")  # pending | matched | rejected
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Why the fetch produced no transcript. NULL means "never recorded" —
+    # every row ingested before this field existed. Those are treated as
+    # retryable once, because the old code erased the reason.
+    failure_reason: Optional[str] = Field(default=None, nullable=True, index=True)
+    # Source language of the stored transcript, e.g. 'en-US', 'zh-Hans'.
+    # The processor needs this to decide paraphrase language.
+    transcript_language: Optional[str] = Field(default=None, nullable=True)
+    # server_default, not just default=0: SQLModel's `default` is applied in
+    # Python at insert time, so autogenerate would emit a bare
+    # `ADD COLUMN ... NOT NULL` — which Postgres refuses on a table that
+    # already has rows. The server default also keeps the model matching the
+    # live column, which is what `alembic check` compares against.
+    transcript_attempts: int = Field(
+        default=0, sa_column_kwargs={"server_default": "0"}
+    )
 
 
 class LaptopReviewChunk(SQLModel, table=True):
@@ -67,7 +82,6 @@ class LaptopReviewSummary(SQLModel, table=True):
     last_updated_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
-
 
 # --- Read schemas ---
 

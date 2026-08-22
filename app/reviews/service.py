@@ -83,15 +83,32 @@ def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> 
     }
 
 
+def _parse_published(value: str | None) -> datetime | None:
+    """YouTube returns RFC3339 with a literal 'Z'; fromisoformat wants +00:00."""
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
     """
-    Run the full discovery + transcript-fetch + matching pipeline for one laptop.
+    Run the full discovery + matching + transcript-fetch pipeline for one laptop.
     Stages:
       1. Discover videos across all active channels
-      2. Skip videos already in raw_youtube_reviews
-      3. Fetch transcript for each new video
-      4. Fuzzy-match video title against the laptop catalog
+      2. Skip videos already ingested (unless previously rejected)
+      3. Fuzzy-match the video title against the laptop catalog
+      4. Fetch the transcript
       5. Persist to raw_youtube_reviews (status: matched | pending | rejected)
+
+    Matching runs BEFORE the transcript fetch so that every row — including
+    rejected ones — carries a match_confidence. Previously a video with no
+    transcript was never matched at all, leaving a NULL confidence that made
+    the row invisible to any triage sorted by confidence.
+
+    The transcript is fetched regardless of match outcome: with the current
+    matcher most videos land in `pending` and are matched by a human later,
+    so skipping their transcripts would leave process_raw_review with nothing
+    to work on.
 
     Returns a summary dict with counts for each outcome.
     Chunking/embedding is a separate step — call process_raw_review() per matched review.
@@ -110,69 +127,81 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
         select(YoutubeChannel).where(YoutubeChannel.active == True)  # noqa: E712
     ).all()
 
+    counts = {
+        "discovered": 0, "skipped": 0,
+        "matched": 0, "pending": 0, "rejected": 0,
+    }
     if not channels:
-        return {"discovered": 0, "skipped": 0, "matched": 0, "pending": 0, "rejected": 0}
+        return counts
 
     videos = discover_videos(brand_name, laptop.product_name, channels)
+    counts["discovered"] = len(videos)
     logger.info("Discovered %d videos for laptop %s", len(videos), laptop.product_name)
 
-    counts = {"discovered": len(videos), "skipped": 0, "matched": 0, "pending": 0, "rejected": 0}
+    # Guards against a duplicate video_id inside one discovery batch: the
+    # `existing` lookup below cannot see rows added but not yet committed in
+    # this same transaction, and video_id is unique — so a duplicate would
+    # only surface as an IntegrityError at commit, losing the whole batch.
+    seen: set[str] = set()
 
     for video in videos:
+        video_id = video["video_id"]
+        if video_id in seen:
+            counts["skipped"] += 1
+            continue
+        seen.add(video_id)
+
         existing = session.exec(
-            select(RawYoutubeReview).where(
-                RawYoutubeReview.video_id == video["video_id"]
-            )
+            select(RawYoutubeReview).where(RawYoutubeReview.video_id == video_id)
         ).first()
-        # Skip already-processed videos; retry rejected ones (may have failed due to transient errors)
+        # Skip already-processed videos; retry rejected ones — their failure
+        # may have been operational (IP block, timeout) rather than a real
+        # caption gap.
         if existing and existing.status != "rejected":
             counts["skipped"] += 1
             continue
 
-        segments = fetch_transcript(video["video_id"])
-
-        if segments is None:
-            if existing:
-                counts["skipped"] += 1  # still no transcript — leave as rejected
-            else:
-                raw = RawYoutubeReview(
-                    video_id=video["video_id"],
-                    channel_id=video["channel_id"],
-                    video_title=video["video_title"],
-                    published_at=datetime.fromisoformat(
-                        video["published_at"].replace("Z", "+00:00")
-                    ) if video.get("published_at") else None,
-                    raw_transcript={},
-                    status="rejected",
-                )
-                session.add(raw)
-                counts["rejected"] += 1
-            continue
-
         matched_laptop_id, confidence = match_laptop(video["video_title"], session)
-        status = "matched" if matched_laptop_id else "pending"
+        result = fetch_transcript(video_id)
+
+        if result.ok:
+            status = "matched" if matched_laptop_id else "pending"
+            raw_transcript = {"segments": result.segments}
+            failure_reason = None
+            language = result.language_code
+        else:
+            status = "rejected"
+            raw_transcript = {}
+            failure_reason = result.failure.value
+            language = None
 
         if existing:
-            # Upgrade the previously-rejected row now that we have a transcript
-            existing.raw_transcript = {"segments": segments}
+            existing.video_title = video["video_title"]
+            existing.raw_transcript = raw_transcript
             existing.matched_laptop_id = matched_laptop_id
             existing.match_confidence = confidence
             existing.status = status
+            existing.failure_reason = failure_reason
+            existing.transcript_language = language
+            existing.transcript_attempts += 1
             session.add(existing)
         else:
-            raw = RawYoutubeReview(
-                video_id=video["video_id"],
-                channel_id=video["channel_id"],
-                video_title=video["video_title"],
-                published_at=datetime.fromisoformat(
-                    video["published_at"].replace("Z", "+00:00")
-                ) if video.get("published_at") else None,
-                raw_transcript={"segments": segments},
-                matched_laptop_id=matched_laptop_id,
-                match_confidence=confidence,
-                status=status,
+            session.add(
+                RawYoutubeReview(
+                    video_id=video_id,
+                    channel_id=video["channel_id"],
+                    video_title=video["video_title"],
+                    published_at=_parse_published(video.get("published_at")),
+                    raw_transcript=raw_transcript,
+                    matched_laptop_id=matched_laptop_id,
+                    match_confidence=confidence,
+                    status=status,
+                    failure_reason=failure_reason,
+                    transcript_language=language,
+                    transcript_attempts=1,
+                )
             )
-            session.add(raw)
+
         counts[status] += 1
 
     session.commit()
