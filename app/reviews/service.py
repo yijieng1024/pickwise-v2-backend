@@ -60,39 +60,19 @@ def _pick_representative(laptops: list[Laptop]) -> Laptop:
     return min(laptops, key=lambda l: (len(l.product_name), l.product_name, str(l.id)))
 
 
-def ingest_bulk(
-    session: Session,
-    limit: int = 5,
-    skip_covered: bool = True,
-    fetch_transcripts: bool = True,
-) -> dict:
+
+def family_worklist(
+    session: Session, skip_covered: bool = True
+) -> tuple[dict[str, Laptop], set[str]]:
+    """The families a bulk ingest would search, and the ones it would skip.
+
+    Extracted from ingest_bulk so GET /reviews/pipeline-status can report the
+    remaining count WITHOUT spending quota. Sharing the function is the point:
+    a status endpoint that computed "remaining" differently from the run that
+    consumes it would be worse than showing no number at all.
+
+    Returns (families, covered), keyed by _family_group_key.
     """
-    Run the discovery + transcript + match pipeline across the catalog, one
-    search per laptop *family* (family_id where the laptop has been grouped,
-    family_key as the seed otherwise — see _family_group_key). Discovered
-    videos are matched against the whole catalog by the matcher, so one family
-    search can populate raw reviews for several variants.
-
-    Only `active` laptops are searched: retired products are not worth 100
-    quota units per channel, and reviews should not be attached to them.
-
-    skip_covered=True skips families that already have at least one matched
-    raw review, so repeated runs walk through the catalog day by day within
-    the YouTube quota (cost ≈ active_channels × 100 units per family). See
-    the note at the `covered` computation for why "matched" and not "has any
-    raw review" — it is a schema limit, not a preference.
-    Chunking/embedding stays a separate step (POST /reviews/process/{id}).
-    """
-    active_channels = session.exec(
-        select(YoutubeChannel).where(YoutubeChannel.active == True)  # noqa: E712
-    ).all()
-    if not active_channels:
-        return {
-            "message": "No active YouTube channels registered — add channels first.",
-            "families_attempted": 0,
-            "results": [],
-        }
-
     # Active laptops only, consistent with retrieve_candidates,
     # conversation_laptops, graph.py::_pool_block and get_ranking_for_use_case.
     #
@@ -135,6 +115,44 @@ def ingest_bulk(
         # derivations would silently never intersect, and skip_covered would
         # quietly become a no-op.
         covered = {_family_group_key(l) for l in matched_laptops}
+
+    return families, covered
+
+
+def ingest_bulk(
+    session: Session,
+    limit: int = 5,
+    skip_covered: bool = True,
+    fetch_transcripts: bool = True,
+) -> dict:
+    """
+    Run the discovery + transcript + match pipeline across the catalog, one
+    search per laptop *family* (family_id where the laptop has been grouped,
+    family_key as the seed otherwise — see _family_group_key). Discovered
+    videos are matched against the whole catalog by the matcher, so one family
+    search can populate raw reviews for several variants.
+
+    Only `active` laptops are searched: retired products are not worth 100
+    quota units per channel, and reviews should not be attached to them.
+
+    skip_covered=True skips families that already have at least one matched
+    raw review, so repeated runs walk through the catalog day by day within
+    the YouTube quota (cost ≈ active_channels × 100 units per family). See
+    the note at the `covered` computation for why "matched" and not "has any
+    raw review" — it is a schema limit, not a preference.
+    Chunking/embedding stays a separate step (POST /reviews/process/{id}).
+    """
+    active_channels = session.exec(
+        select(YoutubeChannel).where(YoutubeChannel.active == True)  # noqa: E712
+    ).all()
+    if not active_channels:
+        return {
+            "message": "No active YouTube channels registered — add channels first.",
+            "families_attempted": 0,
+            "results": [],
+        }
+
+    families, covered = family_worklist(session, skip_covered=skip_covered)
 
     # Sorted, because `limit` slices this list: with dict-insertion order
     # inherited from an unordered SELECT, two runs would pick two different

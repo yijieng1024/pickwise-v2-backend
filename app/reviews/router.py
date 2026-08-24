@@ -42,12 +42,18 @@ from app.reviews.link_service import (
 )
 from app.reviews.matcher import match_laptop
 from app.reviews.processor import process_raw_review
-from app.reviews.service import ingest_bulk, ingest_for_laptop
+from app.reviews.service import family_worklist, ingest_bulk, ingest_for_laptop
 from app.reviews.transcript import (
     TERMINAL_FAILURES,
     TranscriptFetchGuard,
 )
 from app.users.auth import get_current_admin
+
+# YouTube Data API search.list costs 100 units per call, and the free daily
+# quota is 10,000. Named here rather than inlined so the pipeline screen and
+# the ingest estimate cannot disagree about the arithmetic.
+_QUOTA_UNITS_PER_SEARCH = 100
+_DAILY_QUOTA_UNITS = 10_000
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 logger = get_logger(__name__)
@@ -951,3 +957,87 @@ def delete_review_link(
     session.delete(link)
     session.commit()
     return None
+
+
+@router.get("/pipeline-status")
+def pipeline_status(
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """Queue depth for every stage of the review pipeline. Costs no quota.
+
+    The pipeline screen previously asked for a batch size with no idea what was
+    waiting: "Max families" against an unknown remaining count, "Max reviews"
+    against an unknown candidate count, and an aggregate action that made the
+    admin search the catalog by name for laptops it could have listed. Each
+    number below is computed by the SAME code path as the run that consumes it,
+    which is the only way a status number is worth showing — a count derived
+    differently from the action it describes is worse than no count.
+
+    Deliberately read-only: no YouTube search, no transcript fetch, no Gemini
+    call. Safe to poll on page load.
+    """
+    families, covered = family_worklist(session, skip_covered=True)
+    active_channels = session.exec(
+        select(func.count(YoutubeChannel.id)).where(
+            YoutubeChannel.active == True  # noqa: E712
+        )
+    ).one()
+
+    # Same candidate rule as /reviews/process-bulk: matched reviews that have
+    # no chunks yet. Existing chunks are the "already processed" marker, since
+    # processing never flips the review's status.
+    processed_video_ids = set(
+        session.exec(select(LaptopReviewChunk.video_id).distinct()).all()
+    )
+    matched_video_ids = session.exec(
+        select(RawYoutubeReview.video_id).where(
+            RawYoutubeReview.status == ReviewStatus.MATCHED.value
+        )
+    ).all()
+    process_candidates = sum(
+        1 for v in matched_video_ids if v not in processed_video_ids
+    )
+
+    # Link queue: pending reviews, split by whether a human has linked them.
+    # Done-ness comes from links, never from status — a family-only link leaves
+    # the review `pending` on purpose (the chunk path still needs a laptop_id).
+    pending_ids = session.exec(
+        select(RawYoutubeReview.id).where(
+            RawYoutubeReview.status == ReviewStatus.PENDING.value
+        )
+    ).all()
+    linked_ids = set(
+        session.exec(
+            select(ReviewLaptopLink.raw_review_id).distinct()
+        ).all()
+    )
+    pending_linked = sum(1 for r in pending_ids if r in linked_ids)
+
+    summaries = list_pending_summaries(session=session, _=None)
+
+    remaining = len([k for k in families if k not in covered])
+    return {
+        "ingest": {
+            "families_total": len(families),
+            "families_covered": len(covered & families.keys()),
+            "families_remaining": remaining,
+            "active_channels": active_channels,
+            # What one family costs. The screen multiplies this by the batch
+            # size so the admin sees the spend before clicking, not after: at
+            # 19 channels a default batch of 5 is 9,500 of the 10,000 daily cap.
+            "quota_units_per_family": active_channels * _QUOTA_UNITS_PER_SEARCH,
+            "daily_quota_units": _DAILY_QUOTA_UNITS,
+        },
+        "link": {
+            "pending_total": len(pending_ids),
+            "pending_linked": pending_linked,
+            "pending_unlinked": len(pending_ids) - pending_linked,
+        },
+        "process": {"candidates": process_candidates},
+        "aggregate": {
+            "pending_total": summaries["total"],
+            "new": sum(1 for s in summaries["items"] if s["state"] == "new"),
+            "stale": sum(1 for s in summaries["items"] if s["state"] == "stale"),
+        },
+    }
