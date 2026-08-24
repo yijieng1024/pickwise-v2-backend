@@ -146,6 +146,23 @@ class YoutubeChannel(SQLModel, table=True):
         default=ReviewLanguage.EN.value,
         sa_column_kwargs={"server_default": ReviewLanguage.EN.value},
     )
+    # When a human last judged evidence_tier. NULL means genuinely unreviewed.
+    #
+    # This column exists because "confirmed tier_2" and "nobody looked" are the
+    # same byte in evidence_tier, and the aggregator's ORDER BY depends on that
+    # byte — so without this, ranking cannot tell a judgement from a default.
+    #
+    # Nullable with NO server_default, and that is the whole design. A server
+    # default would backfill every pre-existing row with a timestamp, making
+    # unreviewed channels indistinguishable from reviewed ones — precisely the
+    # failure this column exists to prevent, and the same trap documented at
+    # the retry-transcripts predicate in router.py, where transcript_attempts'
+    # server_default '0' made 28 rows with full transcripts read as never
+    # attempted. A default value is a fact about the migration, not about the
+    # row.
+    evidence_tier_reviewed_at: Optional[datetime] = Field(
+        default=None, nullable=True
+    )
     active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

@@ -23,11 +23,13 @@ against search.list's 100):
     the presenters are Chinese Malaysian, and titles are not speech. It was
     confirmed `en` by a human watching the channel.
 
-evidence_tier is deliberately absent. Every candidate looked like tier_2 from
-titles, but tier_2 is also the untouched server default, so writing it would
-make "reviewed and confirmed" byte-identical to "nobody looked" — and the
-aggregator's ORDER BY is about to depend on that column. It stays unwritten
-until spot-checked.
+evidence_tier values themselves are NOT written here — a human set them
+directly after spot-checking each channel. What this script does write is
+`--mark-reviewed`, stamping evidence_tier_reviewed_at on the channels below.
+That column exists because "confirmed tier_2" and "nobody looked" are the same
+byte in evidence_tier, and the aggregator now orders on that byte; NULL means
+genuinely unreviewed. Stamping is separate from --apply so re-running the
+metadata assignment never silently re-dates a review.
 
 Idempotent and safe to re-run: it only writes cells that differ. Dry run by
 default.
@@ -39,6 +41,7 @@ Usage:
 On Windows set PYTHONUTF8=1 or the CJK channel names print as mojibake.
 """
 import argparse
+from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
@@ -73,6 +76,13 @@ _ALLOWED = {
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Write the changes.")
+    parser.add_argument(
+        "--mark-reviewed",
+        action="store_true",
+        help="Also stamp evidence_tier_reviewed_at=now on the channels above, "
+        "recording that a human judged their evidence_tier. Requires --apply. "
+        "Only pass this when a review actually happened.",
+    )
     args = parser.parse_args()
 
     # Validate the table itself before touching the database. SQLModel skips
@@ -111,12 +121,33 @@ def main() -> None:
                     setattr(channel, field, value)
                     session.add(channel)
 
-        if args.apply and changes:
+        stamped = 0
+        if args.mark_reviewed:
+            now = datetime.now(timezone.utc)
+            print()
+            print("--- evidence_tier review stamps ---")
+            for name in ASSIGNMENTS:
+                channel = channels.get(name)
+                if channel is None:
+                    continue
+                previous = channel.evidence_tier_reviewed_at
+                print(
+                    f"{name[:23]:<24} evidence_tier={channel.evidence_tier:<7} "
+                    f"reviewed_at {previous or 'NULL'} -> {now:%Y-%m-%d %H:%M}"
+                )
+                stamped += 1
+                if args.apply:
+                    channel.evidence_tier_reviewed_at = now
+                    session.add(channel)
+
+        if args.apply and (changes or stamped):
             session.commit()
 
         print()
         print(f"{'changed' if args.apply else 'would change':<14}: {changes}")
         print(f"{'already correct':<14}: {unchanged}")
+        if args.mark_reviewed:
+            print(f"{'review-stamped':<14}: {stamped}")
         if missing:
             print()
             print("!! NOT FOUND in youtube_channels (nothing written for these):")
