@@ -2,7 +2,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from app.common.pagination_service import (
@@ -110,12 +110,19 @@ def update_channel(
 @router.post("/ingest/{laptop_id}")
 def ingest_laptop(
     laptop_id: uuid.UUID,
+    fetch_transcripts: bool = Query(
+        default=True,
+        description="Set false to record discovered videos without fetching "
+        "transcripts — see POST /reviews/ingest-bulk.",
+    ),
     session: Session = Depends(get_session),
     _: None = Depends(get_current_admin),
 ):
     """Trigger full discovery + transcript + matching pipeline for one laptop."""
     try:
-        counts = ingest_for_laptop(laptop_id, session)
+        counts = ingest_for_laptop(
+            laptop_id, session, fetch_transcripts=fetch_transcripts
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -139,6 +146,19 @@ def ingest_bulk_endpoint(
         default=True,
         description="Skip families that already have a matched raw review.",
     ),
+    fetch_transcripts: bool = Query(
+        default=True,
+        description=(
+            "Set false for a discovery-only run: search YouTube and record the "
+            "videos, but do not fetch transcripts. Discovery is metered by the "
+            "Data API quota; the transcript endpoint is unmetered but "
+            "independently rate-limited, and this path has no per-fetch delay, "
+            "so a wide run would blow through a residential IP's limit and "
+            "record fictional ip_blocked failures. Deferred rows land in "
+            "`pending` with transcript_attempts=0 and are picked up later by "
+            "POST /reviews/retry-transcripts."
+        ),
+    ),
     session: Session = Depends(get_session),
     _: None = Depends(get_current_admin),
 ):
@@ -149,7 +169,12 @@ def ingest_bulk_endpoint(
     Re-run daily with skip_covered=true to walk the catalog within quota.
     """
     try:
-        return ingest_bulk(session, limit=limit, skip_covered=skip_covered)
+        return ingest_bulk(
+            session,
+            limit=limit,
+            skip_covered=skip_covered,
+            fetch_transcripts=fetch_transcripts,
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -532,16 +557,36 @@ def retry_transcripts(
     Rows with failure_reason NULL are included: they predate the field, so
     their reason was erased by the old blanket exception handler and we
     cannot assume they were terminal.
+
+    Also picks up rows that were never attempted at all (status=pending,
+    transcript_attempts=0), which is what a discovery-only ingest run
+    produces. Those rows are not failures; they are deferred work, and this is
+    the only endpoint that can reach them — a later ingest skips any existing
+    non-rejected row.
     """
     terminal = {f.value for f in TERMINAL_FAILURES}
 
     candidates = session.exec(
         select(RawYoutubeReview)
-        .where(RawYoutubeReview.status == ReviewStatus.REJECTED.value)
         .where(
             or_(
-                RawYoutubeReview.failure_reason.is_(None),      # type: ignore[union-attr]
-                RawYoutubeReview.failure_reason.notin_(terminal),  # type: ignore[union-attr]
+                # Rejected for an operational reason — the original case.
+                and_(
+                    RawYoutubeReview.status == ReviewStatus.REJECTED.value,
+                    or_(
+                        RawYoutubeReview.failure_reason.is_(None),      # type: ignore[union-attr]
+                        RawYoutubeReview.failure_reason.notin_(terminal),  # type: ignore[union-attr]
+                    ),
+                ),
+                # Never attempted at all — a discovery-only ingest run
+                # (fetch_transcripts=false) records these with
+                # transcript_attempts=0. Without this clause they would be
+                # stranded forever: a later ingest skips any existing
+                # non-rejected row, so nothing else would ever fetch them.
+                and_(
+                    RawYoutubeReview.status == ReviewStatus.PENDING.value,
+                    RawYoutubeReview.transcript_attempts == 0,
+                ),
             )
         )
         .order_by(RawYoutubeReview.created_at, RawYoutubeReview.id)  # type: ignore[arg-type]

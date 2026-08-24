@@ -60,7 +60,12 @@ def _pick_representative(laptops: list[Laptop]) -> Laptop:
     return min(laptops, key=lambda l: (len(l.product_name), l.product_name, str(l.id)))
 
 
-def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> dict:
+def ingest_bulk(
+    session: Session,
+    limit: int = 5,
+    skip_covered: bool = True,
+    fetch_transcripts: bool = True,
+) -> dict:
     """
     Run the discovery + transcript + match pipeline across the catalog, one
     search per laptop *family* (family_id where the laptop has been grouped,
@@ -144,7 +149,9 @@ def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> 
     totals = {"discovered": 0, "skipped": 0, "matched": 0, "pending": 0, "rejected": 0}
     for key, laptop in todo:
         try:
-            counts = ingest_for_laptop(laptop.id, session)
+            counts = ingest_for_laptop(
+                laptop.id, session, fetch_transcripts=fetch_transcripts
+            )
             for k in totals:
                 totals[k] += counts.get(k, 0)
             results.append({"family": key, "queried_laptop_id": str(laptop.id), **counts})
@@ -170,7 +177,9 @@ def _parse_published(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
+def ingest_for_laptop(
+    laptop_id: uuid.UUID, session: Session, fetch_transcripts: bool = True
+) -> dict:
     """
     Run the full discovery + matching + transcript-fetch pipeline for one laptop.
     Stages:
@@ -210,6 +219,10 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
     counts = {
         "discovered": 0, "skipped": 0,
         "matched": 0, "pending": 0, "rejected": 0,
+        # Rows created with the transcript deliberately not attempted. Counted
+        # separately from `pending` so a discovery-only run is legible in the
+        # response rather than looking like a run where nothing matched.
+        "transcript_deferred": 0,
     }
     if not channels:
         return counts
@@ -237,26 +250,56 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
         # Skip already-processed videos; retry rejected ones — their failure
         # may have been operational (IP block, timeout) rather than a real
         # caption gap.
-        if existing and existing.status != ReviewStatus.REJECTED.value:
+        #
+        # In discovery-only mode a rejected row is skipped too: we have nothing
+        # new to offer it, and rewriting it would erase a real `no_track`
+        # verdict and replace it with "we didn't try". The reject bucket is a
+        # clean single-cause set and must stay that way.
+        if existing and (
+            not fetch_transcripts or existing.status != ReviewStatus.REJECTED.value
+        ):
             counts["skipped"] += 1
             continue
 
         matched_laptop_id, confidence = match_laptop(video["video_title"], session)
-        result = fetch_transcript(video_id)
 
-        if result.ok:
-            status = (
-                ReviewStatus.MATCHED.value if matched_laptop_id
-                else ReviewStatus.PENDING.value
-            )
-            raw_transcript = {"segments": result.segments}
+        if not fetch_transcripts:
+            # Discovery-only. status is PENDING, never REJECTED: a row with no
+            # transcript because we CHOSE not to fetch one is not the same
+            # thing as a video with no captions, and conflating them would put
+            # a fabricated cause into failure_reason.
+            #
+            # PENDING rather than MATCHED even when the title matched: in this
+            # pipeline MATCHED means "ready for chunk processing", and a row
+            # with no transcript is not. The match is still recorded in
+            # matched_laptop_id / match_confidence, so nothing is lost — the
+            # row is promoted once a transcript arrives.
+            #
+            # transcript_attempts stays 0, which is what makes these rows
+            # findable later: POST /reviews/retry-transcripts picks up
+            # never-attempted rows precisely so this mode cannot strand them.
+            status = ReviewStatus.PENDING.value
+            raw_transcript: dict = {}
             failure_reason = None
-            language = result.language_code
-        else:
-            status = ReviewStatus.REJECTED.value
-            raw_transcript = {}
-            failure_reason = result.failure.value
             language = None
+            attempts = 0
+            counts["transcript_deferred"] += 1
+        else:
+            result = fetch_transcript(video_id)
+            attempts = 1
+            if result.ok:
+                status = (
+                    ReviewStatus.MATCHED.value if matched_laptop_id
+                    else ReviewStatus.PENDING.value
+                )
+                raw_transcript = {"segments": result.segments}
+                failure_reason = None
+                language = result.language_code
+            else:
+                status = ReviewStatus.REJECTED.value
+                raw_transcript = {}
+                failure_reason = result.failure.value
+                language = None
 
         if existing:
             existing.video_title = video["video_title"]
@@ -266,7 +309,7 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
             existing.status = status
             existing.failure_reason = failure_reason
             existing.transcript_language = language
-            existing.transcript_attempts += 1
+            existing.transcript_attempts += attempts
             session.add(existing)
         else:
             session.add(
@@ -281,11 +324,12 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
                     status=status,
                     failure_reason=failure_reason,
                     transcript_language=language,
-                    transcript_attempts=1,
+                    transcript_attempts=attempts,
                 )
             )
 
-        counts[status] += 1
+        if fetch_transcripts:
+            counts[status] += 1
 
     session.commit()
     logger.info("Ingest complete for laptop %s: %s", laptop.product_name, counts)
