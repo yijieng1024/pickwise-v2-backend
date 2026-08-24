@@ -31,6 +31,7 @@ from app.reviews.models import (
     LaptopReviewChunk,
     LaptopReviewSummary,
 )
+from app.reviews.link_model import ReviewLaptopLink
 from app.agent.monitoring_models import AgentRunLog
 # Every table model must be imported here, or it is absent from
 # SQLModel.metadata and `alembic revision --autogenerate` emits a DROP TABLE
