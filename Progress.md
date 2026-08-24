@@ -585,6 +585,9 @@ CPU and GPU benchmark data management with automated scraping from PassMark.
 | a3f9c1d7e224   | Add agent_run_logs table (per-turn agent monitoring)      | 2026-08-02 | ✅ Complete |
 | b7e4a2f16c93   | Add raw_product_htmls table (uploaded source HTML; product-agnostic, canonical_url UNIQUE) | 2026-08-05 | ✅ Complete |
 | c4d8b31f7a55   | Add background_jobs table (polled async batch operations) | 2026-08-06 | ✅ Complete |
+| d9e1f4a86c27   | Add status to laptops (listing state: active/inactive/suspended) | 2026-08-12 | ✅ Complete |
+| e2c76b019f4d   | Add laptop_family table + laptops.family_id (nullable FK) | 2026-08-19 | ✅ Complete |
+| 8e429682f918   | Add failure_reason (indexed), transcript_language, transcript_attempts to raw_youtube_reviews | 2026-08-22 | ✅ Complete |
 
 > Two earlier revisions predate this table and were never listed: `453fffc97e7b` (init all tables, 2026-06-29) and `9962eb7ee808` (add `scrape_status` to `laptop_scrape_urls`, 2026-06-29).
 
@@ -761,16 +764,18 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 
 - `app/reviews/models.py` — 4 DB tables: `YoutubeChannel`, `RawYoutubeReview`, `LaptopReviewChunk`, `LaptopReviewSummary`; schemas: `YoutubeChannelCreate` (URL-based), `YoutubeChannelUpdate`, `RawYoutubeReviewRead`, `ManualMatchRequest`
 - `app/reviews/discovery.py` — `resolve_channel_from_url()` (parses 4 URL formats → `channels.list` API, 1 quota unit); `discover_videos()` (YouTube `search.list`, 100 quota units/channel, top 5 per channel)
-- `app/reviews/transcript.py` — `fetch_transcript()`: `YouTubeTranscriptApi().fetch(video_id)` — v1.x instance API; returns `[{text, start, duration}]` or None if subtitles unavailable
+- `app/reviews/transcript.py` — `fetch_transcript()`: v1.x instance API; picks a track via `.list()` + `_pick_track()` (language-family preference `en` → `zh` → any, manual captions before auto-generated) and returns a **`TranscriptResult`** dataclass (`segments`, `failure`, `language_code`, `is_generated`) — never a bare `None`. `TranscriptFailure` enum + `TERMINAL_FAILURES` split terminal (`no_track`, `video_unavailable`) from retryable (`ip_blocked`, `network_error`, `unknown`)
 - `app/reviews/matcher.py` — `match_laptop()`: RapidFuzz `token_set_ratio` against compact match keys (`_build_match_key` strips `-inch`/RAM/storage, extracts chip from parens); threshold 73
 - `app/reviews/processor.py` — `process_raw_review()`: 45-second chunk windows → Gemini summary + sentiment tag → embed via the central `embed_text()` (`app/embeddings/service.py`) → save `LaptopReviewChunk` rows; 4-second delay between Gemini calls
 - `app/reviews/aggregator.py` — `aggregate_for_laptop()`: top-5 distinct strengths + weaknesses from all chunks → upsert `LaptopReviewSummary`
-- `app/reviews/service.py` — `ingest_for_laptop()`: full discovery → transcript → match pipeline; retries `rejected` rows (transient failures); skips `matched`/`pending`
+- `app/reviews/service.py` — `ingest_for_laptop()`: full discovery → **match → transcript** pipeline (matching is local and free; transcript fetch costs proxy bandwidth); persists `failure_reason` / `transcript_language` / `transcript_attempts`; retries `rejected` rows; skips `matched`/`pending`
+- `app/scripts/audit_transcript_availability.py` — read-only diagnostic: re-opens every `rejected` row with `.list()` and buckets it NO_TRACK / NON_ENGLISH / HAS_ENGLISH / OTHER_FAILURE (`--sample N` bounds network calls)
+- `app/scripts/audit_match_ties.py` — read-only diagnostic: recomputes the top-5 match candidates per review, reports the rank-1/rank-2 gap, and splits ties same-family vs cross-family and CJK vs ASCII
 
 #### DB Tables
 
 - **`youtube_channels`** — `channel_id`, `channel_name`, `channel_img_url`, `trust_tier` (tier_1/tier_2), `active`
-- **`raw_youtube_reviews`** — `video_id`, `video_title`, `raw_transcript` (JSONB), `matched_laptop_id`, `match_confidence`, `status` (pending/matched/rejected)
+- **`raw_youtube_reviews`** — `video_id`, `video_title`, `raw_transcript` (JSONB), `matched_laptop_id`, `match_confidence`, `status` (pending/matched/rejected), `failure_reason` (indexed; NULL = predates the column), `transcript_language`, `transcript_attempts` (`server_default='0'`)
 - **`laptop_review_chunks`** — `chunk_text` (LLM summary), `embedding` (Vector 768), `sentiment_tag` (strength/weakness/neutral), `timestamp_start/end_seconds`
 - **`laptop_review_summary`** — `aggregated_strengths` + `aggregated_weaknesses` (JSONB top-5 each), `review_count`
 
@@ -778,13 +783,17 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 
 ```text
 1. discover_videos()      → YouTube search.list per channel (100 quota units each)
-2. fetch_transcript()     → youtube-transcript-api v1.x (no quota cost)
-3. match_laptop()         → RapidFuzz token_set_ratio against compact keys (threshold 73)
-4. save RawYoutubeReview  → status: matched | pending | rejected
+2. match_laptop()         → RapidFuzz token_set_ratio against compact keys (threshold 73)
+3. fetch_transcript()     → youtube-transcript-api v1.x (no quota cost) → TranscriptResult
+4. save RawYoutubeReview  → status: matched | pending | rejected (+ failure_reason)
 ── manual step ──
 5. process_raw_review()   → 45s chunks → Gemini summary + sentiment → embed → LaptopReviewChunk
 6. aggregate_for_laptop() → roll up chunks → LaptopReviewSummary
+── recovery, zero quota ──
+   POST /reviews/retry-transcripts → re-fetch non-terminal failures only
 ```
+
+Stages 2 and 3 are deliberately in this order: matching is local and free, a transcript fetch costs proxy bandwidth and wall time. Matching first also means a video with no transcript still records a `match_confidence`, so it stays visible to a triage queue sorted by confidence instead of landing in `rejected` with a NULL.
 
 #### Key Design Decisions
 
@@ -793,6 +802,27 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 - Retry logic: rejected videos are re-attempted on next ingest (may have failed due to transient errors); matched/pending are skipped
 - Match key strips `-inch`/RAM/storage noise (never in video titles) and extracts chip from parens: `"Apple 14-inch MacBook Pro (M5, 16GB RAM...)"` → `"Apple 14 MacBook Pro M5"`
 - `POST /reviews/rematch` re-runs auto-matching on all pending rows — useful after adjusting the threshold or match key logic
+- **Typed transcript failures (2026-08-22).** The old `except Exception: return None` made "no captions", "proxy exhausted", "video private" and "network timeout" the same outcome, hiding what the `rejected` bucket actually contained. `TranscriptFailure` splits terminal (`no_track`, `video_unavailable` — the ASR decision set) from retryable (`ip_blocked`, `network_error`, `unknown` — operational, not a data gap), persisted to `failure_reason`
+- **Language is matched by family prefix, not literal code.** `fetch()`'s default is the exact string `('en',)`, so a video whose only English track is `en-US` raised `NoTranscriptFound` — a confirmed case in the audit. `_LANG_FAMILIES = ("en", "zh")` is compared against `language_code.split("-")[0]`
+- **Manual captions beat auto-generated.** ASR mis-hears product names, and product names are exactly what the matcher keys on. `_pick_track` does not `.translate()` a Chinese track — the chunk processor paraphrases downstream anyway, and translating at fetch time destroys the original wording irrecoverably
+- **`_build_api()` raises in production when the Webshare proxy is unconfigured** rather than falling back to a direct connection, because a silent fallback is indistinguishable from YouTube rate-limiting us — the exact ambiguity the audit exposed
+
+#### Audit baseline (2026-08-22)
+
+Measured by the two `app/scripts/audit_*.py` diagnostics before any remediation — re-run them to confirm movement.
+
+| Metric | Value |
+|---|---|
+| `rejected` rows with an English track all along | **19 / 39 (48.7%)** — transient/proxy, retryable |
+| genuinely caption-disabled (ASR decision set) | 15 / 39 (38.5%) |
+| Chinese-only track (recoverable by language list) | 5 / 39 (12.8%) |
+| videos decided by a **true rank-1/rank-2 tie** | **76 / 85 (89.4%)** |
+| ties spanning *different* families (real failure) | 26 / 76 (34.2%) |
+| tied **and** above `MATCH_THRESHOLD=73` | 11 |
+| CJK titles tied / cross-family | 95.2% / 55.0% (vs 87.5% / 26.8% ASCII) |
+| `matched` rows that were **manual** (`confidence = 100.0`) | 10 / 18 |
+
+`extractOne` returns the *first* maximum, so at 89.4% ties the winner is database row order, not a ranking. On Windows set `PYTHONUTF8=1` or CJK titles print as mojibake.
 
 #### Endpoints
 
@@ -808,6 +838,37 @@ End-to-end pipeline that discovers YouTube laptop review videos, fetches transcr
 | POST | /reviews/rematch | Admin | Re-run auto-match on all pending reviews |
 | POST | /reviews/process/{review_id} | Admin | Chunk + embed a matched review |
 | POST | /reviews/aggregate/{laptop_id} | Admin | Recompute review summary |
+| POST | /reviews/retry-transcripts | Admin | Re-fetch non-terminal transcript failures (`?limit=`, zero YouTube quota) |
+
+
+#### Known gaps (remediation in progress)
+
+The 2026-08-22 audit produced a 19-item worklist; items 1–3 (typed failures + language
+selection) and 6 (match-before-fetch) have landed. Still open:
+
+- **`discovery.py`** — the query is `f"{brand} {product} review"`; the literal English word
+  excludes Chinese reviewers who title videos 开箱 / 评测 / 实测. No `publishedAfter`, so a
+  2025 laptop search still returns 2019 videos at 100 quota units a channel.
+- **`matcher.py`** — the whole catalog is reloaded on every call (and `rematch_pending`
+  loops it); no tie-gap signal despite 89.4% ties; chip extraction reads `"2025"` out of
+  `"TUF Gaming F16 (2025, FX608JMR)"` as a chip; CJK titles need ASCII-anchor extraction.
+- **`service.py`** — family grouping runs over an unordered `select(Laptop)` so the
+  representative varies per run (the `laptop_family` table should replace the recomputed
+  key); neither this module nor the matcher filters `laptops.status`, so quota is spent on
+  suspended products; `skip_covered` reads `matched_laptop_id`, so a family whose videos
+  are all in the human queue is re-searched at full cost every run.
+- **`processor.py`** — `time.sleep()` sits inside the `try` after `session.add`, so a 429
+  skips its own rate limit; one `commit()` holds a transaction open for minutes against the
+  Supabase pooler; per-chunk failures are swallowed behind a bare `saved` count.
+- **`aggregator.py`** — chunk select has no `ORDER BY`, so "top 5 strengths" is Postgres
+  return order and can change between runs with no data change.
+- **`models.py`** — `RawYoutubeReview.status` and `YoutubeChannel.trust_tier` are bare
+  strings with valid values only in a comment. `trust_tier` also conflates three
+  independent things (does the reviewer test the machine / cover the Malaysian market /
+  what language they review in) — splitting it is pending a product decision.
+
+Out of scope until the numbers above are re-measured: many-to-many review↔laptop linkage,
+claim scope, two-stage family-then-config matching, and any ASR work.
 
 ---
 
@@ -1144,6 +1205,7 @@ Chat itself is `POST /agent/chat` below — CRS's `/{id}/chat` route was removed
 | POST   | /reviews/rematch               | Admin only | Re-run auto-match on all pending reviews     |
 | POST   | /reviews/process/{review_id}   | Admin only | Chunk + embed a matched review               |
 | POST   | /reviews/aggregate/{laptop_id} | Admin only | Recompute laptop review summary              |
+| POST   | /reviews/retry-transcripts     | Admin only | Re-fetch non-terminal transcript failures    |
 
 ### Taxonomy (`/product-types`, `/categories`)
 

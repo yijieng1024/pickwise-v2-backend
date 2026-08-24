@@ -12,26 +12,75 @@ from app.laptops.customization_model import LaptopCustomization  # noqa: F401
 # once per key, family grouping seeds one product line per key, and a key that
 # means two different things in two places is a bug nobody would notice.
 from app.laptops.family_key import family_key
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.logger import get_logger
 from app.reviews.discovery import discover_videos
 from app.reviews.matcher import match_laptop
-from app.reviews.models import RawYoutubeReview, YoutubeChannel
-from app.reviews.transcript import fetch_transcript
+from app.reviews.models import RawYoutubeReview, ReviewStatus, YoutubeChannel
+from app.reviews.transcript import TranscriptFetchGuard, is_terminal
 
 logger = get_logger(__name__)
 
 
-def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> dict:
+def _family_group_key(laptop: Laptop) -> str:
+    """Which YouTube search this laptop belongs to.
+
+    Prefers `family_id` over `family_key(product_name)`. The key is only a
+    *seed* — family_key.py says so in its own docstring: it over-merges ASUS
+    and Apple (model year lives inside the first paren and is discarded) and
+    over-splits Acer (model code lives outside any paren, so two SKUs of one
+    machine keep two keys). `laptop_family` is the human-corrected version of
+    that same grouping, so wherever it exists it is strictly better — and an
+    over-split key costs real money here, 100 quota units per channel for a
+    search we already ran under the other key.
+
+    A null family_id means "not grouped yet", which is a valid state, not an
+    error: fall back to the seed key rather than guessing a group. The two
+    namespaces are prefixed so a family UUID can never collide with a key.
+    """
+    if laptop.family_id:
+        return f"family:{laptop.family_id}"
+    return f"key:{family_key(laptop.product_name)}"
+
+
+def _pick_representative(laptops: list[Laptop]) -> Laptop:
+    """One configuration stands in for the whole family in the YouTube query.
+
+    Shortest product_name first, then name, then id. Deterministic is the
+    requirement — `setdefault` over an unordered `select(Laptop)` meant the
+    search string for a family changed between runs with no data change, which
+    makes ingest results irreproducible and any quota accounting a guess.
+
+    Shortest-first is the tiebreak worth having rather than an arbitrary one:
+    the query is built from the full product_name, so the shortest member
+    carries the fewest configuration tokens ("ROG Zephyrus G14" rather than
+    "ROG Zephyrus G14 (2025, GA403WW) 32GB 1TB"), and configuration tokens are
+    exactly what a reviewer's title does not contain.
+    """
+    return min(laptops, key=lambda l: (len(l.product_name), l.product_name, str(l.id)))
+
+
+def ingest_bulk(
+    session: Session,
+    limit: int = 5,
+    skip_covered: bool = True,
+    fetch_transcripts: bool = True,
+) -> dict:
     """
     Run the discovery + transcript + match pipeline across the catalog, one
-    search per laptop *family* (see family_key). Discovered videos are
-    matched against the whole catalog by the matcher, so one family search
-    can populate raw reviews for several variants.
+    search per laptop *family* (family_id where the laptop has been grouped,
+    family_key as the seed otherwise — see _family_group_key). Discovered
+    videos are matched against the whole catalog by the matcher, so one family
+    search can populate raw reviews for several variants.
+
+    Only `active` laptops are searched: retired products are not worth 100
+    quota units per channel, and reviews should not be attached to them.
 
     skip_covered=True skips families that already have at least one matched
     raw review, so repeated runs walk through the catalog day by day within
-    the YouTube quota (cost ≈ active_channels × 100 units per family).
+    the YouTube quota (cost ≈ active_channels × 100 units per family). See
+    the note at the `covered` computation for why "matched" and not "has any
+    raw review" — it is a schema limit, not a preference.
     Chunking/embedding stays a separate step (POST /reviews/process/{id}).
     """
     active_channels = session.exec(
@@ -44,27 +93,91 @@ def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> 
             "results": [],
         }
 
-    laptops = session.exec(select(Laptop)).all()
-    families: dict[str, Laptop] = {}
+    # Active laptops only, consistent with retrieve_candidates,
+    # conversation_laptops, graph.py::_pool_block and get_ranking_for_use_case.
+    #
+    # The justification is correctness and quota, NOT match quality: we should
+    # not spend 100 units per channel discovering reviews for a product that
+    # has been retired, nor attach reviews to one. It was measured, and it does
+    # not improve matching — restricting candidates to the 238 active rows makes
+    # ties slightly WORSE (76 -> 78 tied videos, 26 -> 27 cross-family), because
+    # suspended rows share match keys with active siblings, so removing them
+    # shortens ties without dissolving them, while removing a row that was the
+    # lone rank-1 winner creates a fresh tie among the runners-up. Do not cite
+    # this change as a matching improvement.
+    laptops = session.exec(
+        select(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)
+    ).all()
+
+    grouped: dict[str, list[Laptop]] = {}
     for laptop in laptops:
-        families.setdefault(family_key(laptop.product_name), laptop)
+        grouped.setdefault(_family_group_key(laptop), []).append(laptop)
+    families: dict[str, Laptop] = {
+        key: _pick_representative(members) for key, members in grouped.items()
+    }
 
     covered: set[str] = set()
     if skip_covered:
+        # NOTE: coverage can only be derived through matched_laptop_id, which
+        # is the single link from a review back to a laptop. A `pending` review
+        # has that column NULL by construction (match_laptop returns None below
+        # MATCH_THRESHOLD), so a family whose videos are all in the human queue
+        # still reads as uncovered and gets re-searched at full quota cost.
+        # Fixing that needs somewhere to record which family a search covered —
+        # see ADR-0012. Do not paper over it by re-running the matcher here:
+        # 89% of titles tie at rank 1, so quota decisions would be made from
+        # database row order.
         matched_laptops = session.exec(
             select(Laptop)
             .join(RawYoutubeReview, RawYoutubeReview.matched_laptop_id == Laptop.id)  # type: ignore[arg-type]
         ).all()
-        covered = {family_key(l.product_name) for l in matched_laptops}
+        # Same grouping function as `families` above — two different key
+        # derivations would silently never intersect, and skip_covered would
+        # quietly become a no-op.
+        covered = {_family_group_key(l) for l in matched_laptops}
 
-    todo = [(key, laptop) for key, laptop in families.items() if key not in covered]
-    todo = todo[:limit]
+    # Sorted, because `limit` slices this list: with dict-insertion order
+    # inherited from an unordered SELECT, two runs would pick two different
+    # families to spend the day's quota on, and "families_remaining" would not
+    # describe a walk through the catalog at all.
+    #
+    # KNOWN LIMITATION, deliberately not fixed here: alphabetical order makes
+    # `limit` a biased sampler, not just an arbitrary one. A limit=3 run on
+    # 2026-08-24 drew three consecutive ASUS ExpertBook families — business
+    # machines, the least likely thing a consumer channel covers — and
+    # returned 4 videos across 19 channels, which said nothing about channel
+    # coverage. Do NOT solve this with a --random flag: ADR-0012 introduces
+    # last_review_search_at, and ordering by least-recently-searched gives
+    # correct rotation as a side effect of a column we need anyway. One fix,
+    # not two.
+    todo = sorted(
+        ((key, laptop) for key, laptop in families.items() if key not in covered),
+        key=lambda item: (item[1].product_name, str(item[1].id)),
+    )[:limit]
 
     results = []
-    totals = {"discovered": 0, "skipped": 0, "matched": 0, "pending": 0, "rejected": 0}
+    totals = {
+        "discovered": 0, "skipped": 0, "matched": 0, "pending": 0,
+        "rejected": 0, "transcript_deferred": 0,
+    }
+    # ONE guard for the whole run, deliberately created here rather than per
+    # family: a block during the first family is still a block during the
+    # second, and a per-family guard would forget that and keep hammering.
+    guard = TranscriptFetchGuard() if fetch_transcripts else None
+
     for key, laptop in todo:
+        if guard is not None and guard.tripped:
+            logger.warning(
+                "Stopping bulk ingest before family '%s': transcript rate "
+                "limit tripped.", key,
+            )
+            break
         try:
-            counts = ingest_for_laptop(laptop.id, session)
+            counts = ingest_for_laptop(
+                laptop.id, session,
+                fetch_transcripts=fetch_transcripts,
+                guard=guard,
+            )
             for k in totals:
                 totals[k] += counts.get(k, 0)
             results.append({"family": key, "queried_laptop_id": str(laptop.id), **counts})
@@ -73,6 +186,9 @@ def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> 
             results.append({"family": key, "queried_laptop_id": str(laptop.id), "error": str(e)})
 
     return {
+        # A partial run is stated, not inferred from a short results list.
+        "aborted_on_rate_limit": bool(guard and guard.tripped),
+        "transcript_fetches_attempted": guard.attempted if guard else 0,
         "families_total": len(families),
         "families_already_covered": len(covered),
         "families_attempted": len(todo),
@@ -90,7 +206,12 @@ def _parse_published(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
+def ingest_for_laptop(
+    laptop_id: uuid.UUID,
+    session: Session,
+    fetch_transcripts: bool = True,
+    guard: TranscriptFetchGuard | None = None,
+) -> dict:
     """
     Run the full discovery + matching + transcript-fetch pipeline for one laptop.
     Stages:
@@ -123,6 +244,10 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
         raise ValueError(f"Laptop {laptop_id} not found.")
 
     laptop, brand_name = laptop_row
+    # Callers that run several laptops share one guard so the breaker spans the
+    # whole run; a standalone call gets its own.
+    if fetch_transcripts and guard is None:
+        guard = TranscriptFetchGuard()
     channels = session.exec(
         select(YoutubeChannel).where(YoutubeChannel.active == True)  # noqa: E712
     ).all()
@@ -130,6 +255,10 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
     counts = {
         "discovered": 0, "skipped": 0,
         "matched": 0, "pending": 0, "rejected": 0,
+        # Rows created with the transcript deliberately not attempted. Counted
+        # separately from `pending` so a discovery-only run is legible in the
+        # response rather than looking like a run where nothing matched.
+        "transcript_deferred": 0,
     }
     if not channels:
         return counts
@@ -157,23 +286,64 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
         # Skip already-processed videos; retry rejected ones — their failure
         # may have been operational (IP block, timeout) rather than a real
         # caption gap.
-        if existing and existing.status != "rejected":
+        #
+        # In discovery-only mode a rejected row is skipped too: we have nothing
+        # new to offer it, and rewriting it would erase a real `no_track`
+        # verdict and replace it with "we didn't try". The reject bucket is a
+        # clean single-cause set and must stay that way.
+        if existing and (
+            not fetch_transcripts
+            or existing.status != ReviewStatus.REJECTED.value
+            # A rejected row whose failure is terminal (no captions at all, or
+            # the video is gone) can never be recovered by fetching again. Left
+            # unchecked, every ingest run re-fetched all 15 of them — spending
+            # rate-limit budget, which is scarcer than quota here, on rows with
+            # a known permanent answer. retry-transcripts has always known
+            # this; ingest did not.
+            or is_terminal(existing.failure_reason)
+        ):
             counts["skipped"] += 1
             continue
 
         matched_laptop_id, confidence = match_laptop(video["video_title"], session)
-        result = fetch_transcript(video_id)
 
-        if result.ok:
-            status = "matched" if matched_laptop_id else "pending"
-            raw_transcript = {"segments": result.segments}
+        if not fetch_transcripts:
+            # Discovery-only. status is PENDING, never REJECTED: a row with no
+            # transcript because we CHOSE not to fetch one is not the same
+            # thing as a video with no captions, and conflating them would put
+            # a fabricated cause into failure_reason.
+            #
+            # PENDING rather than MATCHED even when the title matched: in this
+            # pipeline MATCHED means "ready for chunk processing", and a row
+            # with no transcript is not. The match is still recorded in
+            # matched_laptop_id / match_confidence, so nothing is lost — the
+            # row is promoted once a transcript arrives.
+            #
+            # transcript_attempts stays 0, which is what makes these rows
+            # findable later: POST /reviews/retry-transcripts picks up
+            # never-attempted rows precisely so this mode cannot strand them.
+            status = ReviewStatus.PENDING.value
+            raw_transcript: dict = {}
             failure_reason = None
-            language = result.language_code
-        else:
-            status = "rejected"
-            raw_transcript = {}
-            failure_reason = result.failure.value
             language = None
+            attempts = 0
+            counts["transcript_deferred"] += 1
+        else:
+            result = guard.fetch(video_id)  # type: ignore[union-attr]
+            attempts = 1
+            if result.ok:
+                status = (
+                    ReviewStatus.MATCHED.value if matched_laptop_id
+                    else ReviewStatus.PENDING.value
+                )
+                raw_transcript = {"segments": result.segments}
+                failure_reason = None
+                language = result.language_code
+            else:
+                status = ReviewStatus.REJECTED.value
+                raw_transcript = {}
+                failure_reason = result.failure.value
+                language = None
 
         if existing:
             existing.video_title = video["video_title"]
@@ -183,7 +353,7 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
             existing.status = status
             existing.failure_reason = failure_reason
             existing.transcript_language = language
-            existing.transcript_attempts += 1
+            existing.transcript_attempts += attempts
             session.add(existing)
         else:
             session.add(
@@ -198,11 +368,19 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
                     status=status,
                     failure_reason=failure_reason,
                     transcript_language=language,
-                    transcript_attempts=1,
+                    transcript_attempts=attempts,
                 )
             )
 
-        counts[status] += 1
+        if fetch_transcripts:
+            counts[status] += 1
+
+        if guard is not None and guard.tripped:
+            # Stop here rather than writing a run's worth of fictional
+            # ip_blocked rejections. Remaining videos are simply not recorded;
+            # the next run rediscovers them.
+            counts["aborted_on_rate_limit"] = True
+            break
 
     session.commit()
     logger.info("Ingest complete for laptop %s: %s", laptop.product_name, counts)

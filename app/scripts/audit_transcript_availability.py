@@ -32,6 +32,7 @@ Usage:
     python -m app.scripts.audit_transcript_availability --status pending --sample 10
 """
 import argparse
+import time
 from collections import Counter
 
 from sqlmodel import Session, select
@@ -60,6 +61,13 @@ def _is_english(language_code: str) -> bool:
 # operational-failure bucket: no language preference and no proxy fix will
 # ever produce text for these, so they are exactly the ASR decision set.
 _NO_TRACK_EXCEPTIONS = {"TranscriptsDisabled", "NoTranscriptFound"}
+
+# Same class-name test transcript.py::fetch_transcript uses to classify
+# IP_BLOCKED, duplicated here rather than imported because that function
+# classifies a fetch and this one classifies a .list(). Kept textually
+# identical so the audit and the pipeline agree on what a block looks like.
+def _is_ip_block(exception_name: str) -> bool:
+    return "Blocked" in exception_name or "TooManyRequests" in exception_name
 
 
 def _inspect(api, video_id: str) -> dict:
@@ -95,6 +103,41 @@ def _inspect(api, video_id: str) -> dict:
     return {"bucket": bucket, "exception": None, "detail": "", "tracks": tracks}
 
 
+def _print_corpus_breakdown(session) -> None:
+    """Whole-table counts, straight from the DB, no network. Printed first so a
+    run that later aborts on a rate limit still yields the denominators the
+    ADRs need."""
+    rows = session.exec(
+        select(RawYoutubeReview.status, RawYoutubeReview.failure_reason)
+    ).all()
+    total = len(rows)
+    print("=== raw_youtube_reviews corpus ===")
+    print(f"total rows : {total}")
+    by_status = Counter(status for status, _ in rows)
+    for status, n in by_status.most_common():
+        print(f"  {status:<10} {n:>5}  ({n / (total or 1) * 100:5.1f}%)")
+
+    print()
+    print("failure_reason within status='rejected':")
+    rejected = [fr for status, fr in rows if status == "rejected"]
+    if not rejected:
+        print("  (no rejected rows)")
+    else:
+        for reason, n in Counter(
+            fr if fr is not None else "NULL (predates the column)"
+            for fr in rejected
+        ).most_common():
+            print(f"  {reason:<28} {n:>5}  ({n / len(rejected) * 100:5.1f}%)")
+
+    print()
+    print("failure_reason across ALL statuses:")
+    for reason, n in Counter(
+        fr if fr is not None else "NULL (predates the column)" for _s, fr in rows
+    ).most_common():
+        print(f"  {reason:<28} {n:>5}")
+    print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -109,6 +152,22 @@ def main() -> None:
         help="Only inspect the first N rows — each row costs one proxy request.",
     )
     parser.add_argument(
+        "--delay",
+        type=float,
+        default=2.0,
+        help="Seconds between .list() calls. A residential IP hits YouTube's "
+        "transcript rate limit at roughly 30 requests, and retrying inside the "
+        "block window extends it, so this is a real cost control (default: 2.0).",
+    )
+    parser.add_argument(
+        "--max-blocks",
+        type=int,
+        default=3,
+        help="Abort after this many CONSECUTIVE ip-block results. Once YouTube "
+        "is blocking, every further call is both useless and self-harming — the "
+        "remaining rows would all be miscounted as OTHER_FAILURE (default: 3).",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Summary only, no per-video lines.",
@@ -116,6 +175,7 @@ def main() -> None:
     args = parser.parse_args()
 
     with Session(engine) as session:
+        _print_corpus_breakdown(session)
         rows = session.exec(
             select(RawYoutubeReview)
             .where(RawYoutubeReview.status == args.status)
@@ -140,8 +200,21 @@ def main() -> None:
     generated_only = 0
     manual_available = 0
 
+    consecutive_blocks = 0
+    aborted_at = None
+
     for i, row in enumerate(rows, 1):
+        if i > 1 and args.delay:
+            time.sleep(args.delay)
         res = _inspect(api, row.video_id)
+
+        # A run that pushes through a block produces numbers that look like
+        # data but are really the block, so stop and say so instead.
+        if res["exception"] and _is_ip_block(res["exception"]):
+            consecutive_blocks += 1
+        else:
+            consecutive_blocks = 0
+
         buckets[res["bucket"]] += 1
         if res["exception"]:
             exceptions[res["exception"]] += 1
@@ -163,9 +236,21 @@ def main() -> None:
                 xl = "translatable" if t["translatable"] else "not-translatable"
                 print(f"        - {t['language_code']:<8} {kind:<7} {xl}  ({t['language']})")
 
+        if consecutive_blocks >= args.max_blocks:
+            aborted_at = i
+            print()
+            print(
+                f"!! ABORTED after {consecutive_blocks} consecutive ip-block "
+                f"results ({i}/{len(rows)} rows inspected). The buckets below "
+                "are incomplete — wait out the block before re-running."
+            )
+            break
+
     print()
     print("=== Summary ===")
-    inspected = len(rows) or 1
+    inspected = (aborted_at or len(rows)) or 1
+    if aborted_at:
+        print(f"(partial run: {aborted_at} of {len(rows)} rows)")
     for name in (NO_TRACK, NON_ENGLISH, HAS_ENGLISH, OTHER_FAILURE):
         n = buckets[name]
         print(f"{name:<14} {n:>5}  ({n / inspected * 100:5.1f}%)")

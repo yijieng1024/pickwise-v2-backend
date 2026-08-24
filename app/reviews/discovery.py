@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timedelta, timezone
 
 from googleapiclient.discovery import build
 
@@ -9,6 +10,17 @@ from app.reviews.models import YoutubeChannel
 logger = get_logger(__name__)
 
 _MAX_RESULTS_PER_CHANNEL = 5
+
+# How far back a discovery search reaches, in days. ~3 years.
+#
+# Without a bound, a search for a 2025 machine returns that channel's 2019
+# videos of the same product line — and at maxResults=5 those stale hits do not
+# merely add noise, they consume slots that a real review would have taken. The
+# search costs 100 quota units per channel either way, so a wasted slot is a
+# fifth of a paid request. Three years is wide enough to cover a laptop still
+# on sale two generations after launch, and narrow enough to exclude the
+# previous chassis era.
+_DEFAULT_PUBLISHED_AFTER_DAYS = 365 * 3
 
 
 def _get_youtube_client():
@@ -99,14 +111,35 @@ def discover_videos(
     brand_name: str,
     product_name: str,
     channels: list[YoutubeChannel],
+    published_after_days: int = _DEFAULT_PUBLISHED_AFTER_DAYS,
 ) -> list[dict]:
     """
     Search YouTube for review videos of a specific laptop model across all active channels.
     Returns a list of raw video metadata dicts (video_id, channel_id, video_title, published_at).
     Costs 100 quota units per channel searched.
+
+    `published_after_days` bounds how far back the search reaches. Pass 0 to
+    disable the bound (a deliberate archive sweep), never as a default.
     """
     youtube = _get_youtube_client()
-    query = f"{brand_name} {product_name} review"
+    # No "review" keyword. `channelId` already constrains every search to a
+    # curated review channel, so the English word bought almost no precision —
+    # but it silently excluded Chinese-language reviewers, who title with
+    # 開箱 / 評測 / 實測 and have no reason to include it. That is the segment
+    # we are already weakest in: CJK titles are 21 of 85 ingested rows and
+    # score a median 47.6 against ASCII's 55.7.
+    #
+    # A deliberate precision-for-recall trade. The cost lands on the human
+    # match queue — a non-review upload becomes a `pending` row someone clears
+    # in seconds — not in the catalog, because nothing reaches a laptop
+    # without passing the matcher. A missed review is the asymmetric loss: it
+    # is permanently absent from the corpus and nothing surfaces it later.
+    query = f"{brand_name} {product_name}"
+    # RFC3339 with a literal Z — the Data API rejects a "+00:00" offset here.
+    published_after = None
+    if published_after_days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=published_after_days)
+        published_after = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
     results = []
 
     for channel in channels:
@@ -122,6 +155,7 @@ def discover_videos(
                     type="video",
                     maxResults=_MAX_RESULTS_PER_CHANNEL,
                     order="relevance",
+                    **({"publishedAfter": published_after} if published_after else {}),
                 )
                 .execute()
             )
@@ -135,10 +169,11 @@ def discover_videos(
                     }
                 )
             logger.info(
-                "Discovery: %d videos found for '%s' in channel %s",
+                "Discovery: %d videos found for '%s' in channel %s (since %s)",
                 len(response.get("items", [])),
                 query,
                 channel.channel_name,
+                published_after or "beginning",
             )
         except Exception as e:
             logger.warning("Discovery failed for channel %s: %s", channel.channel_id, e)
