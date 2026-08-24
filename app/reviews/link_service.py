@@ -17,12 +17,13 @@ ExpertBook family sometimes by nothing at all.
 import uuid
 from typing import Any, Optional
 
+from fastapi import HTTPException
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
 from app.laptops.family_model import LaptopFamily
 from app.laptops.laptop_models import Laptop
-from app.reviews.link_model import ReviewLaptopLink
+from app.reviews.link_model import MatchSource, ReviewLaptopLink
 
 # Candidate columns for the "what differs" computation, in the order a human
 # reads a spec sheet. Deliberately a curated list rather than every column on
@@ -205,3 +206,111 @@ def find_family_id(session: Session, laptop_id: uuid.UUID) -> Optional[uuid.UUID
     """The family a laptop belongs to, or None if it has not been grouped."""
     laptop = session.get(Laptop, laptop_id)
     return laptop.family_id if laptop else None
+
+
+def create_human_link(
+    session: Session,
+    raw_review_id: uuid.UUID,
+    family_id: uuid.UUID,
+    laptop_id: Optional[uuid.UUID],
+) -> ReviewLaptopLink:
+    """Validate and build one human link. Shared by both write paths.
+
+    There are two endpoints that create a human link — POST
+    /reviews/{id}/links (the new screen) and PATCH /reviews/raw/{id}/match (the
+    existing manual match) — and they must agree on every guard. Two divergent
+    copies of a cross-family check is how one of them silently stops matching
+    the other, so the checks live here once and both routes call this.
+
+    It raises HTTPException rather than a domain error, which is a deliberate
+    exception to keeping services framework-free: the whole point is that both
+    routes return byte-identical 400/404/409 responses, and translating a
+    domain error twice is the duplication this function exists to remove.
+
+    Adds to the session but does NOT commit — the caller decides, because the
+    manual-match path writes matched_laptop_id in the same transaction.
+    """
+    family = session.get(LaptopFamily, family_id)
+    if not family:
+        raise HTTPException(status_code=404, detail="Family not found.")
+
+    if laptop_id is not None:
+        laptop = session.get(Laptop, laptop_id)
+        if not laptop:
+            raise HTTPException(status_code=404, detail="Laptop not found.")
+        # The configuration must belong to the family being linked, or the row
+        # asserts two contradictory things about one review and any reader that
+        # trusts one of the two columns gets a different answer.
+        if laptop.family_id != family_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Laptop {laptop_id} belongs to family {laptop.family_id}, "
+                    f"not {family_id}."
+                ),
+            )
+
+    # Checked here rather than left to the unique constraint: Postgres treats
+    # NULLs as distinct in a unique index, so (review, family, NULL) can be
+    # inserted twice and uq_review_family_laptop would not catch it at all.
+    # Doing it explicitly also turns the known-config collision into a usable
+    # 409 instead of a raw IntegrityError 500.
+    duplicate = session.exec(
+        select(ReviewLaptopLink)
+        .where(ReviewLaptopLink.raw_review_id == raw_review_id)
+        .where(ReviewLaptopLink.family_id == family_id)
+        .where(
+            ReviewLaptopLink.laptop_id.is_(None)  # type: ignore[union-attr]
+            if laptop_id is None
+            else ReviewLaptopLink.laptop_id == laptop_id
+        )
+    ).first()
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This review is already linked to that family/config "
+                f"(link {duplicate.id})."
+            ),
+        )
+
+    link = ReviewLaptopLink(
+        raw_review_id=raw_review_id,
+        family_id=family_id,
+        laptop_id=laptop_id,
+        # Both callers are human actions. match_confidence stays NULL because a
+        # human did not score anything — writing a fabricated 100.0 is exactly
+        # what made manual matches indistinguishable from perfect fuzzy scores
+        # in the column this table replaces.
+        match_source=MatchSource.HUMAN.value,
+        match_confidence=None,
+        tie_width=None,
+    )
+    session.add(link)
+    return link
+
+
+def resolve_family_for_laptop(
+    session: Session, laptop_id: uuid.UUID
+) -> uuid.UUID:
+    """The family a laptop belongs to, for callers that supply only a laptop.
+
+    404 when the laptop is unknown; 400 when it exists but has no family, which
+    is a real and valid state (`family_id` is nullable — see family_service),
+    and one a human must resolve by grouping the laptop first. Guessing a
+    family here would put a wrong grouping behind a human's name.
+    """
+    laptop = session.get(Laptop, laptop_id)
+    if not laptop:
+        raise HTTPException(status_code=404, detail="Laptop not found.")
+    if laptop.family_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Laptop {laptop_id} has no family yet, so the review cannot be "
+                "linked to a product line. Assign it a family first "
+                "(POST /families/regroup or the families CRUD), or pass "
+                "family_id explicitly."
+            ),
+        )
+    return laptop.family_id

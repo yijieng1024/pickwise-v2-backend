@@ -30,17 +30,15 @@ from app.reviews.models import (
     YoutubeChannelCreate,
     YoutubeChannelUpdate,
 )
-from app.reviews.link_model import (
-    MatchSource,
-    ReviewLaptopLink,
-    ReviewLinkCreate,
-)
+from app.reviews.link_model import ReviewLaptopLink, ReviewLinkCreate
 from app.reviews.link_service import (
     column_label,
     config_row,
+    create_human_link,
     differing_columns,
     family_members,
     links_for_reviews,
+    resolve_family_for_laptop,
 )
 from app.reviews.matcher import match_laptop
 from app.reviews.processor import process_raw_review
@@ -275,17 +273,62 @@ def manual_match(
     session: Session = Depends(get_session),
     _: None = Depends(get_current_admin),
 ):
-    """Manually pair a low-confidence raw review to a specific laptop."""
+    """Manually pair a raw review to a product line, and optionally to a config.
+
+    Cut over to review_laptop_link (ADR-0012). This was the last write path
+    still recording a human decision as match_confidence = 100.0, which is
+    indistinguishable from a perfect fuzzy score — the exact ambiguity
+    match_source exists to remove — and the links it made were invisible to
+    GET /reviews/pending. Two write paths disagreeing about where the truth
+    lives is worse than either alone.
+
+    Accepts family_id, laptop_id, or both. family_id alone is the "tested
+    configuration unknown" case the links endpoint already supports; when only
+    laptop_id is given the family is resolved from it, which keeps existing
+    callers working unchanged.
+
+    Every guard is shared with POST /reviews/{id}/links via
+    link_service.create_human_link, so both paths return identical 400/404/409
+    responses and cannot drift apart.
+    """
     review = session.get(RawYoutubeReview, review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review not found.")
+
+    family_id = body.family_id or resolve_family_for_laptop(session, body.laptop_id)  # type: ignore[arg-type]
+    link = create_human_link(session, review_id, family_id, body.laptop_id)
+
+    # matched_laptop_id is still written, and is NOT a competing source of
+    # truth: the link is the answer, and this column is a denormalised cache of
+    # it for the one reader not yet cut over — process_raw_review, whose chunk
+    # path is a separate pass. Do not add readers of it; read the links.
+    #
+    # A family-only match leaves it NULL, because there is no configuration to
+    # cache. Status then stays as it is rather than going to MATCHED: in this
+    # pipeline MATCHED means "ready for chunk processing", and process_raw_review
+    # needs a laptop_id, so promoting it would only queue a review that
+    # /process-bulk picks up and fails on every run. The link records that a
+    # human has acted; the queue shows it with its link attached.
     review.matched_laptop_id = body.laptop_id
-    review.match_confidence = 100.0
-    review.status = ReviewStatus.MATCHED.value
+    if body.laptop_id is not None:
+        # No longer 100.0 — see the module docstring on link_model. The human
+        # decision lives in the link's match_source; a fabricated score here
+        # would resurrect the ambiguity in the cached column.
+        review.match_confidence = None
+        review.status = ReviewStatus.MATCHED.value
     session.add(review)
     session.commit()
     session.refresh(review)
-    return review
+    session.refresh(link)
+
+    logger.info(
+        "Review %s manually matched to family %s (config %s)",
+        review_id, family_id, body.laptop_id,
+    )
+    return {
+        "review": _to_read(review, None),
+        "links": links_for_reviews(session, [review_id]).get(review_id, []),
+    }
 
 
 @router.post("/rematch")
@@ -854,59 +897,8 @@ def create_review_link(
     if not review:
         raise HTTPException(status_code=404, detail="Review not found.")
 
-    family = session.get(LaptopFamily, body.family_id)
-    if not family:
-        raise HTTPException(status_code=404, detail="Family not found.")
-
-    if body.laptop_id is not None:
-        laptop = session.get(Laptop, body.laptop_id)
-        if not laptop:
-            raise HTTPException(status_code=404, detail="Laptop not found.")
-        # The configuration must belong to the family being linked, or the row
-        # asserts two contradictory things about the same review and any reader
-        # that trusts one of the two columns gets a different answer.
-        if laptop.family_id != body.family_id:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Laptop {body.laptop_id} belongs to family "
-                    f"{laptop.family_id}, not {body.family_id}."
-                ),
-            )
-
-    # Checked here rather than left to the unique constraint: Postgres treats
-    # NULLs as distinct in a unique index, so (review, family, NULL) can be
-    # inserted twice and the constraint would not catch the duplicate at all.
-    # Doing it explicitly also turns the known-config collision into a usable
-    # 409 instead of a raw IntegrityError 500.
-    duplicate = session.exec(
-        select(ReviewLaptopLink)
-        .where(ReviewLaptopLink.raw_review_id == raw_review_id)
-        .where(ReviewLaptopLink.family_id == body.family_id)
-        .where(
-            ReviewLaptopLink.laptop_id.is_(None)  # type: ignore[union-attr]
-            if body.laptop_id is None
-            else ReviewLaptopLink.laptop_id == body.laptop_id
-        )
-    ).first()
-    if duplicate:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "This review is already linked to that family/config "
-                f"(link {duplicate.id})."
-            ),
-        )
-
-    link = ReviewLaptopLink(
-        raw_review_id=raw_review_id,
-        family_id=body.family_id,
-        laptop_id=body.laptop_id,
-        match_source=MatchSource.HUMAN.value,
-        match_confidence=None,
-        tie_width=None,
-    )
-    session.add(link)
+    # Shared with PATCH /reviews/raw/{id}/match — see link_service.
+    link = create_human_link(session, raw_review_id, body.family_id, body.laptop_id)
     session.commit()
     session.refresh(link)
 

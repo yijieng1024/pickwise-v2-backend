@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pgvector.sqlalchemy import Vector
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
@@ -319,4 +319,25 @@ class RawYoutubeReviewRead(SQLModel):
 
 
 class ManualMatchRequest(SQLModel):
-    laptop_id: uuid.UUID
+    """Body for PATCH /reviews/raw/{id}/match.
+
+    Same shape as ReviewLinkCreate (family_id + optional laptop_id), so one
+    body works on both write paths and there is no second convention to learn.
+
+    Both fields are optional here, unlike ReviewLinkCreate, for one reason:
+    this endpoint already exists and its callers send `{laptop_id}` alone.
+    Making family_id required would break them for no gain, so an omitted
+    family_id is resolved from the laptop instead. At least one must be
+    present; family_id alone is the "tested configuration unknown" case.
+    """
+    family_id: Optional[uuid.UUID] = None
+    laptop_id: Optional[uuid.UUID] = None
+
+    @model_validator(mode="after")
+    def one_of(self) -> "ManualMatchRequest":
+        if self.family_id is None and self.laptop_id is None:
+            raise ValueError(
+                "Provide family_id, laptop_id, or both. family_id alone links "
+                "the review to a product line with the configuration unknown."
+            )
+        return self
