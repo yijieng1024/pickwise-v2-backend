@@ -744,9 +744,26 @@ def list_pending_reviews(
     from a partly-finished linking session) and the queue has to show that
     without an N+1.
     """
-    statement = select(RawYoutubeReview).where(
-        RawYoutubeReview.status == ReviewStatus.PENDING.value
-    )
+    # Explicit columns, and NOT the whole row: raw_transcript is a large JSONB
+    # blob (hundreds of segments per video) and the queue loads every pending
+    # row, so selecting the model would pull megabytes to compute one integer.
+    # jsonb_array_length does it in the database and ships back an int.
+    segment_count = func.coalesce(
+        func.jsonb_array_length(RawYoutubeReview.raw_transcript["segments"]),  # type: ignore[index]
+        0,
+    ).label("segment_count")
+
+    statement = select(
+        RawYoutubeReview.id,
+        RawYoutubeReview.video_id,
+        RawYoutubeReview.video_title,
+        RawYoutubeReview.channel_id,
+        RawYoutubeReview.published_at,
+        RawYoutubeReview.status,
+        RawYoutubeReview.match_confidence,
+        RawYoutubeReview.created_at,
+        segment_count,
+    ).where(RawYoutubeReview.status == ReviewStatus.PENDING.value)
     statement = apply_search(statement, search, [RawYoutubeReview.video_title])
     total = count_total(session, statement)
 
@@ -782,7 +799,11 @@ def list_pending_reviews(
             "published_at": r.published_at,
             "status": r.status,
             "match_confidence": r.match_confidence,
-            "has_transcript": bool(r.raw_transcript.get("segments")),
+            # A review with no transcript can be linked perfectly and still
+            # produce zero chunks, so the time spent linking it is wasted. The
+            # count lets the queue show that before the human commits to a row.
+            "segment_count": r.segment_count,
+            "has_transcript": r.segment_count > 0,
             "links": links.get(r.id, []),
         }
         for r in reviews
