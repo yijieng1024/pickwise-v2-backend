@@ -2,6 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_
+from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
 from app.common.pagination_service import (
@@ -12,6 +13,8 @@ from app.common.pagination_service import (
 )
 from app.common.search_service import apply_search, search_query
 from app.database import get_session
+from app.laptops.brand_model import LaptopBrand
+from app.laptops.family_model import LaptopFamily
 from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
 from app.reviews.aggregator import aggregate_for_laptop
@@ -26,6 +29,18 @@ from app.reviews.models import (
     YoutubeChannel,
     YoutubeChannelCreate,
     YoutubeChannelUpdate,
+)
+from app.reviews.link_model import (
+    MatchSource,
+    ReviewLaptopLink,
+    ReviewLinkCreate,
+)
+from app.reviews.link_service import (
+    column_label,
+    config_row,
+    differing_columns,
+    family_members,
+    links_for_reviews,
 )
 from app.reviews.matcher import match_laptop
 from app.reviews.processor import process_raw_review
@@ -662,3 +677,264 @@ def retry_transcripts(
         "aborted_on_rate_limit": guard.tripped,
         "not_attempted": len(candidates) - guard.attempted,
     }
+
+
+# --- Human review-linking screen (ADR-0012) ---------------------------------
+#
+# These four endpoints back the admin screen that turns a `pending` review into
+# one or more review_laptop_link rows. The flow is: pick the review from the
+# queue, search for a family, then optionally pick the exact configuration —
+# family first because that is the level a reviewer actually covers, and the
+# configuration is frequently unknowable from the video.
+
+@router.get("/pending")
+def list_pending_reviews(
+    pagination: PaginationParams = Depends(),
+    search: str | None = search_query("Matches video title"),
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """The human match queue: reviews awaiting a laptop link.
+
+    Returns existing links alongside each review rather than making the screen
+    fetch them per row — a review can already hold links (from the backfill, or
+    from a partly-finished linking session) and the queue has to show that
+    without an N+1.
+    """
+    statement = select(RawYoutubeReview).where(
+        RawYoutubeReview.status == ReviewStatus.PENDING.value
+    )
+    statement = apply_search(statement, search, [RawYoutubeReview.video_title])
+    total = count_total(session, statement)
+
+    # created_at then id: video_title is not unique and created_at ties for
+    # rows written in one ingest batch, so without the id a row could appear on
+    # two pages of the queue or on none.
+    statement = statement.order_by(
+        RawYoutubeReview.created_at.desc(),  # type: ignore[attr-defined]
+        RawYoutubeReview.id,
+    )
+    reviews = list(session.exec(paginate(statement, pagination)).all())
+
+    channel_names = dict(
+        session.execute(
+            sa_select(YoutubeChannel.channel_id, YoutubeChannel.channel_name).where(
+                YoutubeChannel.channel_id.in_(  # type: ignore[attr-defined]
+                    {r.channel_id for r in reviews}
+                )
+            )
+        ).all()
+    ) if reviews else {}
+
+    links = links_for_reviews(session, [r.id for r in reviews])
+
+    items = [
+        {
+            "id": r.id,
+            "video_id": r.video_id,
+            "video_url": f"https://www.youtube.com/watch?v={r.video_id}",
+            "video_title": r.video_title,
+            "channel_id": r.channel_id,
+            "channel_name": channel_names.get(r.channel_id),
+            "published_at": r.published_at,
+            "status": r.status,
+            "match_confidence": r.match_confidence,
+            "has_transcript": bool(r.raw_transcript.get("segments")),
+            "links": links.get(r.id, []),
+        }
+        for r in reviews
+    ]
+    return Page(
+        items=items, total=total, skip=pagination.skip, limit=pagination.limit
+    )
+
+
+@router.get("/families")
+def search_families(
+    q: str | None = Query(default=None, description="Substring of the family name."),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """Family search — step one of the linking flow.
+
+    Returns the family plus its brand and member count. The count is what tells
+    the human whether picking a configuration is even a question: a one-member
+    family has nothing to disambiguate.
+    """
+    statement = sa_select(
+        LaptopFamily.id,
+        LaptopFamily.name,
+        LaptopFamily.is_verified,
+        LaptopBrand.name,
+        func.count(Laptop.id),
+    ).join(
+        LaptopBrand, LaptopBrand.id == LaptopFamily.brand_id
+    ).join(
+        Laptop, Laptop.family_id == LaptopFamily.id, isouter=True
+    ).group_by(
+        LaptopFamily.id, LaptopFamily.name, LaptopFamily.is_verified, LaptopBrand.name
+    )
+    if q:
+        statement = statement.where(LaptopFamily.name.ilike(f"%{q}%"))  # type: ignore[attr-defined]
+    # name then id — family names are not unique, so the id keeps paging and
+    # repeat searches stable.
+    statement = statement.order_by(LaptopFamily.name, LaptopFamily.id).limit(limit)
+
+    return [
+        {
+            "family_id": fid,
+            "name": name,
+            "brand": brand,
+            "is_verified": verified,
+            "member_count": count,
+        }
+        for fid, name, verified, brand, count in session.execute(statement).all()
+    ]
+
+
+@router.get("/families/{family_id}/configs")
+def list_family_configs(
+    family_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """The configurations in one family, showing only what differs between them.
+
+    A family holds up to 14 rows of one machine, and a full spec sheet rendered
+    14 times is unreadable. `differing_columns` computes, for THIS family, which
+    spec columns hold more than one distinct value, and every row carries only
+    those — CPU/GPU/RAM for a gaming family, chip and storage for an Apple one,
+    and nothing at all for a family whose members are genuinely identical.
+
+    `columns` is returned alongside the rows so the screen can render the table
+    header without inferring it from the first row.
+    """
+    family = session.get(LaptopFamily, family_id)
+    if not family:
+        raise HTTPException(status_code=404, detail="Family not found.")
+
+    members = family_members(session, family_id)
+    columns = differing_columns(members)
+
+    return {
+        "family_id": family.id,
+        "name": family.name,
+        "is_verified": family.is_verified,
+        "member_count": len(members),
+        "columns": [
+            {"key": column, "label": column_label(column)} for column in columns
+        ],
+        # Empty when the family has one member, or when its members differ in
+        # none of the tracked spec columns — both mean "there is nothing to
+        # choose between", which is a useful answer, not an error.
+        "identical": not columns and len(members) > 1,
+        "configs": [config_row(laptop, columns) for laptop in members],
+    }
+
+
+@router.post("/{raw_review_id}/links", status_code=201)
+def create_review_link(
+    raw_review_id: uuid.UUID,
+    body: ReviewLinkCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """Link a review to a family, and optionally to a specific configuration.
+
+    Callable several times for one review: a comparison video covers several
+    machines, and that is the case this whole table exists for.
+
+    Every link created here is match_source=HUMAN with match_confidence NULL. A
+    human did not score anything — recording a fabricated 100.0 is what made
+    human decisions indistinguishable from perfect fuzzy matches in the column
+    this table replaces.
+    """
+    review = session.get(RawYoutubeReview, raw_review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found.")
+
+    family = session.get(LaptopFamily, body.family_id)
+    if not family:
+        raise HTTPException(status_code=404, detail="Family not found.")
+
+    if body.laptop_id is not None:
+        laptop = session.get(Laptop, body.laptop_id)
+        if not laptop:
+            raise HTTPException(status_code=404, detail="Laptop not found.")
+        # The configuration must belong to the family being linked, or the row
+        # asserts two contradictory things about the same review and any reader
+        # that trusts one of the two columns gets a different answer.
+        if laptop.family_id != body.family_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Laptop {body.laptop_id} belongs to family "
+                    f"{laptop.family_id}, not {body.family_id}."
+                ),
+            )
+
+    # Checked here rather than left to the unique constraint: Postgres treats
+    # NULLs as distinct in a unique index, so (review, family, NULL) can be
+    # inserted twice and the constraint would not catch the duplicate at all.
+    # Doing it explicitly also turns the known-config collision into a usable
+    # 409 instead of a raw IntegrityError 500.
+    duplicate = session.exec(
+        select(ReviewLaptopLink)
+        .where(ReviewLaptopLink.raw_review_id == raw_review_id)
+        .where(ReviewLaptopLink.family_id == body.family_id)
+        .where(
+            ReviewLaptopLink.laptop_id.is_(None)  # type: ignore[union-attr]
+            if body.laptop_id is None
+            else ReviewLaptopLink.laptop_id == body.laptop_id
+        )
+    ).first()
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This review is already linked to that family/config "
+                f"(link {duplicate.id})."
+            ),
+        )
+
+    link = ReviewLaptopLink(
+        raw_review_id=raw_review_id,
+        family_id=body.family_id,
+        laptop_id=body.laptop_id,
+        match_source=MatchSource.HUMAN.value,
+        match_confidence=None,
+        tie_width=None,
+    )
+    session.add(link)
+    session.commit()
+    session.refresh(link)
+
+    logger.info(
+        "Review %s linked to family %s (config %s) by a human",
+        raw_review_id, body.family_id, body.laptop_id,
+    )
+    # Returns every link on the review, not just the new one: the screen shows
+    # a review's full link set and would otherwise have to re-fetch the queue.
+    return links_for_reviews(session, [raw_review_id]).get(raw_review_id, [])
+
+
+@router.delete("/links/{link_id}", status_code=204)
+def delete_review_link(
+    link_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """Remove one link. Undo for the screen.
+
+    Deletes any link, auto or human: an auto link from the backfill is exactly
+    the kind of thing a reviewer needs to be able to remove. It does not touch
+    raw_youtube_reviews.matched_laptop_id, which is still the column
+    process_raw_review reads — the two are not yet cut over.
+    """
+    link = session.get(ReviewLaptopLink, link_id)
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found.")
+    session.delete(link)
+    session.commit()
+    return None
