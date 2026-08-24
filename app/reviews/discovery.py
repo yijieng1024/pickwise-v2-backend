@@ -122,7 +122,19 @@ def discover_videos(
     disable the bound (a deliberate archive sweep), never as a default.
     """
     youtube = _get_youtube_client()
-    query = f"{brand_name} {product_name} review"
+    # No "review" keyword. `channelId` already constrains every search to a
+    # curated review channel, so the English word bought almost no precision —
+    # but it silently excluded Chinese-language reviewers, who title with
+    # 開箱 / 評測 / 實測 and have no reason to include it. That is the segment
+    # we are already weakest in: CJK titles are 21 of 85 ingested rows and
+    # score a median 47.6 against ASCII's 55.7.
+    #
+    # A deliberate precision-for-recall trade. The cost lands on the human
+    # match queue — a non-review upload becomes a `pending` row someone clears
+    # in seconds — not in the catalog, because nothing reaches a laptop
+    # without passing the matcher. A missed review is the asymmetric loss: it
+    # is permanently absent from the corpus and nothing surfaces it later.
+    query = f"{brand_name} {product_name}"
     # RFC3339 with a literal Z — the Data API rejects a "+00:00" offset here.
     published_after = None
     if published_after_days > 0:

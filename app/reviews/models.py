@@ -165,13 +165,18 @@ class RawYoutubeReviewRead(SQLModel):
     # when the laptop has since been deleted.
     matched_laptop_name: Optional[str] = None
     match_confidence: Optional[float]
+    # Passed through raw, deliberately NOT validated against ReviewStatus.
+    # A validator's job is to keep bad values out of the database, not to keep
+    # us from seeing values already in it. Validating here inverts that: an
+    # unexpected status would break GET /reviews/raw entirely, taking out the
+    # admin queue at exactly the moment it is needed to diagnose the problem.
+    # It is also fragile against planned work — ADR-0013 adds a no_signal
+    # route and ADR-0012 changes how matches are stored, and a new value
+    # reaching the table before this enum is updated would turn a benign
+    # schema lag into a broken page. Writes are guarded instead: nothing in
+    # this package assigns a status literal, only ReviewStatus members.
     status: str
     created_at: datetime
-
-    @field_validator("status")
-    @classmethod
-    def check_status(cls, value: str) -> str:
-        return _validate_choice(value, REVIEW_STATUS_VALUES, "status")  # type: ignore[return-value]
 
 
 class ManualMatchRequest(SQLModel):
