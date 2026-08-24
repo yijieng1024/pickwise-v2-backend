@@ -274,12 +274,18 @@ def process_review(
     session: Session = Depends(get_session),
     _: None = Depends(get_current_admin),
 ):
-    """Run chunking, sentiment tagging, and embedding for a matched raw review."""
+    """Run chunking, sentiment tagging, and embedding for a matched raw review.
+
+    The response carries per-chunk outcomes, not just a saved count: chunk
+    failures are individually recoverable and a partially-processed review
+    still counts as "processed" to /process-bulk (existing chunks are the
+    marker), so the caller has to be able to see the gap.
+    """
     try:
-        chunks_saved = process_raw_review(review_id, session)
+        report = process_raw_review(review_id, session)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"chunks_saved": chunks_saved}
+    return report
 
 
 @router.post("/process-bulk")
@@ -317,15 +323,23 @@ def process_bulk(
 
     results = []
     chunks_total = 0
+    # `failed` counts reviews that raised outright; `partial` counts reviews
+    # that returned but lost chunks. Before per-chunk outcomes existed the
+    # second group was indistinguishable from a clean run.
+    chunks_failed = 0
     failed = 0
+    partial = 0
     for review in candidates:
         try:
-            chunks_saved = process_raw_review(review.id, session)
-            chunks_total += chunks_saved
+            report = process_raw_review(review.id, session)
+            chunks_total += report["chunks_saved"]
+            chunks_failed += report["chunks_failed"]
+            if report["chunks_failed"]:
+                partial += 1
             results.append({
                 "review_id": str(review.id),
                 "video_title": review.video_title,
-                "chunks_saved": chunks_saved,
+                **report,
             })
         except Exception as e:
             failed += 1
@@ -340,7 +354,9 @@ def process_bulk(
         "candidates": len(candidates),
         "processed": len(candidates) - failed,
         "failed": failed,
+        "partially_processed": partial,
         "chunks_saved": chunks_total,
+        "chunks_failed": chunks_failed,
         "results": results,
     }
 
