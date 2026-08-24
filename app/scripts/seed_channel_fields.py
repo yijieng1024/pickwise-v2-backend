@@ -25,7 +25,8 @@ full per-channel assignment for review. Pass --apply to write.
 `market_relevance` is deliberately NOT seeded. Nothing in the database says
 which currency a reviewer quotes; a channel's language does not imply its
 market (the entire reason the two are separate fields, and see the note below).
-It is a human judgement on 12 rows. This script only reports the current value
+It is a human judgement per channel, carried by app/scripts/apply_channel_metadata.py.
+This script only reports the current value
 so the gap is visible.
 
 Usage:
@@ -167,7 +168,9 @@ def _report_market_gap(channels: list[YoutubeChannel]) -> None:
     """
     counts = Counter(c.market_relevance for c in channels)
     print()
-    print("market_relevance (NOT seeded — human judgement, 12 rows):")
+    print(
+        f"market_relevance (NOT seeded — human judgement, {len(channels)} rows):"
+    )
     for value, n in counts.most_common():
         print(f"  {value:<10} {n}")
     if counts.get("my", 0) == 0:

@@ -65,7 +65,30 @@ class MarketRelevance(str, Enum):
 
 class ReviewLanguage(str, Enum):
     """What language the channel reviews in. Seeded from the script of the
-    titles we have already ingested — see app/scripts/seed_channel_fields.py."""
+    titles we have already ingested — see app/scripts/seed_channel_fields.py.
+
+    MIXED means the channel publishes content in BOTH languages — separate
+    videos in each, which is how Mint earned it (genuinely separate zh and en
+    titles). It does NOT mean one language carrying loanwords from another. A
+    Chinese-language review that says "Zenbook Duo" and "RTX 5060" in Latin
+    script is ZH, not MIXED: embedded English product names are universal in
+    Chinese tech media and carry no signal about what language the review is
+    in. Zing Gadget is the worked example — 50 of 50 Chinese titles, every one
+    of them containing Latin-script model names, classified ZH.
+
+    Why the distinction matters rather than being pedantry: this field exists
+    to decide which corpus a query can draw on, and a Chinese review with
+    English product names is fully usable for a Chinese-language query.
+    Calling it MIXED would misdescribe it and would imply an English corpus
+    that does not exist.
+
+    A note on the value set itself: no Malaysian channel on the roster titles
+    in Malay — the detector was run over 350 titles across all 8 channels and
+    fired zero times (2026-08-24). Every Malaysian channel titles in English
+    or Chinese. That bounds what this field can currently express, and it was
+    checked rather than assumed, so do not read the absence of a `ms` member
+    as an oversight.
+    """
     EN = "en"
     ZH = "zh"
     MIXED = "mixed"
