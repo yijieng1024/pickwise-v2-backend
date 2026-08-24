@@ -24,13 +24,58 @@ class ReviewStatus(str, Enum):
 
 
 class TrustTier(str, Enum):
-    """Editorial standing of a review channel. See app/reviews/aggregator.py."""
+    """DEPRECATED — superseded by EvidenceTier / MarketRelevance /
+    ReviewLanguage below. The column is still written by the channel API and
+    read by nothing; it is kept live through the cutover and dropped in a
+    later revision. New code must not read it."""
     TIER_1 = "tier_1"
     TIER_2 = "tier_2"
 
 
+# `trust_tier` conflated three independent properties of a channel, and they do
+# not move together: a Taiwanese channel can be excellent on evidence quality
+# and useless on Malaysian pricing. One field could only ever express one of
+# them, so ordering or filtering on it silently mixed the three.
+class EvidenceTier(str, Enum):
+    """Does the reviewer actually test the machine — benchmarks, thermals,
+    sustained load — or relay spec sheets and first impressions?
+
+    This is the only one of the three that speaks to whether a claim is well
+    evidenced, so it is the one the aggregator orders on.
+    """
+    TIER_1 = "tier_1"
+    TIER_2 = "tier_2"
+
+
+class MarketRelevance(str, Enum):
+    """Whose prices and availability does this channel quote?
+
+    REGIONAL is deliberately vague about *which* region. Singapore and Taiwan
+    are both non-Malaysian and non-global but are not equivalent to our users —
+    an SGD price sits against retail channels that overlap ours, a TWD price
+    does not — so collapsing them into one "SEA" bucket would discard the only
+    part of the signal we would act on. A finer value set would be designing
+    for data we do not have: every channel on the roster is GLOBAL today.
+    Tighten this when the roster justifies it.
+    """
+    MY = "my"              # quotes RM against Malaysian retail
+    REGIONAL = "regional"  # neighbouring market: SGD, TWD, THB...
+    GLOBAL = "global"      # USD / no local pricing
+
+
+class ReviewLanguage(str, Enum):
+    """What language the channel reviews in. Seeded from the script of the
+    titles we have already ingested — see app/scripts/seed_channel_fields.py."""
+    EN = "en"
+    ZH = "zh"
+    MIXED = "mixed"
+
+
 REVIEW_STATUS_VALUES = {s.value for s in ReviewStatus}
 TRUST_TIER_VALUES = {t.value for t in TrustTier}
+EVIDENCE_TIER_VALUES = {t.value for t in EvidenceTier}
+MARKET_RELEVANCE_VALUES = {m.value for m in MarketRelevance}
+REVIEW_LANGUAGE_VALUES = {l.value for l in ReviewLanguage}
 
 
 def _validate_choice(value: Optional[str], allowed: set[str], field: str) -> Optional[str]:
@@ -59,7 +104,25 @@ class YoutubeChannel(SQLModel, table=True):
     channel_id: str = Field(unique=True, index=True)  # YouTube UCxxxxxx ID
     channel_name: str
     channel_img_url: Optional[str] = Field(default=None, nullable=True)
+    # Deprecated, kept live through the cutover. See TrustTier.
     trust_tier: str = Field(default=TrustTier.TIER_2.value)
+    # server_default on all three, not just a Python-side default: SQLModel's
+    # `default` is applied at insert time, so autogenerate would emit a bare
+    # `ADD COLUMN ... NOT NULL`, which Postgres refuses on a populated table.
+    # The server default is also what keeps the model matching the live column
+    # for `alembic check`. Same reasoning as transcript_attempts.
+    evidence_tier: str = Field(
+        default=EvidenceTier.TIER_2.value,
+        sa_column_kwargs={"server_default": EvidenceTier.TIER_2.value},
+    )
+    market_relevance: str = Field(
+        default=MarketRelevance.GLOBAL.value,
+        sa_column_kwargs={"server_default": MarketRelevance.GLOBAL.value},
+    )
+    review_language: str = Field(
+        default=ReviewLanguage.EN.value,
+        sa_column_kwargs={"server_default": ReviewLanguage.EN.value},
+    )
     active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -131,7 +194,10 @@ class LaptopReviewSummary(SQLModel, table=True):
 
 class YoutubeChannelCreate(SQLModel):
     channel_url: str  # YouTube URL, @handle, or UC... ID — resolved automatically
-    trust_tier: str = TrustTier.TIER_2.value
+    trust_tier: str = TrustTier.TIER_2.value  # deprecated, see TrustTier
+    evidence_tier: str = EvidenceTier.TIER_2.value
+    market_relevance: str = MarketRelevance.GLOBAL.value
+    review_language: str = ReviewLanguage.EN.value
     active: bool = True
 
     @field_validator("trust_tier")
@@ -139,17 +205,50 @@ class YoutubeChannelCreate(SQLModel):
     def check_trust_tier(cls, value: str) -> str:
         return _validate_choice(value, TRUST_TIER_VALUES, "trust_tier")  # type: ignore[return-value]
 
+    @field_validator("evidence_tier")
+    @classmethod
+    def check_evidence_tier(cls, value: str) -> str:
+        return _validate_choice(value, EVIDENCE_TIER_VALUES, "evidence_tier")  # type: ignore[return-value]
+
+    @field_validator("market_relevance")
+    @classmethod
+    def check_market_relevance(cls, value: str) -> str:
+        return _validate_choice(value, MARKET_RELEVANCE_VALUES, "market_relevance")  # type: ignore[return-value]
+
+    @field_validator("review_language")
+    @classmethod
+    def check_review_language(cls, value: str) -> str:
+        return _validate_choice(value, REVIEW_LANGUAGE_VALUES, "review_language")  # type: ignore[return-value]
+
 
 class YoutubeChannelUpdate(SQLModel):
     channel_name: Optional[str] = None
     channel_img_url: Optional[str] = None
-    trust_tier: Optional[str] = None
+    trust_tier: Optional[str] = None  # deprecated, see TrustTier
+    evidence_tier: Optional[str] = None
+    market_relevance: Optional[str] = None
+    review_language: Optional[str] = None
     active: Optional[bool] = None
 
     @field_validator("trust_tier")
     @classmethod
     def check_trust_tier(cls, value: Optional[str]) -> Optional[str]:
         return _validate_choice(value, TRUST_TIER_VALUES, "trust_tier")
+
+    @field_validator("evidence_tier")
+    @classmethod
+    def check_evidence_tier(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_choice(value, EVIDENCE_TIER_VALUES, "evidence_tier")
+
+    @field_validator("market_relevance")
+    @classmethod
+    def check_market_relevance(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_choice(value, MARKET_RELEVANCE_VALUES, "market_relevance")
+
+    @field_validator("review_language")
+    @classmethod
+    def check_review_language(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_choice(value, REVIEW_LANGUAGE_VALUES, "review_language")
 
 
 class RawYoutubeReviewRead(SQLModel):

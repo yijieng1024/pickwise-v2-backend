@@ -68,6 +68,9 @@ def add_channel(
         channel_name=resolved["channel_name"],
         channel_img_url=resolved["channel_img_url"],
         trust_tier=body.trust_tier,
+        evidence_tier=body.evidence_tier,
+        market_relevance=body.market_relevance,
+        review_language=body.review_language,
         active=body.active,
     )
     session.add(channel)
