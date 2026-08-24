@@ -132,9 +132,14 @@ def fetch_transcript(video_id: str) -> TranscriptResult:
             failure = TranscriptFailure.NETWORK
         else:
             failure = TranscriptFailure.UNKNOWN
+        # No exception-text field: youtube-transcript-api's messages start
+        # with a newline and embed a multi-paragraph README block, so the old
+        # first-line argument resolved to an empty string and every line ended
+        # in a dangling arrow. The class name and the video id already locate
+        # the problem exactly.
         logger.warning(
-            "Transcript fetch failed for %s: %s (%s) → %s",
-            video_id, name, failure.value, str(e).split("\n")[0],
+            "Transcript fetch failed for %s: %s (classified %s)",
+            video_id, name, failure.value,
         )
         return TranscriptResult(None, failure)
 
@@ -159,13 +164,16 @@ def _build_api() -> YouTubeTranscriptApi:
             "cannot work on Render without them. Set WEBSHARE_PROXY_USERNAME "
             "and WEBSHARE_PROXY_PASSWORD."
         )
-    logger.warning(
-        "Webshare proxy not configured — using a direct connection. "
-        "This works locally but will be IP-blocked on Render."
-    )
-
+    # Once per process, not once per call. _build_api() runs on every single
+    # transcript fetch, so an unconditional warning buries a run's real output
+    # under one identical line per video — and a retry-transcripts batch of 20
+    # printed it 20 times. The guard replaces the unconditional warning rather
+    # than sitting next to it.
     if not _PROXY_WARNED:
-        logger.warning("Webshare proxy not configured — ...")
+        logger.warning(
+            "Webshare proxy not configured — using a direct connection. "
+            "This works locally but will be IP-blocked on Render."
+        )
         _PROXY_WARNED = True
 
     return YouTubeTranscriptApi()
