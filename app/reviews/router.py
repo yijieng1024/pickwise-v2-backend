@@ -23,6 +23,7 @@ from app.reviews.models import (
     ManualMatchRequest,
     RawYoutubeReview,
     RawYoutubeReviewRead,
+    ReviewStatus,
     YoutubeChannel,
     YoutubeChannelCreate,
     YoutubeChannelUpdate,
@@ -239,7 +240,7 @@ def manual_match(
         raise HTTPException(status_code=404, detail="Review not found.")
     review.matched_laptop_id = body.laptop_id
     review.match_confidence = 100.0
-    review.status = "matched"
+    review.status = ReviewStatus.MATCHED.value
     session.add(review)
     session.commit()
     session.refresh(review)
@@ -253,7 +254,9 @@ def rematch_pending(
 ):
     """Re-run auto-matching on all pending raw reviews using the current matcher config."""
     pending = session.exec(
-        select(RawYoutubeReview).where(RawYoutubeReview.status == "pending")
+        select(RawYoutubeReview).where(
+            RawYoutubeReview.status == ReviewStatus.PENDING.value
+        )
     ).all()
 
     updated = 0
@@ -262,7 +265,7 @@ def rematch_pending(
         if laptop_id:
             review.matched_laptop_id = laptop_id
             review.match_confidence = confidence
-            review.status = "matched"
+            review.status = ReviewStatus.MATCHED.value
             session.add(review)
             updated += 1
 
@@ -321,7 +324,9 @@ def process_bulk(
     candidates = [
         r
         for r in session.exec(
-            select(RawYoutubeReview).where(RawYoutubeReview.status == "matched")
+            select(RawYoutubeReview).where(
+                RawYoutubeReview.status == ReviewStatus.MATCHED.value
+            )
         ).all()
         if r.video_id not in processed_video_ids
     ][:limit]
@@ -529,7 +534,7 @@ def retry_transcripts(
 
     candidates = session.exec(
         select(RawYoutubeReview)
-        .where(RawYoutubeReview.status == "rejected")
+        .where(RawYoutubeReview.status == ReviewStatus.REJECTED.value)
         .where(
             or_(
                 RawYoutubeReview.failure_reason.is_(None),      # type: ignore[union-attr]
@@ -557,7 +562,9 @@ def retry_transcripts(
             review.raw_transcript = {"segments": result.segments}
             review.transcript_language = result.language_code
             review.failure_reason = None
-            review.status = "pending"   # deliberately NOT "matched"
+            # deliberately NOT MATCHED: a recovered transcript says nothing
+            # about which laptop the video is about.
+            review.status = ReviewStatus.PENDING.value
             recovered += 1
             consecutive_blocks = 0
         else:

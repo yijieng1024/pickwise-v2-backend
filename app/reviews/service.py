@@ -16,7 +16,7 @@ from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.logger import get_logger
 from app.reviews.discovery import discover_videos
 from app.reviews.matcher import match_laptop
-from app.reviews.models import RawYoutubeReview, YoutubeChannel
+from app.reviews.models import RawYoutubeReview, ReviewStatus, YoutubeChannel
 from app.reviews.transcript import fetch_transcript
 
 logger = get_logger(__name__)
@@ -237,7 +237,7 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
         # Skip already-processed videos; retry rejected ones — their failure
         # may have been operational (IP block, timeout) rather than a real
         # caption gap.
-        if existing and existing.status != "rejected":
+        if existing and existing.status != ReviewStatus.REJECTED.value:
             counts["skipped"] += 1
             continue
 
@@ -245,12 +245,15 @@ def ingest_for_laptop(laptop_id: uuid.UUID, session: Session) -> dict:
         result = fetch_transcript(video_id)
 
         if result.ok:
-            status = "matched" if matched_laptop_id else "pending"
+            status = (
+                ReviewStatus.MATCHED.value if matched_laptop_id
+                else ReviewStatus.PENDING.value
+            )
             raw_transcript = {"segments": result.segments}
             failure_reason = None
             language = result.language_code
         else:
-            status = "rejected"
+            status = ReviewStatus.REJECTED.value
             raw_transcript = {}
             failure_reason = result.failure.value
             language = None

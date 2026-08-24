@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.embeddings.service import embed_text
 from app.logger import get_logger
-from app.reviews.models import LaptopReviewChunk, RawYoutubeReview
+from app.reviews.models import LaptopReviewChunk, RawYoutubeReview, ReviewStatus
 
 logger = get_logger(__name__)
 
@@ -105,7 +105,7 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
 
     if not raw:
         raise ValueError(f"RawYoutubeReview {raw_review_id} not found.")
-    if raw.status != "matched" or raw.matched_laptop_id is None:
+    if raw.status != ReviewStatus.MATCHED.value or raw.matched_laptop_id is None:
         raise ValueError(
             f"Review {raw_review_id} is not matched (status={raw.status}). "
             "Match it to a laptop first."

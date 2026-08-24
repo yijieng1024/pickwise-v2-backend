@@ -1,11 +1,55 @@
 import uuid
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pgvector.sqlalchemy import Vector
+from pydantic import field_validator
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+
+class ReviewStatus(str, Enum):
+    """Triage state of an ingested video.
+
+    Deliberately only these three. Why a transcript fetch produced nothing
+    lives in `failure_reason` (a TranscriptFailure value), not here — REJECTED
+    means "not usable as review evidence right now", and splitting it by cause
+    would make every consumer enumerate causes to ask that one question.
+    """
+    PENDING = "pending"      # transcript stored, no confident laptop match
+    MATCHED = "matched"      # linked to a laptop, ready for processing
+    REJECTED = "rejected"    # no transcript
+
+
+class TrustTier(str, Enum):
+    """Editorial standing of a review channel. See app/reviews/aggregator.py."""
+    TIER_1 = "tier_1"
+    TIER_2 = "tier_2"
+
+
+REVIEW_STATUS_VALUES = {s.value for s in ReviewStatus}
+TRUST_TIER_VALUES = {t.value for t in TrustTier}
+
+
+def _validate_choice(value: Optional[str], allowed: set[str], field: str) -> Optional[str]:
+    """Both columns stay plain VARCHAR rather than native Postgres enums, the
+    same call laptop_models.py makes for LaptopStatus: adding a state later
+    then needs no ALTER TYPE migration, and validation lives at the API
+    boundary instead.
+
+    The catch, also inherited: SQLModel skips validation on `table=True`
+    models, so this only binds writes that come in through the API schemas
+    below. A direct `channel.trust_tier = "banana"` in a script still gets
+    through — which is why the enum members, not string literals, are what
+    application code should compare against.
+    """
+    if value is None:
+        return value
+    if value not in allowed:
+        raise ValueError(f"{field} must be one of {sorted(allowed)}, got {value!r}")
+    return value
 
 
 class YoutubeChannel(SQLModel, table=True):
@@ -15,7 +59,7 @@ class YoutubeChannel(SQLModel, table=True):
     channel_id: str = Field(unique=True, index=True)  # YouTube UCxxxxxx ID
     channel_name: str
     channel_img_url: Optional[str] = Field(default=None, nullable=True)
-    trust_tier: str = Field(default="tier_2")  # tier_1 or tier_2
+    trust_tier: str = Field(default=TrustTier.TIER_2.value)
     active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -33,7 +77,7 @@ class RawYoutubeReview(SQLModel, table=True):
         default=None, foreign_key="laptops.id", nullable=True
     )
     match_confidence: Optional[float] = None
-    status: str = Field(default="pending")  # pending | matched | rejected
+    status: str = Field(default=ReviewStatus.PENDING.value)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # Why the fetch produced no transcript. NULL means "never recorded" —
     # every row ingested before this field existed. Those are treated as
@@ -87,8 +131,13 @@ class LaptopReviewSummary(SQLModel, table=True):
 
 class YoutubeChannelCreate(SQLModel):
     channel_url: str  # YouTube URL, @handle, or UC... ID — resolved automatically
-    trust_tier: str = "tier_2"
+    trust_tier: str = TrustTier.TIER_2.value
     active: bool = True
+
+    @field_validator("trust_tier")
+    @classmethod
+    def check_trust_tier(cls, value: str) -> str:
+        return _validate_choice(value, TRUST_TIER_VALUES, "trust_tier")  # type: ignore[return-value]
 
 
 class YoutubeChannelUpdate(SQLModel):
@@ -96,6 +145,11 @@ class YoutubeChannelUpdate(SQLModel):
     channel_img_url: Optional[str] = None
     trust_tier: Optional[str] = None
     active: Optional[bool] = None
+
+    @field_validator("trust_tier")
+    @classmethod
+    def check_trust_tier(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_choice(value, TRUST_TIER_VALUES, "trust_tier")
 
 
 class RawYoutubeReviewRead(SQLModel):
@@ -113,6 +167,11 @@ class RawYoutubeReviewRead(SQLModel):
     match_confidence: Optional[float]
     status: str
     created_at: datetime
+
+    @field_validator("status")
+    @classmethod
+    def check_status(cls, value: str) -> str:
+        return _validate_choice(value, REVIEW_STATUS_VALUES, "status")  # type: ignore[return-value]
 
 
 class ManualMatchRequest(SQLModel):
