@@ -12,7 +12,7 @@ from app.laptops.customization_model import LaptopCustomization  # noqa: F401
 # once per key, family grouping seeds one product line per key, and a key that
 # means two different things in two places is a bug nobody would notice.
 from app.laptops.family_key import family_key
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.logger import get_logger
 from app.reviews.discovery import discover_videos
 from app.reviews.matcher import match_laptop
@@ -22,16 +22,60 @@ from app.reviews.transcript import fetch_transcript
 logger = get_logger(__name__)
 
 
+def _family_group_key(laptop: Laptop) -> str:
+    """Which YouTube search this laptop belongs to.
+
+    Prefers `family_id` over `family_key(product_name)`. The key is only a
+    *seed* — family_key.py says so in its own docstring: it over-merges ASUS
+    and Apple (model year lives inside the first paren and is discarded) and
+    over-splits Acer (model code lives outside any paren, so two SKUs of one
+    machine keep two keys). `laptop_family` is the human-corrected version of
+    that same grouping, so wherever it exists it is strictly better — and an
+    over-split key costs real money here, 100 quota units per channel for a
+    search we already ran under the other key.
+
+    A null family_id means "not grouped yet", which is a valid state, not an
+    error: fall back to the seed key rather than guessing a group. The two
+    namespaces are prefixed so a family UUID can never collide with a key.
+    """
+    if laptop.family_id:
+        return f"family:{laptop.family_id}"
+    return f"key:{family_key(laptop.product_name)}"
+
+
+def _pick_representative(laptops: list[Laptop]) -> Laptop:
+    """One configuration stands in for the whole family in the YouTube query.
+
+    Shortest product_name first, then name, then id. Deterministic is the
+    requirement — `setdefault` over an unordered `select(Laptop)` meant the
+    search string for a family changed between runs with no data change, which
+    makes ingest results irreproducible and any quota accounting a guess.
+
+    Shortest-first is the tiebreak worth having rather than an arbitrary one:
+    the query is built from the full product_name, so the shortest member
+    carries the fewest configuration tokens ("ROG Zephyrus G14" rather than
+    "ROG Zephyrus G14 (2025, GA403WW) 32GB 1TB"), and configuration tokens are
+    exactly what a reviewer's title does not contain.
+    """
+    return min(laptops, key=lambda l: (len(l.product_name), l.product_name, str(l.id)))
+
+
 def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> dict:
     """
     Run the discovery + transcript + match pipeline across the catalog, one
-    search per laptop *family* (see family_key). Discovered videos are
-    matched against the whole catalog by the matcher, so one family search
-    can populate raw reviews for several variants.
+    search per laptop *family* (family_id where the laptop has been grouped,
+    family_key as the seed otherwise — see _family_group_key). Discovered
+    videos are matched against the whole catalog by the matcher, so one family
+    search can populate raw reviews for several variants.
+
+    Only `active` laptops are searched: retired products are not worth 100
+    quota units per channel, and reviews should not be attached to them.
 
     skip_covered=True skips families that already have at least one matched
     raw review, so repeated runs walk through the catalog day by day within
-    the YouTube quota (cost ≈ active_channels × 100 units per family).
+    the YouTube quota (cost ≈ active_channels × 100 units per family). See
+    the note at the `covered` computation for why "matched" and not "has any
+    raw review" — it is a schema limit, not a preference.
     Chunking/embedding stays a separate step (POST /reviews/process/{id}).
     """
     active_channels = session.exec(
@@ -44,21 +88,57 @@ def ingest_bulk(session: Session, limit: int = 5, skip_covered: bool = True) -> 
             "results": [],
         }
 
-    laptops = session.exec(select(Laptop)).all()
-    families: dict[str, Laptop] = {}
+    # Active laptops only, consistent with retrieve_candidates,
+    # conversation_laptops, graph.py::_pool_block and get_ranking_for_use_case.
+    #
+    # The justification is correctness and quota, NOT match quality: we should
+    # not spend 100 units per channel discovering reviews for a product that
+    # has been retired, nor attach reviews to one. It was measured, and it does
+    # not improve matching — restricting candidates to the 238 active rows makes
+    # ties slightly WORSE (76 -> 78 tied videos, 26 -> 27 cross-family), because
+    # suspended rows share match keys with active siblings, so removing them
+    # shortens ties without dissolving them, while removing a row that was the
+    # lone rank-1 winner creates a fresh tie among the runners-up. Do not cite
+    # this change as a matching improvement.
+    laptops = session.exec(
+        select(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)
+    ).all()
+
+    grouped: dict[str, list[Laptop]] = {}
     for laptop in laptops:
-        families.setdefault(family_key(laptop.product_name), laptop)
+        grouped.setdefault(_family_group_key(laptop), []).append(laptop)
+    families: dict[str, Laptop] = {
+        key: _pick_representative(members) for key, members in grouped.items()
+    }
 
     covered: set[str] = set()
     if skip_covered:
+        # NOTE: coverage can only be derived through matched_laptop_id, which
+        # is the single link from a review back to a laptop. A `pending` review
+        # has that column NULL by construction (match_laptop returns None below
+        # MATCH_THRESHOLD), so a family whose videos are all in the human queue
+        # still reads as uncovered and gets re-searched at full quota cost.
+        # Fixing that needs somewhere to record which family a search covered —
+        # see ADR-0012. Do not paper over it by re-running the matcher here:
+        # 89% of titles tie at rank 1, so quota decisions would be made from
+        # database row order.
         matched_laptops = session.exec(
             select(Laptop)
             .join(RawYoutubeReview, RawYoutubeReview.matched_laptop_id == Laptop.id)  # type: ignore[arg-type]
         ).all()
-        covered = {family_key(l.product_name) for l in matched_laptops}
+        # Same grouping function as `families` above — two different key
+        # derivations would silently never intersect, and skip_covered would
+        # quietly become a no-op.
+        covered = {_family_group_key(l) for l in matched_laptops}
 
-    todo = [(key, laptop) for key, laptop in families.items() if key not in covered]
-    todo = todo[:limit]
+    # Sorted, because `limit` slices this list: with dict-insertion order
+    # inherited from an unordered SELECT, two runs would pick two different
+    # families to spend the day's quota on, and "families_remaining" would not
+    # describe a walk through the catalog at all.
+    todo = sorted(
+        ((key, laptop) for key, laptop in families.items() if key not in covered),
+        key=lambda item: (item[1].product_name, str(item[1].id)),
+    )[:limit]
 
     results = []
     totals = {"discovered": 0, "skipped": 0, "matched": 0, "pending": 0, "rejected": 0}
