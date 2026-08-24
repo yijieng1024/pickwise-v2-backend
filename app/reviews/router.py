@@ -1,3 +1,4 @@
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,7 +30,11 @@ from app.reviews.models import (
 from app.reviews.matcher import match_laptop
 from app.reviews.processor import process_raw_review
 from app.reviews.service import ingest_bulk, ingest_for_laptop
-from app.reviews.transcript import TERMINAL_FAILURES, fetch_transcript
+from app.reviews.transcript import (
+    TERMINAL_FAILURES,
+    TranscriptFailure,
+    fetch_transcript,
+)
 from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
@@ -481,15 +486,40 @@ def aggregate_laptop(
 @router.post("/retry-transcripts")
 def retry_transcripts(
     limit: int = Query(default=20, ge=1, le=100),
+    delay_seconds: float = Query(
+        default=2.0,
+        ge=0.0,
+        le=30.0,
+        description="Pause between transcript fetches. See the rate-limit note "
+        "in the endpoint description — this is not optional politeness.",
+    ),
+    max_consecutive_blocks: int = Query(
+        default=3,
+        ge=1,
+        le=20,
+        description="Abort the run after this many consecutive ip_blocked "
+        "results instead of pushing through the remaining rows.",
+    ),
     session: Session = Depends(get_session),
     _: None = Depends(get_current_admin),
 ):
     """
     Re-fetch transcripts for rejected reviews whose failure was operational
-    rather than a genuine caption gap. Costs zero YouTube API quota — the
-    transcript endpoint is not metered — which is why this is separate from
-    ingest, where a retry would first pay 100 units per channel for a search
-    it does not need.
+    rather than a genuine caption gap.
+
+    **Zero YouTube Data API quota cost is not zero rate limit.** The transcript
+    endpoint is unmetered by the Data API — which is why this is separate from
+    ingest, where a retry would first pay 100 units per channel for a search it
+    does not need — but it is independently throttled by YouTube, and
+    conflating "free" with "unlimited" is what produced the IP blocks in the
+    first place. A residential IP starts getting blocked at roughly 30 fetches,
+    and requests made *inside* the block window extend it, so a run that pushes
+    through a block makes the situation worse and mislabels every remaining row
+    as ip_blocked on the way. Hence both guards below: a delay between fetches,
+    and a circuit breaker that stops after `max_consecutive_blocks`.
+
+    Consecutive, not cumulative: an isolated block among successes is noise,
+    while three in a row is the throttle engaging.
 
     Rows with failure_reason NULL are included: they predate the field, so
     their reason was erased by the old blanket exception handler and we
@@ -511,25 +541,57 @@ def retry_transcripts(
     ).all()
 
     recovered, still_failing = 0, {}
-    for review in candidates:
+    attempted = 0
+    consecutive_blocks = 0
+    aborted = False
+
+    for index, review in enumerate(candidates):
+        if index > 0 and delay_seconds:
+            time.sleep(delay_seconds)
+
         result = fetch_transcript(review.video_id)
         review.transcript_attempts += 1
+        attempted += 1
+
         if result.ok:
             review.raw_transcript = {"segments": result.segments}
             review.transcript_language = result.language_code
             review.failure_reason = None
             review.status = "pending"   # deliberately NOT "matched"
             recovered += 1
+            consecutive_blocks = 0
         else:
             review.failure_reason = result.failure.value
             still_failing[result.failure.value] = (
                 still_failing.get(result.failure.value, 0) + 1
             )
+            if result.failure == TranscriptFailure.IP_BLOCKED:
+                consecutive_blocks += 1
+            else:
+                consecutive_blocks = 0
         session.add(review)
 
+        if consecutive_blocks >= max_consecutive_blocks:
+            aborted = True
+            logger.warning(
+                "retry-transcripts aborted after %d consecutive ip_blocked "
+                "results (%d of %d rows attempted)",
+                consecutive_blocks, attempted, len(candidates),
+            )
+            break
+
+    # Commit whatever was attempted. The rows we did reach have a real,
+    # updated failure_reason and attempt count; throwing that away because the
+    # run ended early would mean re-fetching them next time, which is exactly
+    # the traffic the breaker exists to avoid.
     session.commit()
     return {
-        "attempted": len(candidates),
+        "candidates": len(candidates),
+        "attempted": attempted,
         "recovered": recovered,
         "still_failing": still_failing,
+        # Explicit partial-run marker: without it a caller cannot tell an
+        # abort from a run that simply had few candidates.
+        "aborted_on_rate_limit": aborted,
+        "not_attempted": len(candidates) - attempted,
     }
