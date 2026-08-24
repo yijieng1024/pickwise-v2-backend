@@ -1,4 +1,3 @@
-import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -33,8 +32,7 @@ from app.reviews.processor import process_raw_review
 from app.reviews.service import ingest_bulk, ingest_for_laptop
 from app.reviews.transcript import (
     TERMINAL_FAILURES,
-    TranscriptFailure,
-    fetch_transcript,
+    TranscriptFetchGuard,
 )
 from app.users.auth import get_current_admin
 
@@ -593,6 +591,14 @@ def retry_transcripts(
                 # to protect. What actually matters is whether the row has
                 # segments, so ask that directly; the attempts test then only
                 # keeps us off rows something else is already retrying.
+                #
+                # The general trap, because it will recur with every future
+                # additive column: a server_default backfill makes historical
+                # rows indistinguishable from newly-created ones. The default
+                # value is a fact about the migration, not about the row, so a
+                # predicate that treats it as a real observation will silently
+                # sweep in the entire pre-migration table. Test the thing you
+                # actually mean — here, "has no transcript".
                 and_(
                     RawYoutubeReview.status == ReviewStatus.PENDING.value,
                     RawYoutubeReview.transcript_attempts == 0,
@@ -610,18 +616,18 @@ def retry_transcripts(
         .limit(limit)
     ).all()
 
+    # The delay and the breaker live in TranscriptFetchGuard, shared with the
+    # ingest pipeline — see app/reviews/transcript.py. Two copies of a
+    # rate-limit guard is how one of them silently stops matching the other.
+    guard = TranscriptFetchGuard(
+        delay_seconds=delay_seconds,
+        max_consecutive_blocks=max_consecutive_blocks,
+    )
     recovered, still_failing = 0, {}
-    attempted = 0
-    consecutive_blocks = 0
-    aborted = False
 
-    for index, review in enumerate(candidates):
-        if index > 0 and delay_seconds:
-            time.sleep(delay_seconds)
-
-        result = fetch_transcript(review.video_id)
+    for review in candidates:
+        result = guard.fetch(review.video_id)
         review.transcript_attempts += 1
-        attempted += 1
 
         if result.ok:
             review.raw_transcript = {"segments": result.segments}
@@ -631,25 +637,14 @@ def retry_transcripts(
             # about which laptop the video is about.
             review.status = ReviewStatus.PENDING.value
             recovered += 1
-            consecutive_blocks = 0
         else:
             review.failure_reason = result.failure.value
             still_failing[result.failure.value] = (
                 still_failing.get(result.failure.value, 0) + 1
             )
-            if result.failure == TranscriptFailure.IP_BLOCKED:
-                consecutive_blocks += 1
-            else:
-                consecutive_blocks = 0
         session.add(review)
 
-        if consecutive_blocks >= max_consecutive_blocks:
-            aborted = True
-            logger.warning(
-                "retry-transcripts aborted after %d consecutive ip_blocked "
-                "results (%d of %d rows attempted)",
-                consecutive_blocks, attempted, len(candidates),
-            )
+        if guard.tripped:
             break
 
     # Commit whatever was attempted. The rows we did reach have a real,
@@ -659,11 +654,11 @@ def retry_transcripts(
     session.commit()
     return {
         "candidates": len(candidates),
-        "attempted": attempted,
+        "attempted": guard.attempted,
         "recovered": recovered,
         "still_failing": still_failing,
         # Explicit partial-run marker: without it a caller cannot tell an
         # abort from a run that simply had few candidates.
-        "aborted_on_rate_limit": aborted,
-        "not_attempted": len(candidates) - attempted,
+        "aborted_on_rate_limit": guard.tripped,
+        "not_attempted": len(candidates) - guard.attempted,
     }

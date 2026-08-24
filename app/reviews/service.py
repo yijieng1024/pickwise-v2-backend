@@ -17,7 +17,7 @@ from app.logger import get_logger
 from app.reviews.discovery import discover_videos
 from app.reviews.matcher import match_laptop
 from app.reviews.models import RawYoutubeReview, ReviewStatus, YoutubeChannel
-from app.reviews.transcript import fetch_transcript
+from app.reviews.transcript import TranscriptFetchGuard, is_terminal
 
 logger = get_logger(__name__)
 
@@ -140,17 +140,43 @@ def ingest_bulk(
     # inherited from an unordered SELECT, two runs would pick two different
     # families to spend the day's quota on, and "families_remaining" would not
     # describe a walk through the catalog at all.
+    #
+    # KNOWN LIMITATION, deliberately not fixed here: alphabetical order makes
+    # `limit` a biased sampler, not just an arbitrary one. A limit=3 run on
+    # 2026-08-24 drew three consecutive ASUS ExpertBook families — business
+    # machines, the least likely thing a consumer channel covers — and
+    # returned 4 videos across 19 channels, which said nothing about channel
+    # coverage. Do NOT solve this with a --random flag: ADR-0012 introduces
+    # last_review_search_at, and ordering by least-recently-searched gives
+    # correct rotation as a side effect of a column we need anyway. One fix,
+    # not two.
     todo = sorted(
         ((key, laptop) for key, laptop in families.items() if key not in covered),
         key=lambda item: (item[1].product_name, str(item[1].id)),
     )[:limit]
 
     results = []
-    totals = {"discovered": 0, "skipped": 0, "matched": 0, "pending": 0, "rejected": 0}
+    totals = {
+        "discovered": 0, "skipped": 0, "matched": 0, "pending": 0,
+        "rejected": 0, "transcript_deferred": 0,
+    }
+    # ONE guard for the whole run, deliberately created here rather than per
+    # family: a block during the first family is still a block during the
+    # second, and a per-family guard would forget that and keep hammering.
+    guard = TranscriptFetchGuard() if fetch_transcripts else None
+
     for key, laptop in todo:
+        if guard is not None and guard.tripped:
+            logger.warning(
+                "Stopping bulk ingest before family '%s': transcript rate "
+                "limit tripped.", key,
+            )
+            break
         try:
             counts = ingest_for_laptop(
-                laptop.id, session, fetch_transcripts=fetch_transcripts
+                laptop.id, session,
+                fetch_transcripts=fetch_transcripts,
+                guard=guard,
             )
             for k in totals:
                 totals[k] += counts.get(k, 0)
@@ -160,6 +186,9 @@ def ingest_bulk(
             results.append({"family": key, "queried_laptop_id": str(laptop.id), "error": str(e)})
 
     return {
+        # A partial run is stated, not inferred from a short results list.
+        "aborted_on_rate_limit": bool(guard and guard.tripped),
+        "transcript_fetches_attempted": guard.attempted if guard else 0,
         "families_total": len(families),
         "families_already_covered": len(covered),
         "families_attempted": len(todo),
@@ -178,7 +207,10 @@ def _parse_published(value: str | None) -> datetime | None:
 
 
 def ingest_for_laptop(
-    laptop_id: uuid.UUID, session: Session, fetch_transcripts: bool = True
+    laptop_id: uuid.UUID,
+    session: Session,
+    fetch_transcripts: bool = True,
+    guard: TranscriptFetchGuard | None = None,
 ) -> dict:
     """
     Run the full discovery + matching + transcript-fetch pipeline for one laptop.
@@ -212,6 +244,10 @@ def ingest_for_laptop(
         raise ValueError(f"Laptop {laptop_id} not found.")
 
     laptop, brand_name = laptop_row
+    # Callers that run several laptops share one guard so the breaker spans the
+    # whole run; a standalone call gets its own.
+    if fetch_transcripts and guard is None:
+        guard = TranscriptFetchGuard()
     channels = session.exec(
         select(YoutubeChannel).where(YoutubeChannel.active == True)  # noqa: E712
     ).all()
@@ -256,7 +292,15 @@ def ingest_for_laptop(
         # verdict and replace it with "we didn't try". The reject bucket is a
         # clean single-cause set and must stay that way.
         if existing and (
-            not fetch_transcripts or existing.status != ReviewStatus.REJECTED.value
+            not fetch_transcripts
+            or existing.status != ReviewStatus.REJECTED.value
+            # A rejected row whose failure is terminal (no captions at all, or
+            # the video is gone) can never be recovered by fetching again. Left
+            # unchecked, every ingest run re-fetched all 15 of them — spending
+            # rate-limit budget, which is scarcer than quota here, on rows with
+            # a known permanent answer. retry-transcripts has always known
+            # this; ingest did not.
+            or is_terminal(existing.failure_reason)
         ):
             counts["skipped"] += 1
             continue
@@ -285,7 +329,7 @@ def ingest_for_laptop(
             attempts = 0
             counts["transcript_deferred"] += 1
         else:
-            result = fetch_transcript(video_id)
+            result = guard.fetch(video_id)  # type: ignore[union-attr]
             attempts = 1
             if result.ok:
                 status = (
@@ -330,6 +374,13 @@ def ingest_for_laptop(
 
         if fetch_transcripts:
             counts[status] += 1
+
+        if guard is not None and guard.tripped:
+            # Stop here rather than writing a run's worth of fictional
+            # ip_blocked rejections. Remaining videos are simply not recorded;
+            # the next run rediscovers them.
+            counts["aborted_on_rate_limit"] = True
+            break
 
     session.commit()
     logger.info("Ingest complete for laptop %s: %s", laptop.product_name, counts)

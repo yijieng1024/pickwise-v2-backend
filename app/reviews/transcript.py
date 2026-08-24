@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
@@ -177,3 +178,90 @@ def _build_api() -> YouTubeTranscriptApi:
         _PROXY_WARNED = True
 
     return YouTubeTranscriptApi()
+
+
+# --- Rate-limit policy -------------------------------------------------------
+#
+# Zero YouTube Data API quota cost is not zero rate limit. The transcript
+# endpoint is unmetered by the Data API, but YouTube throttles it
+# independently: a residential IP starts getting blocked at roughly 30 fetches,
+# and requests made INSIDE the block window extend it. So a caller that pushes
+# through a block makes the block worse and, on the way, records a run's worth
+# of fictional ip_blocked failures — which is how the reject bucket became 48.7%
+# transient failures that looked like missing captions.
+#
+# Every caller that fetches transcripts in a loop needs the same two guards, and
+# there are two such callers (POST /reviews/retry-transcripts and the ingest
+# pipeline). They live here, once. Two divergent copies of a rate-limit guard is
+# how one of them silently stops matching the other.
+
+_DEFAULT_DELAY_SECONDS = 2.0
+_DEFAULT_MAX_CONSECUTIVE_BLOCKS = 3
+
+
+def is_terminal(failure_reason: Optional[str]) -> bool:
+    """True when this stored failure_reason can never be recovered by retrying.
+
+    Takes the raw column value rather than an enum so callers can pass
+    `review.failure_reason` straight in. NULL is NOT terminal: it means the
+    reason was never recorded (rows predating the column), and the old code
+    erased it, so those get one more try.
+    """
+    if failure_reason is None:
+        return False
+    return failure_reason in {f.value for f in TERMINAL_FAILURES}
+
+
+@dataclass
+class TranscriptFetchGuard:
+    """Paces a loop of transcript fetches and trips a breaker on repeated blocks.
+
+    Usage:
+
+        guard = TranscriptFetchGuard()
+        for video_id in ids:
+            result = guard.fetch(video_id)
+            ...
+            if guard.tripped:
+                break   # the caller decides what a partial run means
+
+    The guard never raises and never breaks the loop itself — it reports, and
+    the caller stops. A caller that ignores `tripped` still gets the delay,
+    which is the more important of the two guards.
+
+    Consecutive blocks, not cumulative: an isolated block among successes is
+    noise, while three in a row is the throttle engaging. Any non-block outcome
+    resets the counter.
+
+    One guard should span a whole run, including across families in a bulk
+    ingest — a block during the first family is still a block during the
+    second, and a per-family guard would forget that and keep hammering.
+    """
+
+    delay_seconds: float = _DEFAULT_DELAY_SECONDS
+    max_consecutive_blocks: int = _DEFAULT_MAX_CONSECUTIVE_BLOCKS
+    attempted: int = 0
+    tripped: bool = False
+    consecutive_blocks: int = field(default=0, repr=False)
+
+    def fetch(self, video_id: str) -> TranscriptResult:
+        """Delay (except before the first), fetch, update breaker state."""
+        if self.attempted and self.delay_seconds:
+            time.sleep(self.delay_seconds)
+        self.attempted += 1
+
+        result = fetch_transcript(video_id)
+
+        if result.failure == TranscriptFailure.IP_BLOCKED:
+            self.consecutive_blocks += 1
+            if self.consecutive_blocks >= self.max_consecutive_blocks:
+                self.tripped = True
+                logger.warning(
+                    "Transcript rate limit tripped after %d consecutive blocks "
+                    "(%d fetches attempted this run) — stopping.",
+                    self.consecutive_blocks, self.attempted,
+                )
+        else:
+            self.consecutive_blocks = 0
+
+        return result
