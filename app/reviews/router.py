@@ -583,9 +583,26 @@ def retry_transcripts(
                 # transcript_attempts=0. Without this clause they would be
                 # stranded forever: a later ingest skips any existing
                 # non-rejected row, so nothing else would ever fetch them.
+                #
+                # The empty-transcript test is NOT redundant with
+                # transcript_attempts=0. Migration 8e429682f918 added that
+                # column with server_default '0', so all 28 rows that predate
+                # it read as "never attempted" while already holding a full
+                # transcript. Counting attempts alone would re-fetch every one
+                # of them and spend the rate-limit budget this endpoint exists
+                # to protect. What actually matters is whether the row has
+                # segments, so ask that directly; the attempts test then only
+                # keeps us off rows something else is already retrying.
                 and_(
                     RawYoutubeReview.status == ReviewStatus.PENDING.value,
                     RawYoutubeReview.transcript_attempts == 0,
+                    func.coalesce(
+                        func.jsonb_array_length(
+                            RawYoutubeReview.raw_transcript["segments"]  # type: ignore[index]
+                        ),
+                        0,
+                    )
+                    == 0,
                 ),
             )
         )
