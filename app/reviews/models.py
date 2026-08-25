@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pgvector.sqlalchemy import Vector
 from pydantic import field_validator, model_validator
-from sqlalchemy import Column
+from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -13,14 +13,30 @@ from sqlmodel import Field, SQLModel
 class ReviewStatus(str, Enum):
     """Triage state of an ingested video.
 
-    Deliberately only these three. Why a transcript fetch produced nothing
-    lives in `failure_reason` (a TranscriptFailure value), not here — REJECTED
-    means "not usable as review evidence right now", and splitting it by cause
-    would make every consumer enumerate causes to ask that one question.
+    Why a transcript fetch produced nothing lives in `failure_reason` (a
+    TranscriptFailure value), not here — REJECTED means "no transcript", and
+    splitting it by cause would make every consumer enumerate causes to ask
+    that one question.
+
+    IRRELEVANT is NOT a flavour of REJECTED, and the two must not be merged.
+    REJECTED says the video is about a laptop but we could not get its words;
+    IRRELEVANT says the video is not about a laptop at all. They differ in
+    everything that acts on them: a rejected row is a transcript-retry
+    candidate (see POST /reviews/retry-transcripts), an irrelevant one never
+    is, no matter how many transcripts become available. Collapsing them would
+    recreate exactly the cause ambiguity the failure_reason split removed.
+
+    IRRELEVANT is a dismissal, not a deletion, and the row is what makes the
+    dismissal stick: video_id is UNIQUE and ingest_for_laptop skips any
+    existing row that is not REJECTED, so a deleted row is rediscovered and
+    reinserted on the next run and lands straight back in the queue. Same
+    reasoning as keeping the terminal no_track rows — the row is how ingest
+    knows not to try again.
     """
-    PENDING = "pending"      # transcript stored, no confident laptop match
-    MATCHED = "matched"      # linked to a laptop, ready for processing
-    REJECTED = "rejected"    # no transcript
+    PENDING = "pending"        # transcript stored, no confident laptop match
+    MATCHED = "matched"        # linked to a laptop, ready for processing
+    REJECTED = "rejected"      # no transcript
+    IRRELEVANT = "irrelevant"  # not a laptop video — dismissed by a human
 
 
 class TrustTier(str, Enum):
@@ -174,6 +190,21 @@ class RawYoutubeReview(SQLModel, table=True):
     video_id: str = Field(unique=True, index=True)
     channel_id: str = Field(foreign_key="youtube_channels.channel_id", index=True)
     video_title: str
+    # The video's full description text. Nullable, and NULL genuinely means
+    # "never fetched" — every row ingested before this column existed, plus any
+    # row whose videos.list lookup failed. It is not "the video has no
+    # description"; an empty description is stored as "".
+    #
+    # Worth the extra API call: it is the single richest evidence source for
+    # which configuration a reviewer tested. Titles never carry a spec, and
+    # Chinese-language channels routinely paste a full spec table into the
+    # description. search.list only returns a truncated description (~160
+    # chars, cutting off exactly where the spec table starts), so this is
+    # filled from videos.list — 1 quota unit per 50 videos against search's 100
+    # per channel, i.e. rounding error on the ingest budget.
+    video_description: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     published_at: Optional[datetime] = None
     raw_transcript: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     matched_laptop_id: Optional[uuid.UUID] = Field(
@@ -316,6 +347,21 @@ class RawYoutubeReviewRead(SQLModel):
     # this package assigns a status literal, only ReviewStatus members.
     status: str
     created_at: datetime
+
+
+class ReviewIrrelevantRequest(SQLModel):
+    """Body for PATCH /reviews/raw/{id}/irrelevant.
+
+    One endpoint with a flag rather than a mark endpoint and an undo endpoint:
+    the undo has to be as discoverable as the dismissal, and a second route
+    named /un-irrelevant is the kind of thing that gets built and then never
+    wired into the screen. `irrelevant: false` restores the row to PENDING.
+
+    Defaults to True so the dismiss call can send an empty body, but the
+    restore call must say so explicitly — the destructive-ish direction is the
+    common one, the reversal should be deliberate.
+    """
+    irrelevant: bool = True
 
 
 class ManualMatchRequest(SQLModel):

@@ -224,6 +224,45 @@ def _parse_published(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+
+def should_skip_existing(
+    existing: RawYoutubeReview | None, fetch_transcripts: bool
+) -> bool:
+    """Should a rediscovered video be left exactly as it is?
+
+    Skip already-processed videos; retry rejected ones — their failure may have
+    been operational (IP block, timeout) rather than a real caption gap.
+
+    In discovery-only mode a rejected row is skipped too: we have nothing new
+    to offer it, and rewriting it would erase a real `no_track` verdict and
+    replace it with "we didn't try". The reject bucket is a clean single-cause
+    set and must stay that way.
+
+    IRRELEVANT falls on the skip side through the same `!= REJECTED` clause
+    that covers MATCHED, and that is the entire mechanism keeping a dismissal
+    dismissed — a rediscovered irrelevant video is never rewritten, so it never
+    returns to the queue. It is a pure function, and separate from
+    ingest_for_laptop, so that behaviour can be asserted without a database or
+    a YouTube call: see tests/test_ingest_skip.py.
+
+    Extracted, not duplicated. A second copy of this predicate in a test would
+    keep passing while the real one drifted.
+    """
+    if existing is None:
+        return False
+    return (
+        not fetch_transcripts
+        or existing.status != ReviewStatus.REJECTED.value
+        # A rejected row whose failure is terminal (no captions at all, or the
+        # video is gone) can never be recovered by fetching again. Left
+        # unchecked, every ingest run re-fetched all 15 of them — spending
+        # rate-limit budget, which is scarcer than quota here, on rows with a
+        # known permanent answer. retry-transcripts has always known this;
+        # ingest did not.
+        or is_terminal(existing.failure_reason)
+    )
+
+
 def ingest_for_laptop(
     laptop_id: uuid.UUID,
     session: Session,
@@ -301,25 +340,7 @@ def ingest_for_laptop(
         existing = session.exec(
             select(RawYoutubeReview).where(RawYoutubeReview.video_id == video_id)
         ).first()
-        # Skip already-processed videos; retry rejected ones — their failure
-        # may have been operational (IP block, timeout) rather than a real
-        # caption gap.
-        #
-        # In discovery-only mode a rejected row is skipped too: we have nothing
-        # new to offer it, and rewriting it would erase a real `no_track`
-        # verdict and replace it with "we didn't try". The reject bucket is a
-        # clean single-cause set and must stay that way.
-        if existing and (
-            not fetch_transcripts
-            or existing.status != ReviewStatus.REJECTED.value
-            # A rejected row whose failure is terminal (no captions at all, or
-            # the video is gone) can never be recovered by fetching again. Left
-            # unchecked, every ingest run re-fetched all 15 of them — spending
-            # rate-limit budget, which is scarcer than quota here, on rows with
-            # a known permanent answer. retry-transcripts has always known
-            # this; ingest did not.
-            or is_terminal(existing.failure_reason)
-        ):
+        if should_skip_existing(existing, fetch_transcripts):
             counts["skipped"] += 1
             continue
 
@@ -365,6 +386,12 @@ def ingest_for_laptop(
 
         if existing:
             existing.video_title = video["video_title"]
+            # Only when discovery actually returned one. A failed videos.list
+            # lookup must not overwrite a description we already hold with NULL
+            # — that would turn a fetched description back into "never
+            # fetched" and put the row back in the backfill queue.
+            if video.get("video_description") is not None:
+                existing.video_description = video["video_description"]
             existing.raw_transcript = raw_transcript
             existing.matched_laptop_id = matched_laptop_id
             existing.match_confidence = confidence
@@ -379,6 +406,7 @@ def ingest_for_laptop(
                     video_id=video_id,
                     channel_id=video["channel_id"],
                     video_title=video["video_title"],
+                    video_description=video.get("video_description"),
                     published_at=_parse_published(video.get("published_at")),
                     raw_transcript=raw_transcript,
                     matched_laptop_id=matched_laptop_id,

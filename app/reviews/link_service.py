@@ -14,6 +14,7 @@ derived per family rather than configured globally because the answer differs:
 an Apple family varies by chip and storage, a gaming family by GPU, and an
 ExpertBook family sometimes by nothing at all.
 """
+import re
 import uuid
 from typing import Any, Optional
 
@@ -101,7 +102,78 @@ def differing_columns(members: list[Laptop]) -> list[str]:
     return out
 
 
-def family_members(session: Session, family_id: uuid.UUID) -> list[Laptop]:
+# Columns a laptop review essentially never states. Not "rarely" — a reviewer
+# is sent one unit, its RAM and storage are the parts of the spec that change
+# nothing about how the machine performs in the ways a review discusses, and no
+# conclusion in the video would differ if it had 32GB instead of 64GB.
+_UNSTATEABLE_COLUMNS = frozenset({"ram_gb", "ssd_gb"})
+
+
+def separability(
+    columns: list[str], member_count: int
+) -> tuple[bool, str, Optional[str]]:
+    """Can a human actually tell these configurations apart from a video?
+
+    Returns (separable, code, reason). Not separable means the screen must NOT
+    render a chooser — it shows the reason and leaves the selection unset.
+
+    The `code` is there so the screen branches on a value rather than on
+    English: the three unseparable cases are not the same case. RAM_STORAGE_ONLY
+    is unanswerable in principle and the reason is the whole message.
+    SINGLE_CONFIG is different in kind — there is nothing to choose BETWEEN, but
+    the one row may still be the right link if the video names it, so a screen
+    may reasonably offer it as a single confirmable row rather than hiding it.
+    Collapsing the three into one boolean would force that distinction to be
+    recovered by string matching.
+
+    This is the part that matters most on that screen. Presenting four options
+    when the discriminating information cannot exist in a review does not
+    merely inconvenience the human, it invites a guess, and a guessed laptop_id
+    is strictly worse than a null one: null is honest and reads downstream as
+    "configuration unknown", while a guess silently attaches this video's
+    performance claims to a machine the reviewer never touched. The whole
+    family-first design of ADR-0012 exists because the configuration is
+    frequently unknowable; this is that principle applied to the one screen
+    that was still asking anyway.
+
+    A family separable on CPU or GPU stays separable even if it ALSO differs in
+    RAM — the human can answer the CPU question and the RAM question rides
+    along with it. Only a family whose entire remaining difference is RAM and
+    storage is unanswerable in principle.
+    """
+    if member_count == 0:
+        # Reachable, and not a data error: the ExpertBook P3 G2 family is two
+        # rows and both are suspended, so the config filter empties it. Given a
+        # distinct code because the honest message is about the catalog, not
+        # about the video — the caller knows whether suspension is the cause and
+        # says so.
+        return False, "no_configs", (
+            "No linkable configuration of this product line is in the catalog."
+        )
+    if member_count < 2:
+        return False, "single_config", (
+            "Only one configuration of this product line is in the catalog, so "
+            "there is nothing to choose between. That on its own is not "
+            "evidence the reviewer tested it."
+        )
+    if not columns:
+        return False, "identical_specs", (
+            "The configurations in this line are identical in every spec we "
+            "track, so there is nothing to choose between."
+        )
+    if set(columns) <= _UNSTATEABLE_COLUMNS:
+        return False, "ram_storage_only", (
+            "The configurations in this line differ only in RAM and storage, "
+            "which reviews rarely specify. Leave the configuration unset."
+        )
+    return True, "separable", None
+
+
+def family_members(
+    session: Session,
+    family_id: uuid.UUID,
+    exclude_statuses: tuple[str, ...] = (),
+) -> list[Laptop]:
     """A family's configurations, in a stable order.
 
     Ordered by name then id: the id tiebreak matters because sibling configs
@@ -109,15 +181,30 @@ def family_members(session: Session, family_id: uuid.UUID) -> list[Laptop]:
     an unbroken tie falls through to database return order, which would
     reshuffle the human's list between two loads of the same screen.
 
-    No status filter — an admin linking a review needs to see every
+    Unfiltered by default — an admin linking a review needs to see every
     configuration, including retired ones, because the review may well be of a
-    machine that has since been withdrawn.
+    machine that has since been withdrawn. That is exactly why `inactive` is
+    NOT excluded anywhere: a delisted laptop is the normal subject of an old
+    review, and hiding it would make those reviews unlinkable.
+
+    `exclude_statuses` is for the one case that is different. The config
+    chooser passes SUSPENDED: a suspended row is a listing on hold, and in
+    practice it carries placeholder data — the row that prompted this was
+    priced RM 0, which is the catalog's "unknown" showing through as "free".
+    Asking a human to attach review evidence to it is asking them to file
+    evidence against a record nobody trusts. Excluding it also changes the
+    answer downstream, because differing_columns is recomputed over what
+    remains: dropping that RM 0 row collapsed price to a constant 11999 and
+    removed a column that looked discriminating and was not.
     """
+    statement = select(Laptop).where(Laptop.family_id == family_id)
+    if exclude_statuses:
+        statement = statement.where(
+            Laptop.status.notin_(exclude_statuses)  # type: ignore[attr-defined]
+        )
     return list(
         session.exec(
-            select(Laptop)
-            .where(Laptop.family_id == family_id)
-            .order_by(Laptop.product_name, Laptop.id)  # type: ignore[arg-type]
+            statement.order_by(Laptop.product_name, Laptop.id)  # type: ignore[arg-type]
         ).all()
     )
 
@@ -191,12 +278,59 @@ def column_label(column: str) -> str:
     return _COLUMN_LABELS.get(column, column)
 
 
+def config_label(laptop: Laptop, columns: list[str]) -> str:
+    """A short human row label built from what actually differs.
+
+    "Ultra 7 358H / Arc B390 / 32GB / 1TB" — the same string the screen shows
+    back as "Selected: ...", so the label the human picked and the label they
+    are shown afterwards cannot disagree.
+
+    This replaces `model_code` as the row identity on that screen. model_code is
+    a database key: `asus-expertbook-ultra-b9406caa-ultra7-358h-arcb390-32gb-1tb`
+    is unreadable at a glance and, worse, is a slug of the CPU/GPU/RAM/Storage
+    columns rendered in human form immediately beside it. It said nothing the
+    row did not already say, in the least readable way available.
+
+    Falls back to the product name when nothing differs — a single-member family
+    has no distinguishing values to name it by.
+    """
+    parts = [
+        _display_value(column, getattr(laptop, column, None))
+        for column in columns
+        if getattr(laptop, column, None) is not None
+    ]
+    return " / ".join(p for p in parts if p) or laptop.product_name
+
+
+def _display_value(column: str, value: Any) -> str:
+    """Compact rendering for a label. Storage in TB past 1024 because that is
+    how the number is written everywhere a human will check it against."""
+    if value is None:
+        return ""
+    if column == "ssd_gb" and isinstance(value, int) and value >= 1024 and value % 1024 == 0:
+        return f"{value // 1024}TB"
+    if column == "ssd_gb":
+        return f"{value}GB"
+    if column == "ram_gb":
+        return f"{value}GB"
+    if column == "processor_model":
+        # Drop the vendor prefix a spec sheet repeats on every row.
+        return re.sub(
+            r"^(Intel|AMD|Apple)\s+(Core\s+)?(Processor\s+)?", "", str(value)
+        ).replace("Processor ", "")
+    if column == "gpu_model":
+        return re.sub(r"^(NVIDIA|Intel|AMD)\s+(GeForce\s+)?", "", str(value))
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
 def config_row(laptop: Laptop, columns: list[str]) -> dict:
     """One configuration, carrying only the columns that differ in its family."""
     return {
         "laptop_id": laptop.id,
         "product_name": laptop.product_name,
-        "model_code": laptop.model_code,
+        "label": config_label(laptop, columns),
         "status": laptop.status,
         "specs": {column: getattr(laptop, column, None) for column in columns},
     }

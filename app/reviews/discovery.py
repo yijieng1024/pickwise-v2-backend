@@ -107,6 +107,50 @@ def resolve_channel_from_url(channel_url: str) -> dict:
     }
 
 
+
+# videos.list accepts up to 50 ids per call and costs 1 quota unit, against
+# search.list's 100. Batching is therefore not an optimisation, it is what makes
+# fetching descriptions free in practice.
+_VIDEOS_LIST_BATCH = 50
+
+
+def fetch_descriptions(video_ids: list[str], youtube=None) -> dict[str, str]:
+    """Full description text for each video id, keyed by id.
+
+    Why a second API call at all: search.list's snippet.description is
+    TRUNCATED to roughly 160 characters, and the spec table a channel pastes
+    into its description starts below that cut. The truncated field is
+    therefore worse than useless for evidence — it looks like a description and
+    contains none of the part it is wanted for.
+
+    Missing ids in the return mean the lookup failed or the video is gone;
+    callers must leave those NULL rather than storing "", so the backfill can
+    still find them. An id present with "" means the video genuinely has an
+    empty description.
+
+    Never raises: descriptions are an enhancement to ingest, and losing them
+    must not fail a run that has already spent 100 quota units per channel on
+    the search.
+    """
+    if not video_ids:
+        return {}
+    client = youtube or _get_youtube_client()
+    out: dict[str, str] = {}
+    for start in range(0, len(video_ids), _VIDEOS_LIST_BATCH):
+        batch = video_ids[start : start + _VIDEOS_LIST_BATCH]
+        try:
+            response = (
+                client.videos().list(part="snippet", id=",".join(batch)).execute()
+            )
+            for item in response.get("items", []):
+                out[item["id"]] = item.get("snippet", {}).get("description", "") or ""
+        except Exception as e:
+            logger.warning(
+                "Description fetch failed for %d videos: %s", len(batch), e
+            )
+    return out
+
+
 def discover_videos(
     brand_name: str,
     product_name: str,
@@ -115,7 +159,8 @@ def discover_videos(
 ) -> list[dict]:
     """
     Search YouTube for review videos of a specific laptop model across all active channels.
-    Returns a list of raw video metadata dicts (video_id, channel_id, video_title, published_at).
+    Returns a list of raw video metadata dicts (video_id, channel_id, video_title,
+    published_at, video_description).
     Costs 100 quota units per channel searched.
 
     `published_after_days` bounds how far back the search reaches. Pass 0 to
@@ -177,5 +222,14 @@ def discover_videos(
             )
         except Exception as e:
             logger.warning("Discovery failed for channel %s: %s", channel.channel_id, e)
+
+    # One batched videos.list for the whole run, not one per channel: the cost
+    # is per call, not per channel, and 5 channels of 5 videos is a single
+    # 25-id request.
+    descriptions = fetch_descriptions([r["video_id"] for r in results], youtube)
+    for row in results:
+        # .get, not [] — an id absent from the map means the lookup failed, and
+        # the caller must be able to tell that from an empty description.
+        row["video_description"] = descriptions.get(row["video_id"])
 
     return results

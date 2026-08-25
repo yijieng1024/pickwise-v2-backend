@@ -15,16 +15,18 @@ from app.common.search_service import apply_search, search_query
 from app.database import get_session
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_model import LaptopFamily
-from app.laptops.laptop_models import Laptop
+from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.logger import get_logger
 from app.reviews.aggregator import aggregate_for_laptop
-from app.reviews.discovery import resolve_channel_from_url
+from app.reviews.config_evidence import scan_config_evidence
+from app.reviews.discovery import fetch_descriptions, resolve_channel_from_url
 from app.reviews.models import (
     LaptopReviewChunk,
     LaptopReviewSummary,
     ManualMatchRequest,
     RawYoutubeReview,
     RawYoutubeReviewRead,
+    ReviewIrrelevantRequest,
     ReviewStatus,
     YoutubeChannel,
     YoutubeChannelCreate,
@@ -39,6 +41,7 @@ from app.reviews.link_service import (
     family_members,
     links_for_reviews,
     resolve_family_for_laptop,
+    separability,
 )
 from app.reviews.matcher import match_laptop
 from app.reviews.processor import process_raw_review
@@ -219,7 +222,8 @@ def _to_read(
 @router.get("/raw", response_model=Page[RawYoutubeReviewRead])
 def list_raw_reviews(
     status: str | None = Query(
-        default=None, description="Filter by status: pending | matched | rejected"
+        default=None,
+        description="Filter by status: pending | matched | rejected | irrelevant",
     ),
     search: str | None = search_query("Matches video title"),
     pagination: PaginationParams = Depends(),
@@ -335,6 +339,68 @@ def manual_match(
         "review": _to_read(review, None),
         "links": links_for_reviews(session, [review_id]).get(review_id, []),
     }
+
+
+@router.patch("/raw/{review_id}/irrelevant")
+def set_review_irrelevant(
+    review_id: uuid.UUID,
+    body: ReviewIrrelevantRequest | None = None,
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """Dismiss a queue item that is not about a laptop, or undo that dismissal.
+
+    Discovery no longer requires the word "review" in a title — Chinese
+    channels do not title in English, so the keyword cost more recall than it
+    bought precision — and the price of that is non-laptop videos reaching the
+    queue. This is how they leave it.
+
+    The row is marked, never deleted. video_id is UNIQUE and
+    service.should_skip_existing leaves any non-REJECTED row untouched, so a
+    deleted row is rediscovered and reinserted on the very next ingest run and
+    lands back in the queue; the row is what makes the dismissal stick.
+
+    Reversible, and only exactly reversible between PENDING and IRRELEVANT —
+    which is why the transition is refused (409) from any other status. Undo
+    has one destination, PENDING, so allowing a MATCHED or REJECTED row in
+    would mean restoring it as PENDING and silently discarding a match or a
+    transcript-failure verdict. A mis-click on the queue must cost nothing.
+    """
+    # An omitted body means the default, `irrelevant: true` — the dismiss
+    # button sends no payload. A shared module-level default instance would be
+    # one mutable object handed to every request, so build a fresh one.
+    body = body or ReviewIrrelevantRequest()
+
+    review = session.get(RawYoutubeReview, review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found.")
+
+    target = (
+        ReviewStatus.IRRELEVANT.value if body.irrelevant else ReviewStatus.PENDING.value
+    )
+    allowed_from = (
+        ReviewStatus.PENDING.value if body.irrelevant else ReviewStatus.IRRELEVANT.value
+    )
+    if review.status != allowed_from and review.status != target:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Review is {review.status!r}; only a {allowed_from!r} review can "
+                f"become {target!r}. This transition is deliberately restricted to "
+                "pending <-> irrelevant so that undo is exact."
+            ),
+        )
+
+    # Idempotent: already in the target state is success, not a conflict. The
+    # dismiss button will be double-clicked.
+    if review.status != target:
+        review.status = target
+        session.add(review)
+        session.commit()
+        session.refresh(review)
+        logger.info("Review %s status set to %s", review_id, target)
+
+    return _to_read(review, None)
 
 
 @router.post("/rematch")
@@ -769,6 +835,9 @@ def list_pending_reviews(
         RawYoutubeReview.match_confidence,
         RawYoutubeReview.created_at,
         segment_count,
+    # PENDING only, which is what excludes dismissed rows: an IRRELEVANT
+    # review is not "pending with a flag set", it has left the queue. Reach it
+    # through GET /reviews/raw?status=irrelevant — that is the undo surface.
     ).where(RawYoutubeReview.status == ReviewStatus.PENDING.value)
     statement = apply_search(statement, search, [RawYoutubeReview.video_title])
     total = count_total(session, statement)
@@ -863,35 +932,161 @@ def search_families(
     ]
 
 
-@router.get("/families/{family_id}/configs")
-def list_family_configs(
-    family_id: uuid.UUID,
+@router.post("/backfill-descriptions")
+def backfill_descriptions(
+    limit: int = Query(default=200, ge=1, le=1000),
     session: Session = Depends(get_session),
     _: None = Depends(get_current_admin),
 ):
-    """The configurations in one family, showing only what differs between them.
+    """Fill video_description on rows ingested before the column existed.
 
-    A family holds up to 14 rows of one machine, and a full spec sheet rendered
-    14 times is unreadable. `differing_columns` computes, for THIS family, which
-    spec columns hold more than one distinct value, and every row carries only
-    those — CPU/GPU/RAM for a gaming family, chip and storage for an Apple one,
-    and nothing at all for a family whose members are genuinely identical.
+    The configuration-evidence scan is only as good as its source material, and
+    the description is the richest of the two — a channel that pastes a spec
+    table into it answers the configuration question outright, which is
+    especially common on the Chinese-language channels. Every row already in
+    the table predates the column, so without this the feature would be blind
+    on the entire existing queue and only work on newly ingested videos.
 
-    `columns` is returned alongside the rows so the screen can render the table
-    header without inferring it from the first row.
+    Costs 1 quota unit per 50 videos (videos.list), against 100 per channel for
+    a discovery search — the whole table is a couple of units. That is why this
+    is a plain synchronous endpoint and not a background job.
+
+    Only touches rows where video_description IS NULL, so it is safe to re-run
+    and never overwrites a description already held. A video whose lookup fails
+    or which has been deleted from YouTube stays NULL and is picked up by the
+    next run; a video with a genuinely empty description is stored as "" and is
+    not retried, which is the distinction the nullable column exists to keep.
+    """
+    candidates = session.exec(
+        select(RawYoutubeReview)
+        .where(RawYoutubeReview.video_description.is_(None))  # type: ignore[union-attr]
+        .order_by(RawYoutubeReview.created_at, RawYoutubeReview.id)  # type: ignore[arg-type]
+        .limit(limit)
+    ).all()
+    if not candidates:
+        return {"candidates": 0, "filled": 0, "still_missing": 0, "quota_units": 0}
+
+    descriptions = fetch_descriptions([r.video_id for r in candidates])
+
+    filled = 0
+    for review in candidates:
+        text = descriptions.get(review.video_id)
+        if text is None:
+            continue
+        review.video_description = text
+        session.add(review)
+        filled += 1
+    session.commit()
+
+    remaining = session.exec(
+        select(func.count(RawYoutubeReview.id)).where(
+            RawYoutubeReview.video_description.is_(None)  # type: ignore[union-attr]
+        )
+    ).one()
+    logger.info(
+        "Backfilled %d of %d video descriptions (%d still missing)",
+        filled, len(candidates), remaining,
+    )
+    return {
+        "candidates": len(candidates),
+        "filled": filled,
+        # Not an error count: a video deleted from YouTube can never be filled,
+        # and will show up here on every run.
+        "not_returned": len(candidates) - filled,
+        "still_missing": remaining,
+        "quota_units": -(-len(candidates) // 50),
+    }
+
+
+@router.get("/families/{family_id}/configs")
+def list_family_configs(
+    family_id: uuid.UUID,
+    review_id: uuid.UUID | None = Query(
+        default=None,
+        description=(
+            "Scan this review's description and transcript for spec strings "
+            "belonging to the family's members, and return the matches."
+        ),
+    ),
+    session: Session = Depends(get_session),
+    _: None = Depends(get_current_admin),
+):
+    """What the human needs to answer "which configuration was tested?" — or to
+    be told that the question has no answer.
+
+    Three things this returns, in the order the screen should trust them.
+
+    **`separable`** comes first because it can cancel the question entirely. A
+    family whose members differ only in RAM and storage cannot be told apart
+    from any review — see `link_service.separability`. When it is false the
+    screen must show `separability_reason` and render no chooser at all: four
+    options where the discriminating information cannot exist invites a guess,
+    and a guessed laptop_id is worse than a null one, because null is honest
+    and a guess attaches this video's claims to a machine nobody tested.
+
+    **`evidence`** (only with `review_id`) is what turns the step from
+    investigation into confirmation. The title never carries a spec — "The
+    First Panther Lake Laptop I Strongly Recommend" names no CPU, GPU or RAM —
+    so without this the only way to answer honestly is to watch the video:
+    minutes per review on a screen budgeted for ten seconds. `evidence.hits`
+    carries each match with its surrounding words and, for transcript hits, the
+    second it was said at. `evidence.found_nothing` is a real answer: the video
+    does not say, stop looking.
+
+    **`configs`** is the table, and it is computed over the members that remain
+    after suspended rows are dropped. That ordering matters: `differing_columns`
+    is recomputed on the survivors, so a column that only looked discriminating
+    because of a placeholder row disappears. On the ExpertBook Ultra family,
+    removing the suspended RM 0 row collapses price to a constant 11999 and
+    price stops being offered as a distinguishing column.
     """
     family = session.get(LaptopFamily, family_id)
     if not family:
         raise HTTPException(status_code=404, detail="Family not found.")
 
-    members = family_members(session, family_id)
+    # Suspended only. `inactive` stays visible on purpose: a delisted laptop is
+    # the normal subject of an old review, and hiding it would make those
+    # reviews unlinkable. See family_members.
+    all_members = family_members(session, family_id)
+    members = family_members(
+        session, family_id, exclude_statuses=(LaptopStatus.SUSPENDED.value,)
+    )
+    # Recomputed over the filtered set, never the full one — that is the whole
+    # reason the two lists exist separately here.
     columns = differing_columns(members)
+    separable, separability_code, reason = separability(columns, len(members))
+    # The filter can empty a family outright — ExpertBook P3 G2 is two rows and
+    # both are suspended. Name the cause rather than letting the screen report
+    # an empty catalog for a product line that is plainly in it.
+    if not members and all_members:
+        reason = (
+            f"Every configuration of this product line ({len(all_members)}) is "
+            "suspended in the catalog, so there is nothing to link to. Leave "
+            "the configuration unset."
+        )
+
+    evidence = None
+    if review_id is not None:
+        review = session.get(RawYoutubeReview, review_id)
+        if not review:
+            raise HTTPException(status_code=404, detail="Review not found.")
+        evidence = scan_config_evidence(
+            description=review.video_description,
+            transcript_segments=(review.raw_transcript or {}).get("segments"),
+            members=members,
+            columns=columns,
+            label_for=column_label,
+        )
 
     return {
         "family_id": family.id,
         "name": family.name,
         "is_verified": family.is_verified,
         "member_count": len(members),
+        # How many rows were withheld, and why. Never silently: a row vanishing
+        # from a list the admin saw yesterday needs an explanation on the page,
+        # not in a commit message.
+        "excluded_suspended": len(all_members) - len(members),
         "columns": [
             {"key": column, "label": column_label(column)} for column in columns
         ],
@@ -899,6 +1094,14 @@ def list_family_configs(
         # none of the tracked spec columns — both mean "there is nothing to
         # choose between", which is a useful answer, not an error.
         "identical": not columns and len(members) > 1,
+        # False means: render no chooser, show the reason, leave selection null.
+        "separable": separable,
+        # Branch on the code, not the prose: single_config is "nothing to choose
+        # between" and a screen may still offer the one row, while
+        # ram_storage_only means the question has no answer at all.
+        "separability_code": separability_code,
+        "separability_reason": reason,
+        "evidence": evidence,
         "configs": [config_row(laptop, columns) for laptop in members],
     }
 
@@ -1014,6 +1217,20 @@ def pipeline_status(
     )
     pending_linked = sum(1 for r in pending_ids if r in linked_ids)
 
+    # Dismissed as not-a-laptop. Reported next to the queue it was removed from
+    # because the ratio is the number that matters, not the count: it measures
+    # what dropping the "review" keyword from discovery actually cost. Roughly
+    # 10-15% of everything ingested says the recall was worth it; 40% says
+    # discovery is too loose and wants a `laptop`/`notebook` term added —
+    # putting `review` back would reintroduce the original problem, that
+    # Chinese channels do not title in English.
+    irrelevant_total = session.exec(
+        select(func.count(RawYoutubeReview.id)).where(
+            RawYoutubeReview.status == ReviewStatus.IRRELEVANT.value
+        )
+    ).one()
+    reviews_total = session.exec(select(func.count(RawYoutubeReview.id))).one()
+
     summaries = list_pending_summaries(session=session, _=None)
 
     remaining = len([k for k in families if k not in covered])
@@ -1033,6 +1250,11 @@ def pipeline_status(
             "pending_total": len(pending_ids),
             "pending_linked": pending_linked,
             "pending_unlinked": len(pending_ids) - pending_linked,
+            "irrelevant_total": irrelevant_total,
+            "reviews_total": reviews_total,
+            "irrelevant_ratio": (
+                round(irrelevant_total / reviews_total, 4) if reviews_total else 0.0
+            ),
         },
         "process": {"candidates": process_candidates},
         "aggregate": {

@@ -123,3 +123,6 @@ websockets==15.0.1
 xxhash==3.7.0
 youtube-transcript-api==1.2.4
 zstandard==0.25.0
+
+# Dev only (not imported by the app): tests/
+pytest==8.3.4
