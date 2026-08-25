@@ -30,6 +30,7 @@ from app.reviews.link_service import (
     config_label,
     config_row,
     differing_columns,
+    mark_indistinguishable,
     separability,
 )
 
@@ -139,6 +140,42 @@ def test_config_row_does_not_expose_model_code():
     row = config_row(_laptop(), ["processor_model", "ram_gb"])
     assert "model_code" not in row
     assert row["label"] == "Ultra 7 358H / 32GB"
+
+
+def test_label_is_capped_and_skips_price():
+    """A wide family makes the difference stark: the ROG Zephyrus G16 differs in
+    eight tracked columns, and naming a row by all of them gives "11299.0 /
+    Ultra 9 285H / RTX 5070 Laptop GPU / 32GB / 1TB / ROG Nebula Display OLED /
+    1.85 / 2025" — eight wrapped lines, beside the same eight values in their
+    own cells. A label is a name, not a spec sheet."""
+    laptop = _laptop(
+        processor_model="Intel Core Ultra 9 Processor 285H",
+        gpu_model="NVIDIA GeForce RTX 5070 Laptop GPU",
+        ram_gb=32,
+        ssd_gb=1024,
+    )
+    columns = [
+        "price_rm", "processor_model", "gpu_model", "ram_gb", "ssd_gb",
+        "display_type", "weight_kg", "release_year",
+    ]
+    label = config_label(laptop, columns)
+    assert label == "Ultra 9 285H / RTX 5070 Laptop GPU / 32GB / 1TB"
+    assert "11999" not in label
+
+
+def test_rows_identical_in_every_shown_column_are_flagged():
+    """Two identical radio options are a coin flip — the invited guess arriving
+    through the data instead of through the question. The Zephyrus G16 family
+    really does hold two such pairs."""
+    columns = ["processor_model", "ram_gb"]
+    rows = [
+        config_row(_laptop(ram_gb=32), columns),
+        config_row(_laptop(ram_gb=32), columns),
+        config_row(_laptop(ram_gb=64), columns),
+    ]
+    flagged = mark_indistinguishable(rows, columns)
+    assert flagged == 2
+    assert [r["indistinguishable"] for r in rows] == [True, True, False]
 
 
 def test_label_falls_back_to_product_name_when_nothing_differs():

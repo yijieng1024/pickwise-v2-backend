@@ -40,6 +40,7 @@ from app.reviews.link_service import (
     differing_columns,
     family_members,
     links_for_reviews,
+    mark_indistinguishable,
     resolve_family_for_laptop,
     separability,
 )
@@ -1078,6 +1079,9 @@ def list_family_configs(
             label_for=column_label,
         )
 
+    configs = [config_row(laptop, columns) for laptop in members]
+    indistinguishable = mark_indistinguishable(configs, columns)
+
     return {
         "family_id": family.id,
         "name": family.name,
@@ -1102,7 +1106,12 @@ def list_family_configs(
         "separability_code": separability_code,
         "separability_reason": reason,
         "evidence": evidence,
-        "configs": [config_row(laptop, columns) for laptop in members],
+        # Rows identical to another row in every shown column. Flagged, not
+        # merged or hidden — see mark_indistinguishable. A count here lets the
+        # screen say the pick between them is arbitrary rather than leaving the
+        # human to discover it by staring at two identical rows.
+        "indistinguishable_count": indistinguishable,
+        "configs": configs,
     }
 
 

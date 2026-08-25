@@ -278,6 +278,18 @@ def column_label(column: str) -> str:
     return _COLUMN_LABELS.get(column, column)
 
 
+# What a person names a configuration by, in the order they say it. Anything
+# outside this list is a tiebreak, not a name.
+_LABEL_COLUMNS: tuple[str, ...] = (
+    "processor_model",
+    "gpu_model",
+    "ram_gb",
+    "ssd_gb",
+    "display_size_inch",
+)
+_LABEL_MAX_PARTS = 4
+
+
 def config_label(laptop: Laptop, columns: list[str]) -> str:
     """A short human row label built from what actually differs.
 
@@ -291,12 +303,31 @@ def config_label(laptop: Laptop, columns: list[str]) -> str:
     columns rendered in human form immediately beside it. It said nothing the
     row did not already say, in the least readable way available.
 
-    Falls back to the product name when nothing differs — a single-member family
-    has no distinguishing values to name it by.
+    Built from at most `_LABEL_MAX_PARTS` columns, drawn from `_LABEL_COLUMNS`
+    in that order rather than from every differing column. A wide family makes
+    the difference stark: the ROG Zephyrus G16 differs in eight tracked columns,
+    and naming a row by all of them produces "11299.0 / Ultra 9 285H / RTX 5070
+    Laptop GPU / 32GB / 1TB / ROG Nebula Display OLED / 1.85 / 2025" — eight
+    wrapped lines per row, in a column sitting beside the same eight values in
+    their own cells. A label is a name, not a spec sheet; the table is the spec
+    sheet.
+
+    The priority order is how a person names a configuration out loud — chip
+    first, then graphics, then memory. Price is deliberately excluded even
+    though it often differs: it is a number with no identity, it changes without
+    the machine changing, and it is what a price column is for.
+
+    Falls back to any other differing columns when none of the preferred ones
+    differ (a family separated only by colour still needs a name), and to the
+    product name when nothing differs at all.
     """
+    preferred = [c for c in _LABEL_COLUMNS if c in columns]
+    rest = [c for c in columns if c not in _LABEL_COLUMNS and c != "price_rm"]
+    ordered = (preferred or rest)[:_LABEL_MAX_PARTS]
+
     parts = [
         _display_value(column, getattr(laptop, column, None))
-        for column in columns
+        for column in ordered
         if getattr(laptop, column, None) is not None
     ]
     return " / ".join(p for p in parts if p) or laptop.product_name
@@ -334,6 +365,42 @@ def config_row(laptop: Laptop, columns: list[str]) -> dict:
         "status": laptop.status,
         "specs": {column: getattr(laptop, column, None) for column in columns},
     }
+
+
+def mark_indistinguishable(rows: list[dict], columns: list[str]) -> int:
+    """Flag config rows that are identical to another row in every shown column.
+
+    Mutates `rows`, returns how many were flagged.
+
+    This is not cosmetic. The ROG Zephyrus G16 family holds two pairs of rows
+    that match on all eight tracked columns — genuine duplicate catalog entries,
+    distinct laptop_ids with nothing to tell them apart. Rendered plainly they
+    are two identical radio options, and choosing between them is a coin flip:
+    the same "invited guess" this screen exists to remove, arriving through the
+    data rather than through the question.
+
+    They are flagged rather than merged or hidden. Merging would be a lie about
+    the catalog and would silently drop a laptop_id that other tables reference;
+    hiding one would make the choice for the human without saying so. The honest
+    move is to show both and say they are indistinguishable, so the human knows
+    the pick is arbitrary — and so the duplicate is visible as something to fix
+    in the catalog rather than something to work around here forever.
+    """
+    if not columns:
+        return 0
+    signatures: dict[tuple, list[dict]] = {}
+    for row in rows:
+        key = tuple(_hashable(row["specs"].get(column)) for column in columns)
+        signatures.setdefault(key, []).append(row)
+
+    flagged = 0
+    for group in signatures.values():
+        duplicate = len(group) > 1
+        for row in group:
+            row["indistinguishable"] = duplicate
+            if duplicate:
+                flagged += 1
+    return flagged
 
 
 def find_family_id(session: Session, laptop_id: uuid.UUID) -> Optional[uuid.UUID]:
