@@ -326,6 +326,26 @@ Purpose modifiers (capped at ×1.3): Gaming→GPU×1.3/CPU×1.1, Creative→GPU�
 
 Bulk scrape queries `is_active=True` AND (`last_scraped_at IS NULL` OR `scrape_status = 'failed'`). Returns HTTP 207 on partial failures; writes timestamped failure logs to `logs/scraper/`.
 
+### Testing
+
+`pytest tests/ -q`. Two tiers, and **they must stay in separate CI jobs**:
+
+- `tests/unit/` — no database, no network, no API key. ~1.5 s for ~175 tests.
+  That speed is the tier's entire value; sharing a job with the integration
+  tier would drag it to five minutes and it would stop being run on every edit.
+- `tests/integration/` — needs a Postgres with pgvector. Resolves
+  `TEST_DATABASE_URL` first, else starts a `pgvector/pgvector` container via
+  testcontainers, else **skips with instructions** (never passes having run
+  nothing). ~5 min against the hosted test project over the Supabase session
+  pooler; seconds against a local container.
+
+**Migrations do not target production by default.** `alembic/env.py` reads
+`TEST_DATABASE_URL` and errors with setup instructions if it is unset;
+production needs `ALEMBIC_TARGET=production`, which the Dockerfile's start
+command sets explicitly. The integration tier additionally refuses to start if
+`TEST_DATABASE_URL` resolves to `PRODUCTION_DB_REF` — both databases are
+Supabase and differ only by project ref, so a hostname check is not a guard.
+
 ### Deployment
 
 `.github/workflows/deploy.yml` on push to `main` (doc-only changes excluded via `paths-ignore` — note the key is `paths-ignore`, **not** `path-ignore`, which GitHub silently ignores):
