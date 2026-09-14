@@ -30,7 +30,7 @@ import uuid
 
 import pytest
 from dotenv import load_dotenv
-from sqlalchemy import text
+from sqlalchemy import MetaData, text
 from sqlmodel import Session, SQLModel, create_engine
 
 load_dotenv(".env")
@@ -177,6 +177,26 @@ def engine(database_url):
     return eng
 
 
+def drop_everything(engine) -> None:
+    """
+    Drop every table actually in the database, not every table the models know
+    about.
+
+    SQLModel.metadata.drop_all only knows the tables whose modules have been
+    imported, and the migrations create a few this tier never imports. Dropping
+    a partial set fails on the foreign keys the survivors still hold
+    ("cannot drop table laptops because other objects depend on it"), which is
+    how a test that had migrated the database poisoned the next one.
+
+    Reflection asks the database what is there. DROP SCHEMA would be shorter and
+    is deliberately not used: it would also take anything else living in this
+    schema, which is not ours to assume.
+    """
+    reflected = MetaData()
+    reflected.reflect(bind=engine)
+    reflected.drop_all(bind=engine)
+
+
 @pytest.fixture(scope="session")
 def clean_schema(engine):
     """
@@ -191,10 +211,10 @@ def clean_schema(engine):
     the migration path says so (see test_migrations.py), and the rest should not
     silently depend on migrations having been run.
     """
-    SQLModel.metadata.drop_all(engine)
+    drop_everything(engine)
     SQLModel.metadata.create_all(engine)
     yield engine
-    SQLModel.metadata.drop_all(engine)
+    drop_everything(engine)
 
 
 @pytest.fixture
