@@ -11,8 +11,11 @@ from sqlalchemy import select as sa_select
 from sqlmodel import Session
 
 from app.embeddings.service import embed_text
+from app.logger import get_logger
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopStatus
+
+logger = get_logger(__name__)
 
 # Wide net — retrieve many candidates so the reranker has room to work.
 # Precision is NOT the goal here; recall is.
@@ -70,6 +73,16 @@ def retrieve_candidates(
     try:
         query_vector = _get_query_vector(query)
     except Exception:
+        # ERROR, not warning: semantic search is the product, and what replaces
+        # it is a price-ordered SQL list that answers a different question.
+        # exc_info keeps the traceback — the cause (quota, timeout, bad key)
+        # decides whether this is a five-minute blip or an outage, and a
+        # formatted message would throw that away.
+        logger.error(
+            "Embedding call failed for query %r — falling back to relational retrieval",
+            query,
+            exc_info=True,
+        )
         return _relational_fallback(session, budget_max, brand, recall_size)
 
     distance_col = LaptopEmbedding.embedding.cosine_distance(query_vector)
