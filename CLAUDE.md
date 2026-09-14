@@ -333,6 +333,14 @@ Bulk scrape queries `is_active=True` AND (`last_scraped_at IS NULL` OR `scrape_s
 - `tests/unit/` — no database, no network, no API key. ~1.5 s for ~175 tests.
   That speed is the tier's entire value; sharing a job with the integration
   tier would drag it to five minutes and it would stop being run on every edit.
+- `tests/test_golden_pickscore.py` + `tests/golden/` — the PickScore golden
+  snapshot. Needs no database (the fixture is loaded into in-memory SQLite so
+  the real `get_laptop_ranges` runs against it) and no network, so it belongs
+  in the **unit** job: unit + golden together is ~2.2 s. It asserts that score
+  changes were deliberate, not that scores are correct. Regenerate with
+  `pytest tests/test_golden_pickscore.py --update-golden`, never automatically.
+  Its numbers are percentile ranks against 20 fixture laptops and **must not**
+  be compared with production scores or ADR-0011's figures.
 - `tests/integration/` — needs a Postgres with pgvector. Resolves
   `TEST_DATABASE_URL` first, else starts a `pgvector/pgvector` container via
   testcontainers, else **skips with instructions** (never passes having run

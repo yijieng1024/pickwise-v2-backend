@@ -20,6 +20,20 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help=(
+            "Rewrite tests/golden/pickscore.json from the current engine output. "
+            "Deliberate and explicit on purpose: regenerating must never happen "
+            "automatically on failure, or the snapshot records whatever the last "
+            "change did rather than what anyone agreed to."
+        ),
+    )
+
+
 @pytest.fixture
 def ranges():
     """

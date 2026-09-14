@@ -24,6 +24,18 @@ from tests.integration.conftest import make_laptop
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def _clear_benchmark_cache():
+    """The resolver's cache is module-level and keyed only on the model string,
+    so the small gpu_table below would otherwise be served to whatever runs
+    next -- it poisoned the golden snapshot exactly that way."""
+    from app.pickscore import benchmark_service
+
+    benchmark_service._cache.clear()
+    yield
+    benchmark_service._cache.clear()
+
+
 def _unpriced_active(session) -> list[Laptop]:
     return list(
         session.exec(
