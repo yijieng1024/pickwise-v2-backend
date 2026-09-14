@@ -168,9 +168,11 @@ def _relational_fallback(
     # relational problem, and it put every weight-constrained fallback back
     # under the gate (0.58 x 0.7 = 0.406).
     #
-    # NULL weight_kg drops out, exactly as NULL price_rm already does under the
-    # budget filter: SQL compares NULL as NULL. An unknown weight is not
-    # evidence that a laptop is light, and this is already the degraded path.
+    # On NULLs: both weight_kg and price_rm are NOT NULL on `laptops`, so the
+    # "row with an unknown weight" case does not arise. If either is ever made
+    # nullable, SQL drops those rows here (NULL <= x is NULL, not true), which
+    # is the behaviour to want anyway -- an unknown weight is not evidence that
+    # a laptop is light, and this is already the degraded path.
     if weight_max is not None:
         stmt = stmt.where(Laptop.weight_kg <= weight_max)
     if brand is not None:

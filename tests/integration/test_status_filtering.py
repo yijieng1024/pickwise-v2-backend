@@ -10,6 +10,7 @@ the other five. Parametrized so the failure message names the route.
 import uuid
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.laptops.laptop_models import Laptop, LaptopPickScore
@@ -70,32 +71,37 @@ def test_the_fallback_weight_filter_really_excludes_heavier_rows(session, brand)
     assert names == {"Light"}
 
 
-def test_a_null_weight_row_is_excluded_by_the_weight_filter(session, brand):
-    """The NULL decision, executed rather than read off the rendered SQL. An
-    unknown weight is not evidence that a laptop is light."""
+def test_a_laptop_cannot_have_an_unknown_weight(session, brand):
+    """
+    The NULL question, answered by the schema rather than by the filter.
+
+    `weight_kg` is NOT NULL on `laptops`, so the "row with no weight" case the
+    filter's NULL semantics would decide cannot occur at all. Worth an explicit
+    test because the reasoning is invisible otherwise: SQL would drop such a row
+    (`NULL <= 1.0` is NULL, not true), which is the behaviour we would want —
+    but nothing depends on that, because the row cannot exist. If the column is
+    ever made nullable this goes red, and the decision becomes live.
+    """
     from tests.integration.conftest import make_laptop
 
-    light = make_laptop(brand.id, product_name="Light", weight_kg=0.9)
     unknown = make_laptop(brand.id, product_name="Unknown", weight_kg=None)
-    session.add(light)
     session.add(unknown)
-    session.commit()
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
 
-    rows = _retrieval._relational_fallback(session, None, None, 50, weight_max=1.0)
-    assert {c.laptop.product_name for c in rows} == {"Light"}
 
-
-def test_no_weight_limit_returns_everything_including_null_weights(session, brand):
-    """The filter must be conditional. A stated limit excludes; no limit at all
-    must not quietly exclude the same rows."""
+def test_the_weight_filter_is_conditional(session, brand):
+    """The filter must only apply when a limit is stated. A stated limit
+    excludes; no limit at all must not quietly exclude the same rows."""
     from tests.integration.conftest import make_laptop
 
     session.add(make_laptop(brand.id, product_name="Light", weight_kg=0.9))
-    session.add(make_laptop(brand.id, product_name="Unknown", weight_kg=None))
+    session.add(make_laptop(brand.id, product_name="Heavy", weight_kg=2.5))
     session.commit()
 
     rows = _retrieval._relational_fallback(session, None, None, 50)
-    assert {c.laptop.product_name for c in rows} == {"Light", "Unknown"}
+    assert {c.laptop.product_name for c in rows} == {"Light", "Heavy"}
 
 
 # --------------------------------------------------------------------------

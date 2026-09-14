@@ -218,14 +218,16 @@ def test_the_weight_filter_reaches_the_sql_not_the_penalty():
     assert "weight_kg <=" in rendered
 
 
-def test_a_null_weight_row_is_excluded_like_a_null_price():
+def test_the_filter_is_a_plain_bound_with_no_null_escape_hatch():
     """
-    Handling matched to the existing budget filter, deliberately: SQL compares
-    NULL to anything as NULL, so `weight_kg <= limit` drops a row with no
-    weight, exactly as `price_rm <= budget_max` already drops a row with no
-    price. A laptop with an unknown weight is not evidence that it is light, and
-    the fallback is already the degraded path — returning a maybe there would be
-    the second guess in a row.
+    Matched to the existing budget filter, deliberately: a bare `weight_kg <=`
+    with no `OR weight_kg IS NULL`.
+
+    Both columns are NOT NULL on `laptops` (asserted in
+    tests/integration/test_status_filtering.py), so the NULL case does not
+    arise today. If the column is ever made nullable, SQL drops those rows —
+    which is the behaviour to want: an unknown weight is not evidence that a
+    laptop is light, and this is already the degraded path.
     """
     session = _FakeSession(_rows())
     _relational_fallback(session, None, None, 50, weight_max=1.0)
