@@ -7,6 +7,8 @@ and reversible. What follows is the check that the next one is too, run
 somewhere it does not matter.
 """
 
+import os
+
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -14,7 +16,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlmodel import SQLModel
 
-from tests.integration.conftest import _production_urls
+from tests.integration.conftest import assert_not_production, project_ref
 
 pytestmark = pytest.mark.integration
 
@@ -42,12 +44,11 @@ def empty_db(engine):
 def test_the_tier_is_not_pointed_at_production(database_url):
     """
     The guard, asserted rather than assumed. Everything in this file drops
-    tables; the production database is one environment variable away, and that
-    proximity is exactly what put a3f7d21c6b84 on Supabase.
+    tables; production is one project ref away, and that proximity is exactly
+    what put a3f7d21c6b84 on Supabase.
     """
-    assert "supabase" not in database_url
-    for production in _production_urls():
-        assert database_url != production
+    assert_not_production(database_url)
+    assert project_ref(database_url) != os.environ.get("PRODUCTION_DB_REF")
 
 
 def test_upgrade_head_from_empty(empty_db, database_url):
