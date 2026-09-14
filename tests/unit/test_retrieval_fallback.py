@@ -25,6 +25,7 @@ from ._adapters import (
     _retrieval,
     _run_search,
     _search_tool,
+    fallback_similarity,
     gate_threshold,
     min_viable_score,
     relevance_gate,
@@ -94,36 +95,59 @@ def _break_the_embedding(monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def test_fallback_still_hardcodes_a_similarity_of_one_half():
+def test_every_fallback_row_carries_the_placeholder_similarity():
     """
-    Pins the number the rest of this file reasons about. The fallback builds
-    RetrievalCandidate the same way the pgvector path does — there is no second
-    constructor — but with a literal cosine_distance of 0.5, so the derived
-    similarity_score is 0.5 for every row regardless of the query.
+    The fallback builds RetrievalCandidate the same way the pgvector path does
+    — there is no second constructor — but with a fixed distance, so every row
+    scores the same regardless of the query. That is the point: the number is a
+    placeholder, and from_fallback is what says so.
     """
     candidates = _relational_fallback(_FakeSession(_rows()), None, None, 50)
     assert candidates
-    assert all(c.cosine_distance == 0.5 for c in candidates)
-    assert all(c.similarity_score == pytest.approx(0.5) for c in candidates)
+    assert all(
+        c.similarity_score == pytest.approx(fallback_similarity()) for c in candidates
+    )
+    assert all(c.from_fallback for c in candidates)
 
 
-def test_the_fallback_constant_is_below_the_gate():
+def test_the_fallback_constant_clears_the_gate():
     """
-    The whole finding in one line. Two individually reasonable constants: a
-    neutral 0.5 placeholder, and a 0.53 gate calibrated so irrelevant queries
-    are blocked. 0.5 < 0.53, so the placeholder is permanently on the blocked
-    side of a threshold that was never calibrated against it.
+    THE REGRESSION TEST for the defence-cancelling-defence bug. The placeholder
+    was 0.5 against a 0.53 gate, so every fallback result was blocked and the
+    rescue path rescued nothing. Two individually reasonable constants that
+    annihilated each other because neither was calibrated against the other.
     """
-    assert 0.5 < gate_threshold()
+    assert fallback_similarity() > gate_threshold()
+
+
+def test_the_fallback_constant_sorts_below_genuine_matches():
+    """
+    The other half of the derivation, and the reason the answer is not "raise it
+    until the end-to-end test goes green". Measured over the 241 rows in
+    pipeline_eval_logs on 2026-09-14: p10 0.5867, p25 0.6270, p50 0.6778. The
+    constant must sit under the bottom of that distribution, or a placeholder
+    outranks a real semantic match wherever the two meet.
+    """
+    measured_p10, measured_p25 = 0.5867, 0.6270
+    assert fallback_similarity() < measured_p10 < measured_p25
+
+
+def test_a_genuine_hit_outranks_a_fallback_row():
+    """The ordering consequence, asserted rather than assumed."""
+    fallback = _relational_fallback(_FakeSession(_rows(1)), None, None, 50)
+    genuine = [_pgvector_candidate(similarity=0.6270)]
+    ranked = rerank(fallback + genuine, UserConstraints())
+    assert ranked[0].similarity_score == pytest.approx(0.6270)
 
 
 def test_fallback_scores_are_viable_so_relaxation_never_runs():
     """
-    0.5 clears _MIN_VIABLE_SCORE (0.33), so needs_relaxation is False and the
-    pipeline walks straight from rerank to the gate. There is no intermediate
-    stage that could notice the pool is synthetic.
+    The placeholder clears _MIN_VIABLE_SCORE (0.33), so needs_relaxation is
+    False and the pipeline walks straight from rerank to the gate. There is no
+    intermediate stage that could notice the pool is synthetic — which is why
+    the flag had to be explicit rather than inferred.
     """
-    assert 0.5 > min_viable_score()
+    assert fallback_similarity() > min_viable_score()
 
 
 # --------------------------------------------------------------------------
@@ -131,41 +155,52 @@ def test_fallback_scores_are_viable_so_relaxation_never_runs():
 # --------------------------------------------------------------------------
 
 
-def test_unconstrained_fallback_candidates_are_gated():
-    """
-    Catches the defence-cancelling-defence class: a rescue path whose output
-    cannot clear the filter downstream of it. With no constraints at all — the
-    most favourable case, penalty 1.0, no bonus — the top score is exactly 0.5
-    and the gate blocks it.
-    """
+def test_unconstrained_fallback_candidates_pass_the_gate():
+    """The plain case: embedding down, no constraints, penalty 1.0, no bonus.
+    The user gets laptops."""
     candidates = _relational_fallback(_FakeSession(_rows()), None, None, 50)
     ranked = rerank(candidates, UserConstraints())
-    assert ranked[0].final_score == pytest.approx(0.5)
-    assert relevance_gate(ranked).status == "gated"
-
-
-def test_a_penalty_only_makes_it_worse():
-    """Every constraint the user states pushes the fallback further under the
-    gate. There is no input that rescues it."""
-    candidates = _relational_fallback(_FakeSession(_rows()), None, None, 50)
-    ranked = rerank(candidates, UserConstraints(budget=1500.0))
-    assert ranked[0].final_score < 0.5
-    assert relevance_gate(ranked).status == "gated"
-
-
-def test_only_a_brand_bonus_could_ever_lift_it_over():
-    """
-    The one arithmetic escape, recorded so the finding is exact rather than
-    absolute: +0.05 for a matching brand preference puts a fallback row at 0.55,
-    over the gate. It needs the user to have named a brand AND that brand to
-    win the price sort, so it is a coincidence, not a rescue — and it means a
-    fallback search can return results for one user and a clarifying question
-    for another on the same broken API.
-    """
-    candidates = _relational_fallback(_FakeSession(_rows()), None, None, 50)
-    ranked = rerank(candidates, UserConstraints(brand_preferences=["asus"]))
-    assert ranked[0].final_score == pytest.approx(0.55)
+    assert ranked[0].final_score == pytest.approx(fallback_similarity())
     assert relevance_gate(ranked).status == "pass"
+
+
+def test_a_stated_budget_does_not_gate_the_fallback():
+    """
+    The budget penalty cannot fire on fallback rows: _relational_fallback
+    applies `price_rm <= budget_max` in SQL, so everything it returns is already
+    inside budget. Worth pinning — it is why one constant was enough for the
+    budget case, and why the weight case below still is not.
+    """
+    candidates = _relational_fallback(_FakeSession(_rows()), 5000.0, None, 50)
+    ranked = rerank(candidates, UserConstraints(budget=5000.0))
+    assert relevance_gate(ranked).status == "pass"
+
+
+def test_a_weight_constrained_fallback_is_still_gated():
+    """
+    The residual, recorded rather than fixed. There is no SQL weight filter, so
+    a user who asked for something light still gets a clarifying question while
+    the embedding API is down: 0.58 x 0.7 = 0.406, under the gate. No value that
+    is both above the gate and below p10 survives that multiplier, so moving the
+    constant cannot fix this one.
+    """
+    candidates = _relational_fallback(_FakeSession(_rows()), None, None, 50)
+    ranked = rerank(candidates, UserConstraints(weight_limit=1.0))
+    assert relevance_gate(ranked).status == "gated"
+
+
+def test_a_brand_preference_no_longer_changes_the_outcome():
+    """
+    The escape hatch is closed. Under the old constant a matching brand
+    preference added +0.05 and lifted 0.5 to 0.55, so a fallback search returned
+    results for a user who had named a brand and a clarifying question for one
+    who had not, on the same broken API. Both now pass.
+    """
+    candidates = _relational_fallback(_FakeSession(_rows()), None, None, 50)
+    with_brand = rerank(candidates, UserConstraints(brand_preferences=["asus"]))
+    without = rerank(candidates, UserConstraints())
+    assert relevance_gate(with_brand).status == "pass"
+    assert relevance_gate(without).status == "pass"
 
 
 # --------------------------------------------------------------------------
@@ -173,26 +208,23 @@ def test_only_a_brand_bonus_could_ever_lift_it_over():
 # --------------------------------------------------------------------------
 
 
-def test_user_gets_a_clarifying_question_not_laptops_when_embedding_is_down(monkeypatch):
+def test_user_gets_laptops_when_the_embedding_api_is_down(monkeypatch):
     """
-    The question that matters. The embedding API is down, the fallback fetches
-    real laptops from SQL, and the user is told to loosen their requirements.
-
-    The clarifying question is about the user's budget or brand, which is the
-    misleading part: nothing they can change will help, because the catalog was
-    never searched.
+    The question that matters, end to end. The embedding API is down, the
+    fallback fetches real laptops from SQL, and the user receives them — rather
+    than a clarifying question asking them to loosen requirements that were
+    never what blocked the search.
     """
     session = _FakeSession(_rows(5))
     _break_the_embedding(monkeypatch)
     _install_stubs(monkeypatch)
     monkeypatch.setattr(_search_tool, "Session", lambda *a, **kw: session)
 
-    payload = _run_search("a light laptop for programming")
+    payload = _run_search("a laptop for programming")
 
-    assert payload["results"] == []
-    assert payload["confidence"] == "low"
-    assert payload["message"]
-    assert payload["bottleneck"] == "general"
+    assert payload["results"], "the fallback rows were discarded downstream"
+    assert payload["confidence"] == "high"
+    assert payload["bottleneck"] is None
 
 
 def test_fallback_did_run_and_did_find_laptops(monkeypatch):

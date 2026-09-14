@@ -339,6 +339,11 @@ _run_search = _search_tool._run_search
 from app.rag.evaluation import log_pipeline_result as _real_log_pipeline_result  # noqa: E402
 
 
+def fallback_similarity() -> float:
+    """The placeholder similarity _relational_fallback stamps on every row."""
+    return _retrieval._FALLBACK_SIMILARITY
+
+
 def max_results() -> int:
     return _MAX_RESULTS
 

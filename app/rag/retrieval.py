@@ -26,6 +26,24 @@ _DEFAULT_RECALL_SIZE = 50
 _QUERY_CACHE: dict[str, tuple[list[float], float]] = {}
 _CACHE_TTL_SECONDS = 300  # 5 minutes
 
+# The placeholder similarity every _relational_fallback row carries.
+#
+# Derived, not picked. It has to satisfy two constraints at once:
+#
+#   - above gating.RELEVANCE_THRESHOLD (0.53), or every fallback result is
+#     gated and the rescue path rescues nothing -- which is what 0.5 did;
+#   - below the bottom of the real score distribution, so a placeholder never
+#     outranks a genuine semantic match.
+#
+# Measured over the 241 rows in pipeline_eval_logs (2026-09-14): p10 0.5867,
+# p25 0.6270, p50 0.6778, p90 0.7754. 0.58 sits 0.05 above the gate and just
+# under p10, so a fallback row reaches the user while sorting beneath roughly
+# nine out of ten genuine hits.
+#
+# Re-derive alongside RELEVANCE_THRESHOLD on any embedding-model change: both
+# are properties of the same score distribution, and a model swap moves it.
+_FALLBACK_SIMILARITY = 0.58
+
 
 @dataclass
 class RetrievalCandidate:
@@ -125,8 +143,8 @@ def _relational_fallback(
 ) -> list[RetrievalCandidate]:
     """
     Pure SQL fallback when the embedding API is unavailable.
-    Returns laptops ordered by price (ascending) with similarity_score = 0.5
-    as a neutral placeholder so downstream modules can still run.
+    Returns laptops ordered by price (ascending) with a fixed placeholder
+    similarity (_FALLBACK_SIMILARITY) so downstream modules can still run.
     """
     from sqlmodel import select
 
@@ -142,12 +160,14 @@ def _relational_fallback(
     stmt = stmt.order_by(Laptop.price_rm.asc(), Laptop.id).limit(limit)  # type: ignore
 
     rows = session.execute(stmt).all()
-    # cosine_distance=0.5 → similarity_score=0.5 (neutral, not misleading)
+    # similarity_score is 1 - cosine_distance, so the distance is the inverse of
+    # the placeholder. Downstream reads from_fallback, never the score -- which
+    # is exactly the mistake this constant's history records.
     return [
         RetrievalCandidate(
             laptop=laptop,
             brand_name=brand_name,
-            cosine_distance=0.5,
+            cosine_distance=1.0 - _FALLBACK_SIMILARITY,
             from_fallback=True,
         )
         for laptop, brand_name in rows
