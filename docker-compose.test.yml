@@ -1,0 +1,33 @@
+# Throwaway Postgres for the integration tier.
+#
+# tests/integration/ prefers testcontainers, which starts and removes this same
+# image automatically. This file is the fallback for a machine where the Docker
+# SDK cannot reach a daemon but `docker compose` can, and it is also the thing
+# to run by hand when developing a migration:
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/pickwise_test
+#   alembic upgrade head          # now targets the container, not Supabase
+#   pytest tests/integration -v
+#
+# Port 55432, not 5432: a local Postgres or the real docker-compose.yml must be
+# able to keep running alongside this without a clash.
+services:
+  test-db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pickwise_test
+    ports:
+      - "55432:5432"
+    # No volume on purpose. The tier drops and recreates the schema, and a
+    # persisted volume would let one run's leftovers decide the next run's
+    # result -- which is the failure mode this whole tier exists to prevent.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pickwise_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
