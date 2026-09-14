@@ -249,7 +249,7 @@ def test_purpose_bonus_is_capped():
     contributions now come from the CPU half; Gaming and Creative add nothing."""
     bonus, _reasons = _purpose_bonus(
         _FakeLaptop(processor_model="Intel Core i7-14650HX"),
-        ["Gaming", "Creative", "Programming", "Office"],
+        ["Gaming", "Creative Work", "Programming/Development", "Office/Study"],
     )
     assert bonus == pytest.approx(0.08)
 
@@ -278,7 +278,10 @@ class _GpuTrap:
         return "NVIDIA GeForce RTX 5090 Laptop GPU"
 
 
-@pytest.mark.parametrize("purpose", ["Gaming", "Creative", "Programming", "Office"])
+@pytest.mark.parametrize(
+    "purpose",
+    ["Gaming", "Creative Work", "Programming/Development", "Office/Study"],
+)
 def test_purpose_bonus_never_reads_gpu_model(purpose):
     """
     Catches the reintroduction of string-matched GPU strength in the reranker.
@@ -298,14 +301,16 @@ def test_cpu_signals_still_fire_at_their_existing_values():
     def bonus(cpu, purposes):
         return _purpose_bonus(_FakeLaptop(processor_model=cpu), purposes)[0]
 
-    assert bonus("Intel Core i7-14650HX", ["Programming"]) == pytest.approx(0.04)
-    assert bonus("AMD Ryzen 7 7730U", ["Office"]) == pytest.approx(0.04)
-    assert bonus("Intel Core i7-14650HX", ["Programming", "Office"]) == pytest.approx(0.08)
+    assert bonus("Intel Core i7-14650HX", ["Programming/Development"]) == pytest.approx(0.04)
+    assert bonus("AMD Ryzen 7 7730U", ["Office/Study"]) == pytest.approx(0.04)
+    assert bonus(
+        "Intel Core i7-14650HX", ["Programming/Development", "Office/Study"]
+    ) == pytest.approx(0.08)
     # No keyword in the string -> nothing.
-    assert bonus("Intel Core 5 210H", ["Office"]) == pytest.approx(0.0)
+    assert bonus("Intel Core 5 210H", ["Office/Study"]) == pytest.approx(0.0)
 
 
-@pytest.mark.parametrize("purpose", ["Gaming", "Creative"])
+@pytest.mark.parametrize("purpose", ["Gaming", "Creative Work"])
 def test_gaming_and_creative_now_have_no_reranking_effect(purpose):
     """
     Recorded because it is a fact worth knowing, not because it is desirable:

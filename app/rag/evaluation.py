@@ -210,7 +210,7 @@ def build_sample_test_suite() -> list[TestCase]:
             constraints=UserConstraints(
                 budget=3500,
                 weight_limit=1.5,
-                purpose=["Office"],
+                purpose=["Office/Study"],
             ),
             ground_truth={
                 "807d1c28-392e-469e-bf39-e98dfd453984": 3,  # ExpertBook P1 RM3399 1.4kg
@@ -288,7 +288,7 @@ def build_sample_test_suite() -> list[TestCase]:
             constraints=UserConstraints(
                 budget=4000,
                 weight_limit=1.2,
-                purpose=["Programming"],
+                purpose=["Programming/Development"],
             ),
             ground_truth={
                 # Labelled from previous run where gate passed; gated runs score 0 automatically

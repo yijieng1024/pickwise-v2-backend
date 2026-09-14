@@ -18,10 +18,12 @@ from ._adapters import (
     integrated_gpu_map,
     integrated_lookup,
     known_purposes,
+    normalize_purpose,
     min_viable_score,
     portability_multipliers,
     purpose_modifiers,
     use_case_priorities,
+    use_case_slugs,
 )
 
 
@@ -32,38 +34,33 @@ from ._adapters import (
 
 def test_purpose_modifier_keys_match_known_purposes():
     """
-    EXPECTED TO BE RED ON FIRST RUN — this is a real bug, not a broken test.
+    Green since the labels were unified; red for three rounds before that, and
+    the assertion has not changed.
 
-    PURPOSE_MODIFIERS (app/pickscore/engine.py) is keyed on 'Office/Study',
-    'Programming/Development', 'Gaming', 'Creative Work', 'General Use' — the
-    exact values the questionnaire's Q2 stores into
-    laptop_user_preference.purpose (migration ffb4429867dd). _KNOWN_PURPOSES
-    (app/agent/tools/search_laptops.py) is {'Gaming', 'Creative',
-    'Programming', 'Office'} — the reranker's purpose-signal vocabulary.
+    PURPOSE_MODIFIERS (app/pickscore/engine.py) is keyed on the values the
+    questionnaire's Q2 stores into laptop_user_preference.purpose (migration
+    ffb4429867dd). _KNOWN_PURPOSES (app/agent/tools/search_laptops.py) used to
+    be a second, shorter vocabulary — {'Gaming', 'Creative', 'Programming',
+    'Office'} — sharing exactly one member with it. _normalize_purpose did
+    purpose.strip().title() and coerced anything it did not recognise to
+    'Office', so four of five stored purposes were rewritten on the way into
+    reranking, silently.
 
-    Verified 2026-09-14, and the effect is NOT where the brief guessed:
+    _compute_weights was never affected: it reads user_pref.purpose directly,
+    which already carried the long labels. The damage was entirely on the agent
+    tool's path.
 
-      - _compute_weights is fine. It reads user_pref.purpose, which already
-        carries the long labels, so the PickScore modifier does apply.
-      - _normalize_purpose IS the live bug. It does purpose.strip().title()
-        and coerces anything outside _KNOWN_PURPOSES to 'Office'. Of the five
-        questionnaire labels only 'Gaming' survives: 'Creative Work',
-        'Office/Study', 'Programming/Development' and 'General Use' all
-        collapse to 'Office', so the reranker applies the office CPU-keyword
-        bonus to a user who said Creative Work, and the gpu bonus for
-        'Creative' is unreachable from the questionnaire entirely.
-
-    Do not "fix" this by loosening the assertion. Fix it by making one set of
-    labels canonical.
+    Both now read app/purposes.PURPOSES. This test is what keeps that true; if
+    a second vocabulary is ever introduced it goes red here first.
     """
     assert set(purpose_modifiers().keys()) == known_purposes()
 
 
 def test_questionnaire_purposes_all_reach_a_preset():
     """
-    Q2 offers five options including 'General Use', but _KNOWN_PURPOSES has four
-    entries, so 'General Use' silently coerces to 'Office' while the PickScore
-    user interface shows five presets. Five in, five through.
+    Q2 offers five options and the PickScore user interface shows five presets.
+    Five in, five through — 'General Use' used to be one of the four that
+    coerced to 'Office' before reaching the reranker.
     """
     assert len(use_case_priorities()) == 5
 
@@ -284,3 +281,74 @@ def test_family_key_over_splits_acer():
     a = family_key("Acer Aspire 7 A715-59G-54Q6")
     b = family_key("Acer Aspire 7 A715-59G-71TT")
     assert a != b
+
+
+# --------------------------------------------------------------------------
+# One purpose vocabulary
+# --------------------------------------------------------------------------
+# The label mismatch above is only fixed while these hold. Each of these
+# asserts a different half of "one vocabulary": that the questionnaire's values
+# survive the tool, that the tool rejects anything else, and that every consumer
+# is keyed on the same set.
+
+
+QUESTIONNAIRE_PURPOSES = [
+    "Office/Study",
+    "Programming/Development",
+    "Gaming",
+    "Creative Work",
+    "General Use",
+]
+
+
+@pytest.mark.parametrize("value", QUESTIONNAIRE_PURPOSES)
+def test_every_questionnaire_purpose_survives_the_tool_unchanged(value):
+    """
+    The regression test for the original bug. `.title()` turned
+    "Office/Study" into "Office/Study" but "Creative Work" reached a whitelist
+    that did not contain it, and the value was rewritten to "Office". Any future
+    normalisation step that mangles one of these five fails here rather than
+    silently changing what a user asked for.
+    """
+    assert normalize_purpose(value) == [value]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["Creative", "Programming", "Office", "gaming laptop", "Video Editing", "xyz"],
+)
+def test_an_unknown_purpose_is_rejected_not_coerced(value):
+    """
+    Silent coercion is what hid this for months: a wrong purpose and a right one
+    produced identical reranking, so nothing downstream could tell them apart.
+    Note the first three cases — the old short vocabulary is now invalid, which
+    is the point of having one.
+    """
+    with pytest.raises(ValueError):
+        normalize_purpose(value)
+
+
+@pytest.mark.parametrize("value", ["  Gaming  ", "gaming", "CREATIVE WORK"])
+def test_case_and_whitespace_are_still_tolerated(value):
+    """Transport noise, not a different vocabulary. Tolerating it is why the
+    rejection above is about values rather than formatting."""
+    assert normalize_purpose(value)
+
+
+def test_no_purpose_is_a_valid_state():
+    """A user who has not said what the laptop is for is not an error — the
+    reranker simply applies no purpose signal."""
+    assert normalize_purpose(None) == []
+    assert normalize_purpose("") == []
+    assert normalize_purpose("   ") == []
+
+
+def test_every_use_case_slug_maps_to_a_canonical_purpose():
+    """
+    Slugs are a separate identifier space — they are persisted in
+    laptop_pick_scores.use_case and published in a public query parameter, so
+    they cannot carry spaces or slashes — but they are derived from the same
+    list. This is what stops them drifting into a second vocabulary.
+    """
+    assert set(use_case_slugs()) == set(QUESTIONNAIRE_PURPOSES)
+    assert set(use_case_slugs().values()) == set(use_case_priorities())

@@ -312,9 +312,17 @@ def purpose_cpu_signals() -> dict:
 
 
 def normalize_purpose(purpose):
-    """The agent tool's purpose whitelist, the thing that decides which
-    reranker signal set a questionnaire answer ends up in."""
+    """The agent tool's purpose handling: returns a one-element list of the
+    canonical label, [] for no purpose, and raises ValueError on anything it
+    does not recognise."""
     return _search_tool._normalize_purpose(purpose)
+
+
+def use_case_slugs() -> dict:
+    """The canonical purpose -> DB/URL slug map (app/purposes.py)."""
+    from app.purposes import USE_CASE_SLUGS
+
+    return USE_CASE_SLUGS
 from app.rag.gating import relevance_gate  # noqa: E402
 from app.rag import relaxation as _relaxation  # noqa: E402
 from app.rag.relaxation import needs_relaxation, relax_and_retry  # noqa: E402

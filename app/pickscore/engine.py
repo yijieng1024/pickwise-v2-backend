@@ -1,5 +1,6 @@
 import bisect
 from typing import Optional
+from app.purposes import PURPOSES
 from app.users.models import LaptopUserPreference
 from app.pickscore.benchmark_service import resolve_benchmark, resolve_gpu_benchmark
 from app.pickscore.schemas import ScorableProduct, FactorBreakdown, PickScoreResponse
@@ -43,6 +44,11 @@ PURPOSE_MODIFIERS: dict[str, dict[str, float]] = {
         "price": 1.3, "cpu": 1.2, "ram_storage": 1.2, "portability": 1.1, "battery": 1.1,
     },
 }
+
+# One vocabulary, checked at import. PURPOSE_MODIFIERS is the map a stored
+# preference keys into directly, so a label added here and nowhere else is a
+# silently missing modifier.
+assert set(PURPOSE_MODIFIERS) == set(PURPOSES), "purpose labels have drifted"
 
 # Q5 portability intensity → Portability factor weight multiplier
 PORTABILITY_MULTIPLIERS: dict[str, float] = {

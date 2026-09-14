@@ -13,6 +13,7 @@ Formula:
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.purposes import PURPOSES
 from app.rag.retrieval import RetrievalCandidate
 
 # Purpose keyword signals for the bonus: maps purpose → cpu keywords that
@@ -31,9 +32,10 @@ from app.rag.retrieval import RetrievalCandidate
 # component reranking could defer to in the same way, so removing it is a
 # separate decision and is deliberately not part of that change.
 _PURPOSE_CPU_SIGNALS: dict[str, list[str]] = {
-    "Programming": ["i5", "i7", "i9", "ryzen 5", "ryzen 7", "ryzen 9", "m3", "m4"],
-    "Office": ["i5", "i7", "ryzen 5", "ryzen 7"],
+    "Programming/Development": ["i5", "i7", "i9", "ryzen 5", "ryzen 7", "ryzen 9", "m3", "m4"],
+    "Office/Study": ["i5", "i7", "ryzen 5", "ryzen 7"],
 }
+assert set(_PURPOSE_CPU_SIGNALS) <= set(PURPOSES), "purpose labels have drifted"
 
 
 @dataclass
