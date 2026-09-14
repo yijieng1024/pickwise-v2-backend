@@ -74,9 +74,14 @@ class _FakeSession:
         return False
 
 
-def _rows(n=3):
+def _rows(n=3, **laptop_kw):
     return [
-        (_FakeLaptop(model_code=f"FB{i}", price_rm=2000.0 + i, family_id=None), "Asus")
+        (
+            _FakeLaptop(
+                model_code=f"FB{i}", price_rm=2000.0 + i, family_id=None, **laptop_kw
+            ),
+            "Asus",
+        )
         for i in range(n)
     ]
 
@@ -176,17 +181,57 @@ def test_a_stated_budget_does_not_gate_the_fallback():
     assert relevance_gate(ranked).status == "pass"
 
 
-def test_a_weight_constrained_fallback_is_still_gated():
+def test_a_weight_constrained_fallback_is_not_gated():
     """
-    The residual, recorded rather than fixed. There is no SQL weight filter, so
-    a user who asked for something light still gets a clarifying question while
-    the embedding API is down: 0.58 x 0.7 = 0.406, under the gate. No value that
-    is both above the gate and below p10 survives that multiplier, so moving the
-    constant cannot fix this one.
+    THE REGRESSION TEST for the half-finished part of Change 1. This asserted
+    the gated outcome, because there was no SQL weight filter and the surviving
+    rows took the x0.7 penalty: 0.58 x 0.7 = 0.406, under the gate. Surviving
+    that multiplier needs a constant above 0.757, past p75 of genuine hits, so
+    no placeholder value could fix it.
+
+    The fallback filters weight in SQL now, so every row it returns is already
+    inside the limit and the penalty is a no-op on this path. That the database
+    really excludes the heavier rows is asserted against a real Postgres in
+    tests/integration/test_retrieval_filters.py; what is asserted here is the
+    composition -- given rows within the limit, nothing downstream re-penalises
+    them back under the gate.
     """
-    candidates = _relational_fallback(_FakeSession(_rows()), None, None, 50)
+    session = _FakeSession(_rows(weight_kg=0.9))
+    candidates = _relational_fallback(session, None, None, 50, weight_max=1.0)
     ranked = rerank(candidates, UserConstraints(weight_limit=1.0))
-    assert relevance_gate(ranked).status == "gated"
+    assert ranked[0].penalty_multiplier == pytest.approx(1.0)
+    assert relevance_gate(ranked).status == "pass"
+
+
+def test_the_weight_filter_reaches_the_sql_not_the_penalty():
+    """
+    Catches the filter being applied in Python after the query, or not at all.
+    The point of the change is that the relational path excludes what it can
+    exclude rather than retrieving it and demoting it — a weight penalty is a
+    semantic-retrieval remedy, and there is nothing semantic about this query.
+    """
+    session = _FakeSession(_rows())
+    _relational_fallback(session, None, None, 50, weight_max=1.0)
+    rendered = str(session.statements[0]).lower()
+    # The bound, not just the column name -- weight_kg is in the SELECT list
+    # either way, so `"weight_kg" in rendered` would pass with no filter at all.
+    assert "weight_kg <=" in rendered
+
+
+def test_a_null_weight_row_is_excluded_like_a_null_price():
+    """
+    Handling matched to the existing budget filter, deliberately: SQL compares
+    NULL to anything as NULL, so `weight_kg <= limit` drops a row with no
+    weight, exactly as `price_rm <= budget_max` already drops a row with no
+    price. A laptop with an unknown weight is not evidence that it is light, and
+    the fallback is already the degraded path — returning a maybe there would be
+    the second guess in a row.
+    """
+    session = _FakeSession(_rows())
+    _relational_fallback(session, None, None, 50, weight_max=1.0)
+    rendered = str(session.statements[0]).lower()
+    assert "weight_kg <=" in rendered
+    assert "or weight_kg is null" not in rendered
 
 
 def test_a_brand_preference_no_longer_changes_the_outcome():
@@ -225,6 +270,51 @@ def test_user_gets_laptops_when_the_embedding_api_is_down(monkeypatch):
     assert payload["results"], "the fallback rows were discarded downstream"
     assert payload["confidence"] == "high"
     assert payload["bottleneck"] is None
+
+
+def test_weight_limited_user_also_gets_laptops_when_the_api_is_down(monkeypatch):
+    """
+    The end-to-end case Change 1 should have been verified against. Its
+    acceptance ran a search with no weight limit, which passed; adding one
+    reverted the whole behaviour, and 1b made that invisible — a thrown-away
+    fallback logs as an ordinary gate on a run flagged retrieval_fallback true.
+    """
+    logged = {}
+    session = _FakeSession(_rows(5, weight_kg=0.9))
+    _break_the_embedding(monkeypatch)
+    _install_stubs(monkeypatch)
+    monkeypatch.setattr(_search_tool, "Session", lambda *a, **kw: session)
+    monkeypatch.setattr(
+        _search_tool, "log_pipeline_result", lambda **kw: logged.update(kw)
+    )
+
+    payload = _run_search("a light laptop for programming", weight_max=1.0)
+
+    assert payload["results"], "weight-limited fallback rows were discarded again"
+    assert payload["confidence"] == "high"
+    assert logged["retrieval_fallback"] is True
+    # The bound reached the query. That the DATABASE then excludes heavier rows
+    # is a database behaviour and is asserted against a real Postgres in
+    # tests/integration/test_retrieval_filters.py -- _FakeSession returns its
+    # rows whatever the WHERE clause says, so asserting exclusion here would
+    # pass without a filter at all.
+    assert "weight_kg <=" in str(session.statements[0]).lower()
+
+
+def test_the_weight_limit_reaches_the_fallback_query(monkeypatch):
+    """The tool has to pass weight_max down for any of the above to happen; it
+    previously had no reason to, since only the reranker consumed it."""
+    seen = {}
+
+    def _spy(query, session, budget_max=None, weight_max=None, **kw):
+        seen["weight_max"] = weight_max
+        # Non-empty: an empty pool sends the tool into relaxation, which
+        # re-enters retrieval through its own module-level name.
+        return [_pgvector_candidate(0.80, weight_kg=0.9)]
+
+    _install_stubs(monkeypatch, retrieve=_spy)
+    _run_search("a light laptop", weight_max=1.2)
+    assert seen["weight_max"] == 1.2
 
 
 def test_fallback_did_run_and_did_find_laptops(monkeypatch):

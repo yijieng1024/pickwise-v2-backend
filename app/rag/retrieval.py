@@ -79,6 +79,7 @@ def retrieve_candidates(
     budget_max: Optional[float] = None,
     brand: Optional[str] = None,
     recall_size: int = _DEFAULT_RECALL_SIZE,
+    weight_max: Optional[float] = None,
 ) -> list[RetrievalCandidate]:
     """
     Embed the query and run pgvector cosine similarity search.
@@ -106,7 +107,9 @@ def retrieve_candidates(
             query,
             exc_info=True,
         )
-        return _relational_fallback(session, budget_max, brand, recall_size)
+        return _relational_fallback(
+            session, budget_max, brand, recall_size, weight_max
+        )
 
     distance_col = LaptopEmbedding.embedding.cosine_distance(query_vector)
 
@@ -140,6 +143,7 @@ def _relational_fallback(
     budget_max: Optional[float],
     brand: Optional[str],
     limit: int,
+    weight_max: Optional[float] = None,
 ) -> list[RetrievalCandidate]:
     """
     Pure SQL fallback when the embedding API is unavailable.
@@ -155,6 +159,20 @@ def _relational_fallback(
     )
     if budget_max is not None:
         stmt = stmt.where(Laptop.price_rm <= budget_max)
+    # Weight is filtered HERE and nowhere else on this path. The reranker's
+    # weight penalty exists to demote candidates that pgvector retrieved but
+    # that fit a numeric constraint poorly -- semantic retrieval cannot filter
+    # on a column, so demotion is the only tool it has. This query has no such
+    # limitation and already filters price; taking a x0.7 multiplier for
+    # something SQL could simply exclude is applying a semantic remedy to a
+    # relational problem, and it put every weight-constrained fallback back
+    # under the gate (0.58 x 0.7 = 0.406).
+    #
+    # NULL weight_kg drops out, exactly as NULL price_rm already does under the
+    # budget filter: SQL compares NULL as NULL. An unknown weight is not
+    # evidence that a laptop is light, and this is already the degraded path.
+    if weight_max is not None:
+        stmt = stmt.where(Laptop.weight_kg <= weight_max)
     if brand is not None:
         stmt = stmt.where(LaptopBrand.name.ilike(brand))
     stmt = stmt.order_by(Laptop.price_rm.asc(), Laptop.id).limit(limit)  # type: ignore

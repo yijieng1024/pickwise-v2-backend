@@ -176,7 +176,9 @@ def _run_search(
                 select(LaptopUserPreference).where(LaptopUserPreference.user_id == user_id)
             ).first()
 
-        candidates = retrieve_candidates(user_query, session, budget_max=budget_max)
+        candidates = retrieve_candidates(
+            user_query, session, budget_max=budget_max, weight_max=weight_max
+        )
         # Read before relaxation: a relaxation retry re-enters the same
         # retrieval function against the same embedding API, so if the first
         # call fell back every retry did too.
