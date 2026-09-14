@@ -168,6 +168,10 @@ def _run_search(
             ).first()
 
         candidates = retrieve_candidates(user_query, session, budget_max=budget_max)
+        # Read before relaxation: a relaxation retry re-enters the same
+        # retrieval function against the same embedding API, so if the first
+        # call fell back every retry did too.
+        retrieval_fallback = any(c.from_fallback for c in candidates)
         ranked = rerank(candidates, constraints)
 
         relaxation = None
@@ -194,6 +198,7 @@ def _run_search(
                 query=user_query,
                 relaxation=relaxation,
                 session=session,
+                retrieval_fallback=retrieval_fallback,
             )
         except Exception:
             logger.exception("search_laptops: failed to log pipeline result")

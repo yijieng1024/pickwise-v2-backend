@@ -32,6 +32,11 @@ class RetrievalCandidate:
     laptop: Laptop
     brand_name: str
     cosine_distance: float
+    # Which retrieval path produced this row. The fallback's score is a
+    # placeholder, not a measurement, so anything reading the score needs to
+    # be able to tell the two apart -- and it must not be inferable from the
+    # score itself, which is a constant that can and does move.
+    from_fallback: bool = False
 
     @property
     def similarity_score(self) -> float:
@@ -139,6 +144,11 @@ def _relational_fallback(
     rows = session.execute(stmt).all()
     # cosine_distance=0.5 → similarity_score=0.5 (neutral, not misleading)
     return [
-        RetrievalCandidate(laptop=laptop, brand_name=brand_name, cosine_distance=0.5)
+        RetrievalCandidate(
+            laptop=laptop,
+            brand_name=brand_name,
+            cosine_distance=0.5,
+            from_fallback=True,
+        )
         for laptop, brand_name in rows
     ]

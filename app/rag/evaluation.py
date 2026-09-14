@@ -333,6 +333,7 @@ def log_pipeline_result(
     user_id=None,             # uuid.UUID | None
     conversation_id=None,     # uuid.UUID | None
     session: Session = None,  # type: ignore[assignment]
+    retrieval_fallback: bool = False,
 ) -> None:
     """
     Persist pipeline metrics for every live user request.
@@ -361,6 +362,7 @@ def log_pipeline_result(
         "relaxed_from": relaxation.original_value if relaxation else None,
         "relaxed_to": relaxation.relaxed_value if relaxation else None,
         "bottleneck": gate.bottleneck,
+        "retrieval_fallback": retrieval_fallback,
         "candidate_count": len(result_ids),
         "result_laptop_ids": result_ids,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -386,6 +388,7 @@ def log_pipeline_result(
             relaxed_from=record["relaxed_from"],
             relaxed_to=record["relaxed_to"],
             bottleneck=gate.bottleneck,
+            retrieval_fallback=retrieval_fallback,
             candidate_count=len(result_ids),
             result_laptop_ids=result_ids,
         ))

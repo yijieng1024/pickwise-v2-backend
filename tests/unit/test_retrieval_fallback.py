@@ -12,6 +12,7 @@ is faked at the one call it makes (session.execute(stmt).all()), and the
 statement it builds is never executed.
 """
 
+import json
 import logging
 import uuid
 
@@ -19,6 +20,7 @@ import pytest
 
 from ._adapters import (
     UserConstraints,
+    _real_log_pipeline_result,
     _relational_fallback,
     _retrieval,
     _run_search,
@@ -28,7 +30,7 @@ from ._adapters import (
     relevance_gate,
     rerank,
 )
-from .test_pipeline_internals import _FakeLaptop, _install_stubs
+from .test_pipeline_internals import _FakeLaptop, _candidate as _pgvector_candidate, _install_stubs
 
 
 class _FakeResult:
@@ -46,10 +48,23 @@ class _FakeSession:
     def __init__(self, rows):
         self._rows = rows
         self.statements = []
+        self.added = []
 
     def execute(self, stmt):
         self.statements.append(stmt)
         return _FakeResult(self._rows)
+
+    # log_pipeline_result's DB half runs against this too, so the
+    # PipelineEvalLog row is really constructed -- which is what proves the
+    # model accepts the new column.
+    def add(self, obj):
+        self.added.append(obj)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
 
     def __enter__(self):
         return self
@@ -222,36 +237,84 @@ def test_embedding_failure_is_logged_at_error_with_the_exception(monkeypatch, ca
     assert record.exc_info[1].args[0] == "embedding API unavailable"
 
 
-def test_nothing_records_that_the_search_was_a_fallback(monkeypatch):
+class _TraceCapture(logging.Handler):
+    """The pickwise.eval logger sets propagate = False and owns its own
+    FileHandler, so caplog cannot see it. Attach directly instead."""
+
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(json.loads(record.getMessage()))
+
+
+def _run_and_capture_trace(monkeypatch, break_embedding: bool):
+    """Run a real search and return the JSON lines written to
+    logs/eval/pipeline_trace.jsonl — the written record, not a return value."""
+    session = _FakeSession(_rows(3))
+    if break_embedding:
+        _break_the_embedding(monkeypatch)
+    else:
+        monkeypatch.setattr(_retrieval, "_get_query_vector", lambda q: [0.1] * 768)
+        monkeypatch.setattr(
+            _search_tool,
+            "retrieve_candidates",
+            lambda query, session, **kw: [
+                _pgvector_candidate(0.80), _pgvector_candidate(0.70)
+            ],
+        )
+    # log_pipeline_result is deliberately NOT stubbed here — it is the thing
+    # under test.
+    _install_stubs(monkeypatch)
+    monkeypatch.setattr(_search_tool, "log_pipeline_result", _real_log_pipeline_result)
+    monkeypatch.setattr(_search_tool, "Session", lambda *a, **kw: session)
+
+    capture = _TraceCapture()
+    trace_logger = logging.getLogger("pickwise.eval")
+    trace_logger.addHandler(capture)
+    try:
+        _run_search("a light laptop")
+    finally:
+        trace_logger.removeHandler(capture)
+    return capture.records, session
+
+
+def test_a_fallback_run_is_marked_in_the_trace(monkeypatch):
     """
-    An invisible degraded mode is the same class of problem as the gate
-    interaction itself: if it cannot be seen in the logs, nobody learns the
-    embedding API is down from anything except the gated replies.
+    Catches an invisible degraded mode. Inferring a fallback from
+    top_score == 0.5 stopped working the moment the constant moved, and it
+    always collided with a genuine embedding hit landing on 0.5. The flag says
+    which retrieval path ran, independently of what it scored.
+    """
+    records, session = _run_and_capture_trace(monkeypatch, break_embedding=True)
+    assert len(records) == 1
+    assert records[0]["retrieval_fallback"] is True
+    assert session.added[0].retrieval_fallback is True, "the DB row must carry it too"
 
-    Asserted as it is, not as it should be. retrieve_candidates swallows the
-    exception with a bare `except Exception:` and no log call, and
-    log_pipeline_result's record has no retrieval-mode field — gate_status,
-    top_score, bottleneck, relaxed_*, candidate_count, result_laptop_ids. A
-    fallback run is indistinguishable from a genuine near-miss except by
-    noticing top_score is exactly 0.5.
 
-    When a marker is added, this test goes red and gets rewritten to assert it.
+def test_a_normal_run_is_marked_false(monkeypatch):
+    """The negative half: a flag that is always true reports nothing."""
+    records, session = _run_and_capture_trace(monkeypatch, break_embedding=False)
+    assert len(records) == 1
+    assert records[0]["retrieval_fallback"] is False
+    assert session.added[0].retrieval_fallback is False
+
+
+def test_the_search_tool_tells_the_logger_which_path_ran(monkeypatch):
+    """
+    The flag has to be threaded from retrieval to the logger, and the tool is
+    the only place that sees both. Asserted at the call boundary so it fails if
+    someone reverts to deriving it from top_score.
     """
     logged = {}
-
-    def _capture(**kwargs):
-        logged.update(kwargs)
 
     session = _FakeSession(_rows(3))
     _break_the_embedding(monkeypatch)
     _install_stubs(monkeypatch)
     monkeypatch.setattr(_search_tool, "Session", lambda *a, **kw: session)
-    monkeypatch.setattr(_search_tool, "log_pipeline_result", _capture)
+    monkeypatch.setattr(_search_tool, "log_pipeline_result", lambda **kw: logged.update(kw))
 
     _run_search("a light laptop")
 
-    assert logged, "the pipeline logger was called"
-    assert set(logged) == {"gate", "query", "relaxation", "session"}
-    assert logged["relaxation"] is None
-    # The only trace of the outage anywhere in the record:
-    assert logged["gate"].top_score == pytest.approx(0.5)
+    assert logged["retrieval_fallback"] is True

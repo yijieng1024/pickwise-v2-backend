@@ -334,6 +334,11 @@ _MAX_RESULTS = _search_tool._MAX_RESULTS
 _run_search = _search_tool._run_search
 
 
+# The real logger, for the fallback-flag tests: _install_stubs replaces the
+# name inside the search tool, and those tests need it back.
+from app.rag.evaluation import log_pipeline_result as _real_log_pipeline_result  # noqa: E402
+
+
 def max_results() -> int:
     return _MAX_RESULTS
 
