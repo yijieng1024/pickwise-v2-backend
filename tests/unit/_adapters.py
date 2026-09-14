@@ -302,19 +302,12 @@ from app.rag.retrieval import (  # noqa: E402
     retrieve_candidates,
 )
 from app.rag import retrieval as _retrieval  # noqa: E402
-from app.rag.reranker import (  # noqa: E402
-    _PURPOSE_CPU_SIGNALS,
-    _PURPOSE_GPU_SIGNALS,
-)
-
-
-def purpose_gpu_signals() -> dict:
-    """reranker.py:20-23 — the purpose -> GPU-keyword map. Matched as a
-    substring against laptop.gpu_model, nothing else."""
-    return _PURPOSE_GPU_SIGNALS
+from app.rag.reranker import _PURPOSE_CPU_SIGNALS  # noqa: E402
 
 
 def purpose_cpu_signals() -> dict:
+    """The purpose -> CPU-keyword map. The GPU half was removed; see the
+    reranker module docstring."""
     return _PURPOSE_CPU_SIGNALS
 
 

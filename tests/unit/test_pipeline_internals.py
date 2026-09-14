@@ -30,7 +30,6 @@ from ._adapters import (
     max_results,
     min_viable_score,
     needs_relaxation,
-    normalize_purpose,
     relax_and_retry,
     relaxation_steps,
     relevance_gate,
@@ -245,127 +244,81 @@ def test_no_constraints_means_score_is_pure_similarity():
 
 
 def test_purpose_bonus_is_capped():
-    """Capped at +0.08 so a bonus can never outweigh a real penalty — an RTX
-    machine 50% over budget must not climb back over an in-budget one."""
+    """Capped at +0.08 so a bonus never outweighs a real penalty — a machine
+    50% over budget must not climb back over an in-budget one. Both +0.04
+    contributions now come from the CPU half; Gaming and Creative add nothing."""
     bonus, _reasons = _purpose_bonus(
-        _FakeLaptop(gpu_model="NVIDIA GeForce RTX 5060 Laptop GPU",
-                    processor_model="Intel Core i7-14650HX"),
+        _FakeLaptop(processor_model="Intel Core i7-14650HX"),
         ["Gaming", "Creative", "Programming", "Office"],
     )
     assert bonus == pytest.approx(0.08)
 
 
 # --------------------------------------------------------------------------
-# The Creative GPU-signal branch — reranker.py:22
+# The purpose bonus after the GPU keywords were removed
 # --------------------------------------------------------------------------
-# Unreachable from the questionnaire today: _normalize_purpose coerces
-# "Creative Work" to "Office" (see test_purpose_modifier_keys_match_known_purposes,
-# deliberately red). These tests exercise the branch directly with the label the
-# reranker itself uses, so they describe live behaviour the moment the labels are
-# unified and must keep passing across that change — an eval run could not see a
-# 0.04 reranker difference through its own variance.
+# The nine tests that used to sit here described the GPU keyword branch
+# (rtx/rx/radeon against gpu_model). That branch is gone, so they described
+# deleted code and were deleted with it. These two replace them: one holds the
+# removal in place, one holds the surviving half in place.
 
 
-def _bonus(gpu_model, purposes, processor_model="Intel Core 5 210H"):
-    bonus, _reasons = _purpose_bonus(
-        _FakeLaptop(gpu_model=gpu_model, processor_model=processor_model), purposes
-    )
-    return bonus
+class _GpuTrap:
+    """Records any read of gpu_model. A plain assertion on the returned number
+    cannot tell "does not use the GPU" from "uses it and happens to score the
+    same here"."""
+
+    def __init__(self, processor_model="Intel Core i7-14650HX"):
+        self.processor_model = processor_model
+        self.gpu_reads = 0
+
+    @property
+    def gpu_model(self):
+        self.gpu_reads += 1
+        return "NVIDIA GeForce RTX 5090 Laptop GPU"
 
 
-def test_creative_gpu_bonus_is_exactly_four_hundredths():
-    """The branch adds +0.04 once, on the first keyword that hits — it breaks
-    out of the keyword loop, so a string matching two keywords is not paid
-    twice. Creative has no CPU signal set, so 0.04 is the whole bonus."""
-    assert _bonus("NVIDIA GeForce RTX 5090 Laptop GPU", ["Creative"]) == pytest.approx(0.04)
-    assert _bonus("AMD Radeon RX 7600S", ["Creative"]) == pytest.approx(0.04)
-
-
-def test_creative_gives_no_bonus_to_a_gpu_it_does_not_recognise():
-    """The pair that makes the branch measurable: same purpose, different GPU
-    string, 0.04 apart."""
-    assert _bonus("Intel Arc Graphics", ["Creative"]) == pytest.approx(0.0)
-
-
-def test_creative_branch_keys_on_the_gpu_STRING_not_the_mark_or_the_proxy_flag():
+@pytest.mark.parametrize("purpose", ["Gaming", "Creative", "Programming", "Office"])
+def test_purpose_bonus_never_reads_gpu_model(purpose):
     """
-    What the branch actually reads, pinned because it is easy to assume
-    otherwise: `kw in (laptop.gpu_model or "").lower()`. Not gpu_mark, not the
-    resolved PassMark name, not flags.gpu_score_is_proxy — the reranker never
-    touches the benchmark service at all.
-
-    Consequence, asserted rather than described: an RTX 5090 (gpu_mark 28248,
-    the catalog ceiling) and a Radeon 610M (1299, the catalog floor) earn the
-    SAME +0.04. A 21x performance gap is invisible to this bonus.
+    Catches the reintroduction of string-matched GPU strength in the reranker.
+    GPU judgement belongs to PickScore, which resolves real PassMark marks, an
+    integrated-GPU map and an Apple equivalence map; a substring match on
+    gpu_model paid an RTX 5090 and a Radeon 610M the same +0.04 and paid Apple
+    nothing, so the two components disagreed about the same laptop.
     """
-    flagship = _bonus("NVIDIA GeForce RTX 5090 Laptop GPU", ["Creative"])
-    entry_igpu = _bonus("AMD Radeon 610M", ["Creative"])
-    assert flagship == entry_igpu == pytest.approx(0.04)
+    laptop = _GpuTrap()
+    _purpose_bonus(laptop, [purpose])
+    assert laptop.gpu_reads == 0
 
 
-def test_apple_gets_no_creative_bonus_at_all():
+def test_cpu_signals_still_fire_at_their_existing_values():
+    """The surviving half, unchanged: +0.04 per matching purpose, one match per
+    purpose (the loop breaks), capped at +0.08 in total."""
+    def bonus(cpu, purposes):
+        return _purpose_bonus(_FakeLaptop(processor_model=cpu), purposes)[0]
+
+    assert bonus("Intel Core i7-14650HX", ["Programming"]) == pytest.approx(0.04)
+    assert bonus("AMD Ryzen 7 7730U", ["Office"]) == pytest.approx(0.04)
+    assert bonus("Intel Core i7-14650HX", ["Programming", "Office"]) == pytest.approx(0.08)
+    # No keyword in the string -> nothing.
+    assert bonus("Intel Core 5 210H", ["Office"]) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("purpose", ["Gaming", "Creative"])
+def test_gaming_and_creative_now_have_no_reranking_effect(purpose):
     """
-    Apple GPU strings are core counts ('40-Core GPU'), which contain none of
-    rtx/rx/radeon — so the proxy-scored rows do NOT collect this bonus. The
-    amplification worry runs the other way: the machines most likely to be
-    picked for creative work are the ones the branch cannot see.
+    Recorded because it is a fact worth knowing, not because it is desirable:
+    neither purpose has a CPU signal set, so with the GPU half gone their
+    purpose bonus is always 0.0 and the reranker treats them exactly like a
+    user who stated no purpose at all. Purpose still reaches PickScore's weight
+    modifiers, which is where GPU-heavy uses are now expressed.
     """
-    assert _bonus("Apple M5 Max 40-Core GPU", ["Creative"]) == pytest.approx(0.0)
-
-
-def test_creative_bonus_sits_inside_the_shared_cap_not_on_top_of_it():
-    """One +0.08 cap covers every purpose's GPU and CPU bonus together, so
-    Creative cannot lift a candidate beyond what Gaming alone already could."""
-    assert _bonus("NVIDIA GeForce RTX 5090 Laptop GPU", ["Gaming", "Creative"]) == pytest.approx(0.08)
-    assert _bonus(
-        "NVIDIA GeForce RTX 5090 Laptop GPU",
-        ["Gaming", "Creative", "Programming", "Office"],
+    laptop = _FakeLaptop(
+        gpu_model="NVIDIA GeForce RTX 5090 Laptop GPU",
         processor_model="Intel Core i7-14650HX",
-    ) == pytest.approx(0.08)  # raw 0.16, capped
-
-
-def test_radeon_is_the_creative_only_keyword():
-    """
-    'radeon' is in Creative's list and not in Gaming's; rtx/rx are in both. So
-    a plain Radeon iGPU is the one string that tells the two branches apart —
-    which is exactly why this is the negative case worth keeping.
-    """
-    assert _bonus("AMD Radeon 890M", ["Creative"]) == pytest.approx(0.04)
-    assert _bonus("AMD Radeon 890M", ["Gaming"]) == pytest.approx(0.0)
-
-
-@pytest.mark.parametrize("purpose", ["Gaming", "Programming", "Office"])
-def test_creative_branch_does_not_fire_for_other_purposes(purpose):
-    """The assertion that stays meaningful after the labels are unified: a user
-    who did not say Creative Work must never collect the Creative bonus."""
-    assert _bonus("AMD Radeon 890M", [purpose]) == pytest.approx(0.0)
-
-
-def test_creative_bonus_reaches_final_score(monkeypatch):
-    """End of the arithmetic: 0.70 similarity, no penalties, +0.04 = 0.74. The
-    bonus is worth about 7.5% of the gap between the gate (0.53) and a perfect
-    match, so it can move a borderline candidate across the gate."""
-    ranked = rerank(
-        [_candidate(similarity=0.70, gpu_model="AMD Radeon 890M")],
-        UserConstraints(purpose=["Creative"]),
     )
-    assert ranked[0].final_score == pytest.approx(0.74)
-    assert ranked[0].bonus_reasons == ["GPU matches Creative purpose"]
-
-
-def test_creative_work_does_not_currently_reach_the_branch():
-    """
-    Reachability, recorded once so the label fix has a witness.
-
-    'Creative Work' is what the questionnaire stores; _normalize_purpose title-
-    cases it, finds it outside _KNOWN_PURPOSES, and substitutes 'Office'. This
-    test asserts the OUTCOME of the coercion (a Radeon machine earns nothing),
-    so it keeps passing if the labels are unified by widening _KNOWN_PURPOSES —
-    and goes red only if someone unifies them in a way that still loses the
-    purpose, which is the failure worth catching.
-    """
-    normalized = normalize_purpose("Creative Work")
-    assert _bonus("AMD Radeon 890M", normalized) == pytest.approx(0.0)
+    assert _purpose_bonus(laptop, [purpose])[0] == pytest.approx(0.0)
 
 
 def test_ranking_is_by_final_score_not_similarity():
