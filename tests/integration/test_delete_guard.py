@@ -84,19 +84,17 @@ def test_a_missing_laptop_is_404_not_409(session):
     assert exc.value.status_code == 404
 
 
-@pytest.mark.xfail(
-    reason=(
-        "REAL BUG, reported not fixed: the refusal tells the admin to set status "
-        "'inactive', but ADR-0009 defines 'inactive' as the awaiting-a-price work "
-        "queue and 'suspended' as the retired-and-no-longer-sold archive. Retiring "
-        "a listing is 'suspended'. Following this message files a discontinued "
-        "machine into the list of machines to go and find prices for, which is the "
-        "exact conflation the three-value column exists to prevent. "
-        "(CLAUDE.md repeats the same wrong word, so the doc needs the same fix.)"
-    ),
-    strict=True,
-)
 def test_the_message_names_the_retire_state_from_adr_0009(session, laptop, user):
+    """
+    ADR-0009 makes `suspended` the retired-and-no-longer-sold archive and
+    `inactive` the awaiting-a-price work queue. The refusal used to point at
+    `inactive`, which files a discontinued machine into the list of machines to
+    go find a price for -- the exact conflation the three-value column exists to
+    prevent. The enum value was corrected in August; this message was missed,
+    and so was the line in CLAUDE.md that repeats it.
+
+    The assertion is unchanged from when it was an xfail.
+    """
     session.add(SavedLaptop(user_id=user.id, laptop_id=laptop.id))
     session.commit()
 

@@ -274,8 +274,10 @@ def delete_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
     """
     Hard-delete a laptop, refusing (409) while anything a user or the review
     pipeline owns still points at it. To retire a listing from search and the
-    storefront without destroying that data, PUT `status: "inactive"` instead —
-    that is what the status field is for.
+    storefront without destroying that data, PUT `status: "suspended"` instead —
+    that is what the status field is for. NOT `inactive`, which is ADR-0009's
+    awaiting-a-price work queue: sending a discontinued machine there files it
+    in the list of machines to go find a price for.
     """
     db_laptop = session.get(Laptop, laptop_id)
     if not db_laptop:
@@ -292,7 +294,7 @@ def delete_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Cannot delete laptop: still referenced by {', '.join(blockers)}. "
-                "Set status to 'inactive' to retire it instead."
+                "Set status to 'suspended' to retire it instead."
             ),
         )
 
