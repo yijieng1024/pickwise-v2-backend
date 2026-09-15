@@ -3,7 +3,14 @@ from typing import Optional
 from rapidfuzz import process, fuzz
 import re, unicodedata
 
-_cache: dict[str, tuple[dict, float]] = {}
+# Keyed on (normalized model string, table fingerprint) -- NOT the string
+# alone. resolve_benchmark serves both the CPU and the GPU table, so a
+# string-only key returned the first caller's mark to the second for the whole
+# TTL. "AMD Ryzen Z1 Extreme" is in both real tables (cpu_mark 24613, gpu_mark
+# 6428) and _score_cpu runs before _score_gpu, so that GPU scored 24613 -- 3.8x
+# its real mark. It also made unrelated tests pass alone and fail together,
+# three times, because each test's small table poisoned the next one's lookups.
+_cache: dict[tuple[str, int], tuple[dict, float]] = {}
 CACHE_TTL = 300
 CONFIDENCE_THRESHOLD = 0.85
 
@@ -183,16 +190,20 @@ def resolve_benchmark(
         return {"score": None, "match_confidence": 0.0, "is_proxy": False}
     
     key = _normalize(model_string)
+    # The whole table, not its length or its first row: the CPU and GPU tables
+    # can hold the same name with different marks, which is the entire bug, and
+    # a cheaper fingerprint collides on exactly the small tables tests use.
+    cache_key = (key, hash(tuple(benchmarks)))
     now = time.time()
 
-    if key in _cache:
-        cached_result, cached_at = _cache[key]
+    if cache_key in _cache:
+        cached_result, cached_at = _cache[cache_key]
         if (now - cached_at) < CACHE_TTL:
             return cached_result
 
     if not benchmarks:
         result: dict = {"score": None, "match_confidence": 0.0, "is_proxy": False}
-        _cache[key] = (result, now)
+        _cache[cache_key] = (result, now)
         return result
 
     # WRatio does no preprocessing, so a lowercased key was being matched
@@ -219,7 +230,7 @@ def resolve_benchmark(
     else:
         result = {"score": None, "match_confidence": 0.0, "is_proxy": False}
 
-    _cache[key] = (result, now)
+    _cache[cache_key] = (result, now)
     return result
 
 

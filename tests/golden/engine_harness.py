@@ -35,7 +35,6 @@ from sqlmodel import Session, create_engine
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.pickscore_adapter import get_laptop_ranges
 from app.laptops.pickscore_general import USE_CASE_PRIORITIES
-from app.pickscore import benchmark_service as _bench
 from app.pickscore.benchmark_service import resolve_benchmark, resolve_gpu_benchmark
 from app.pickscore.engine import calculate_pick_score
 from app.pickscore.schemas import ScorableProduct
@@ -60,23 +59,6 @@ CREATE TABLE laptops (
 """
 
 
-def clear_benchmark_cache() -> None:
-    """
-    benchmark_service._cache is module-level and keyed ONLY on the normalized
-    model string -- not on which benchmark table was passed. So a resolution
-    another test did against its own small table is served straight back to us
-    for the same string, and the frozen marks stop being frozen.
-
-    That is the open cache-key xfail in
-    tests/integration/test_benchmark_resolution.py, observed here rather than
-    argued: without this call the golden snapshot fails when it runs after
-    tests/integration/test_data_invariants.py, and passes when it runs alone.
-    Clearing is the test-side workaround; a table discriminator in the key is
-    the fix.
-    """
-    _bench._cache.clear()
-
-
 def load_fixture() -> dict:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
@@ -91,7 +73,6 @@ def frozen_benchmarks(fixture: dict):
 
 def fixture_ranges(fixture: dict) -> dict:
     """Production's get_laptop_ranges, over the fixture, in memory."""
-    clear_benchmark_cache()
     engine = create_engine("sqlite://")
     CPUBenchmark.__table__.create(engine)
     GPUBenchmark.__table__.create(engine)
@@ -141,10 +122,8 @@ def _scorable(row: dict) -> ScorableProduct:
 
 def compute_snapshot(fixture: dict) -> dict:
     """Every laptop x every use case, plus the marks that produced them."""
-    clear_benchmark_cache()
     cpu_bm, gpu_bm = frozen_benchmarks(fixture)
     ranges = fixture_ranges(fixture)
-    clear_benchmark_cache()
 
     snapshot: dict = {}
     for row in fixture["laptops"]:

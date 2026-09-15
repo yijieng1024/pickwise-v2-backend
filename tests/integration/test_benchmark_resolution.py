@@ -135,27 +135,21 @@ def test_a_ti_is_not_swallowed_by_its_base(gpu_benchmarks):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LIVE BUG, reported not fixed. _cache is keyed on the normalized model "
-        "string alone and resolve_benchmark serves both tables, so the second "
-        "lookup of a string returns the first lookup's mark for the 5-minute TTL. "
-        "Measured against the real tables: 'AMD Ryzen Z1 Extreme' is in BOTH "
-        "(cpu_mark 24613, gpu_mark 6428). _score_cpu runs before _score_gpu, so "
-        "the GPU would be scored 24613 -- 3.8x its real mark. Not reachable on "
-        "today's catalog (zero laptops carry that chip) but one handheld-class "
-        "ingest away. Fix is a table discriminator in the key."
-    ),
-)
 def test_the_benchmark_cache_is_keyed_only_on_the_model_string(gpu_benchmarks):
     """
     Known open issue, measured rather than argued.
 
-    `_cache` is keyed on the normalized model string alone, and resolve_benchmark
-    serves both CPU and GPU lookups. This feeds a string that exists in BOTH
-    tables with different marks and asserts the two results differ — i.e. that
-    the collision does not happen. It does happen.
+    `_cache` used to be keyed on the normalized model string alone while
+    resolve_benchmark serves both the CPU and GPU tables, so the second lookup
+    of a string returned the first's mark for the TTL. Measured against the real
+    tables: "AMD Ryzen Z1 Extreme" is in both (cpu_mark 24613, gpu_mark 6428),
+    and _score_cpu runs before _score_gpu, so that GPU scored 24613 -- 3.8x its
+    real mark. Not reachable on today's catalog, but it had three concrete
+    consequences in the test suite alone, the last being Tier 2 and the
+    data-invariant tests passing in isolation and failing together.
+
+    Feeds a string present in both tables with different marks and asserts the
+    two results differ. The assertion is unchanged from when this was an xfail.
     """
     cpu_table = [("GeForce RTX 5060", 1111)]
     gpu_table = [("GeForce RTX 5060", 16785)]
