@@ -216,6 +216,18 @@ def score_gpu_flagged(gpu_model, ranges, cpu_model="Unknown", benchmarks=None):
     return float(score), flags
 
 
+def pick_score(cpu_model, gpu_model, ranges, cpu_benchmarks=None, gpu_benchmarks=None,
+               price=5899.0):
+    """The whole engine, general mode. Returns the PickScoreResponse."""
+    return _engine.calculate_pick_score(
+        _product(cpu_model=cpu_model, gpu_model=gpu_model, price=price),
+        None,
+        _ranges_to_engine(ranges),
+        cpu_benchmarks or [],
+        gpu_benchmarks or [],
+    )
+
+
 def percentile_normalize(value, population) -> float:
     """The shipped normalization curve. Every _score_* funnels through this.
 

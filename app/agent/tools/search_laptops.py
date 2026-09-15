@@ -78,6 +78,18 @@ def _pick_scores_for(
         product = laptop_to_scorable(laptop, brand_names[laptop.brand_id])
         resp = calculate_pick_score(product, user_pref, ranges, cpu_benchmarks, gpu_benchmarks)
         top_factors = sorted(resp.breakdown, key=lambda f: f.contribution, reverse=True)[:3]
+        if resp.flags.get("score_withheld"):
+            # Explicit, not absent (ADR-0016). A missing pick_score key means
+            # "scoring failed"; this says "could not be scored, and why", so
+            # the agent can relay it instead of quietly dropping the badge.
+            scores[str(laptop.id)] = {
+                "pick_score": None,
+                "pick_score_unavailable": (
+                    "neither the CPU nor the GPU could be identified, so this "
+                    "laptop has no PickScore -- do not state or estimate one"
+                ),
+            }
+            continue
         scores[str(laptop.id)] = {
             "pick_score": resp.score,
             "pick_score_top_factors": ", ".join(

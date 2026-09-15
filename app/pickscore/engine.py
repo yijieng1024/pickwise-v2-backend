@@ -410,14 +410,28 @@ def calculate_pick_score(
             note=factor_notes.get(factor),
         ))
 
+    # WITHHOLDING (ADR-0016). One unknown factor is defensible to neutralise;
+    # both defining factors unknown means that in the gaming preset alone
+    # cpu 8 + gpu 10 = 18 of 36 weight -- half the score -- rests on fabricated
+    # neutrals. That is not a score, and publishing it as one is the problem.
+    #
+    # None, not 0: 0 means "scored, and badly". The breakdown is still
+    # returned, because withholding the TOTAL must not withhold the evidence a
+    # caller needs to explain why there is no total.
+    withheld = (
+        cpu_flags["cpu_benchmark_unresolved"]
+        and gpu_flags["gpu_benchmark_unresolved"]
+    )
+
     return PickScoreResponse(
         product_id=product.product_id,
-        score=int(max(0, min(100, round(weighted_sum)))),
+        score=None if withheld else int(max(0, min(100, round(weighted_sum)))),
         mode=mode,
         breakdown=breakdown,
         flags={
             **gpu_flags,
             **cpu_flags,
             "price_unavailable": product.price == 0.0,
+            "score_withheld": withheld,
         },
     )

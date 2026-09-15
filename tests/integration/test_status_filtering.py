@@ -200,3 +200,51 @@ def test_ranking_excludes_suspended(session, active_and_suspended):
     ids = {laptop.id for _score, laptop, _brand in rows}
     assert active.id in ids
     assert suspended.id not in ids
+
+
+# --------------------------------------------------------------------------
+# A withheld score has no place in a ranking (ADR-0016)
+# --------------------------------------------------------------------------
+
+
+def test_ranking_omits_a_withheld_score(session, brand):
+    """
+    Omitted from the ORDERING, not deleted: the row still exists and
+    GET /{id}/pick-scores still returns it with a null score and the flag. A
+    ranking answers "what is best", and a laptop nobody could score has no
+    answer to that question -- but the detail view still has to be able to say
+    WHY there is no answer.
+
+    Also guards a crash: get_ranking_for_use_case sorts on -score, which raises
+    TypeError the moment a None reaches it.
+    """
+    from tests.integration.conftest import make_laptop
+
+    scored = make_laptop(brand.id, product_name="Scored")
+    withheld = make_laptop(brand.id, product_name="Withheld")
+    session.add(scored)
+    session.add(withheld)
+    session.commit()
+
+    session.add(LaptopPickScore(
+        laptop_id=scored.id, use_case="gaming", score=80, breakdown=[], flags={}
+    ))
+    session.add(LaptopPickScore(
+        laptop_id=withheld.id, use_case="gaming", score=None, breakdown=[],
+        flags={"score_withheld": True},
+    ))
+    session.commit()
+
+    rows = get_ranking_for_use_case(session, "gaming", limit=10)
+    names = {laptop.product_name for _score, laptop, _brand in rows}
+    assert names == {"Scored"}
+
+    # The row itself survives -- absence must be explicit, not absent.
+    stored = session.exec(
+        LaptopPickScore.__table__.select().where(
+            LaptopPickScore.laptop_id == withheld.id
+        )
+    ).all()
+    assert len(stored) == 1
+    assert stored[0].score is None
+    assert stored[0].flags["score_withheld"] is True

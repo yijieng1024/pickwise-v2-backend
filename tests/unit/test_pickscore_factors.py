@@ -20,6 +20,7 @@ import pytest
 
 from ._adapters import (
     percentile_normalize,
+    pick_score,
     score_cpu,
     score_cpu_flagged,
     score_gpu,
@@ -291,3 +292,74 @@ def test_one_new_laptop_barely_moves_a_percentile():
     before = percentile_normalize(120, pop)
     after = percentile_normalize(120, pop + [1000])
     assert abs(before - after) < 0.5
+
+
+# --------------------------------------------------------------------------
+# Withholding: both defining factors unresolved (ADR-0016)
+# --------------------------------------------------------------------------
+# One unknown factor is defensible to neutralise. BOTH unknown means that in
+# the gaming preset alone, cpu 8 + gpu 10 = 18 of 36 weight -- half the score
+# -- rests on fabricated neutrals. That is not a score, and publishing it as
+# one is the problem.
+
+_CPU_TABLE = [("Intel Core i7-14650HX", 33467)]
+_GPU_TABLE = [("GeForce RTX 5060 Laptop GPU", 16785)]
+
+
+def test_both_unresolved_withholds_the_score(ranges):
+    """The score is None, not a number. A caller cannot accidentally render
+    a fabricated 50 as though it meant something."""
+    result = pick_score("Unknown", "Unknown", ranges)
+    assert result.score is None
+    assert result.flags["score_withheld"] is True
+    assert result.flags["cpu_benchmark_unresolved"] is True
+    assert result.flags["gpu_benchmark_unresolved"] is True
+
+
+def test_the_breakdown_survives_a_withheld_score(ranges):
+    """
+    Withholding the TOTAL must not withhold the evidence. The six other factors
+    resolved fine, and a caller explaining "why can this not be scored" needs
+    to show them.
+    """
+    result = pick_score("Unknown", "Unknown", ranges)
+    assert len(result.breakdown) == 8
+    price = next(b for b in result.breakdown if b.factor == "price")
+    assert price.raw_score > 0
+
+
+def test_one_unresolved_factor_still_scores(ranges):
+    """The baseline is B, not C: a single unknown factor is flagged and
+    neutralised, not withheld. Only both together cross the line."""
+    cpu_only = pick_score("Unknown", "GeForce RTX 5060 Laptop GPU", ranges,
+                          gpu_benchmarks=_GPU_TABLE)
+    assert cpu_only.score is not None
+    assert cpu_only.flags["cpu_benchmark_unresolved"] is True
+    assert cpu_only.flags["score_withheld"] is False
+
+    gpu_only = pick_score("Intel Core i7-14650HX", "Unknown", ranges,
+                          cpu_benchmarks=_CPU_TABLE)
+    assert gpu_only.score is not None
+    assert gpu_only.flags["gpu_benchmark_unresolved"] is True
+    assert gpu_only.flags["score_withheld"] is False
+
+
+def test_a_fully_resolved_laptop_is_never_withheld(ranges):
+    result = pick_score(
+        "Intel Core i7-14650HX", "GeForce RTX 5060 Laptop GPU", ranges,
+        cpu_benchmarks=_CPU_TABLE, gpu_benchmarks=_GPU_TABLE,
+    )
+    assert isinstance(result.score, int)
+    assert result.flags["score_withheld"] is False
+
+
+def test_withheld_is_distinct_from_a_zero_score(ranges):
+    """
+    None and 0 are different answers, and a JSON consumer that treats falsy as
+    absent will conflate them. 0 means "scored, and badly"; None means "not
+    scored". This is the same distinction price_rm = 0 failed to make.
+    """
+    withheld = pick_score("Unknown", "Unknown", ranges)
+    assert withheld.score is not None or withheld.score is None  # readable either way
+    assert withheld.score is None
+    assert withheld.score != 0
