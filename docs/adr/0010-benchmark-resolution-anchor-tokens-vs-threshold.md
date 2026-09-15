@@ -487,6 +487,24 @@ has no single correct answer:
 Both need a decision about what a CPU that cannot be resolved should score,
 which is the same open question as `_score_gpu`'s missing unresolved flag.
 
+**Resolved 2026-09-15 by ADR-0016, and the threshold is now two constants.**
+`CONFIDENCE_THRESHOLD` was one number answering two questions measured on
+different evidence; it is split into `CPU_CONFIDENCE_THRESHOLD = 0.90` and
+`GPU_CONFIDENCE_THRESHOLD = 0.85`. The GPU value is unchanged — August's four
+measured mismatches still set it, and whether 0.90 suits GPUs is unexamined.
+The CPU raise gates exactly 7 strings / 21 laptops: the 6 Qualcomm strings
+above (12 laptops, all wrong) plus `Apple M5 (10-core)` at 0.882 (9 laptops,
+correct, accepted as collateral). Nothing else moves.
+
+`resolve_benchmark` takes the threshold as an argument, defaulting to the CPU
+value because every direct caller resolves a CPU; `resolve_gpu_benchmark`
+passes the GPU value explicitly on all four of its internal calls. The
+threshold joins the cache key alongside the table, for the same reason: the
+same string against the same table resolves differently under 0.85 and 0.90.
+
+The raise was only safe once ADR-0016's flag channel existed — without it, 21
+wrong-or-lost marks would have become 21 indistinguishable 50.0s.
+
 ### The rewrite now survives a vendor prefix
 
 `_laptop_variant` compared the whole normalized string against the
