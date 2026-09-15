@@ -58,6 +58,17 @@ def strip_laptop_suffix(raw: str) -> str:
     return raw[: -len(suffix)] if raw.endswith(suffix) else raw
 
 
+def variant_key(raw: str) -> str:
+    """The canonical form _laptop_variant compares on: normalized, with vendor
+    words that carry no discriminating information removed."""
+    return _bench._variant_key(raw)
+
+
+def laptop_variant(key: str, benchmarks):
+    """The desktop -> laptop rewrite itself. `key` is already normalized."""
+    return _bench._laptop_variant(key, benchmarks)
+
+
 def apple_gpu_map() -> dict:
     return _APPLE_GPU_EQUIVALENT
 

@@ -15,8 +15,10 @@ import pytest
 from ._adapters import (
     confidence_threshold,
     has_anchor_token,
+    laptop_variant,
     normalize,
     strip_laptop_suffix,
+    variant_key,
 )
 
 
@@ -171,3 +173,95 @@ def test_ti_variant_is_not_swallowed_by_its_base():
     rule would silently give every Ti card its non-Ti mark.
     """
     assert strip_laptop_suffix("rtx 5070 ti laptop gpu") != "rtx 5070"
+
+
+# --------------------------------------------------------------------------
+# Vendor prefixes must not defeat the desktop/laptop rewrite
+# --------------------------------------------------------------------------
+# _laptop_variant compared the whole normalized string against the
+# suffix-stripped row name, so "nvidia geforce rtx 4050" never equalled
+# "geforce rtx 4050" and the rewrite silently did not fire. The string then
+# fell through to the fuzzy matcher and landed on "RTX PRO 2000 Blackwell
+# Embedded GPU" -- not the desktop variant of the right part, an unrelated
+# one. Worse than the seven collisions the rewrite was built for.
+#
+# The rule is ADR-0010's: drop words carrying no discriminating information,
+# keep words that do. NVIDIA/AMD/Intel name a vendor and nothing else. GeForce,
+# Radeon and Arc name product families and are kept, as are "Laptop" and the
+# trailing " GPU" -- Intel Arc 140T and Intel Arc 140T GPU are different parts,
+# 17% apart.
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("nvidia geforce rtx 4050", "geforce rtx 4050"),
+        ("geforce rtx 4050", "geforce rtx 4050"),
+        ("amd radeon rx 7600s", "radeon rx 7600s"),
+        ("intel arc 140t gpu", "arc 140t gpu"),
+        # The discriminating words survive.
+        ("geforce rtx 5070 ti laptop gpu", "geforce rtx 5070 ti laptop gpu"),
+    ],
+)
+def test_variant_key_drops_only_the_vendor(raw, expected):
+    assert variant_key(raw) == expected
+
+
+def test_variant_key_keeps_the_gpu_suffix():
+    """PassMark lists Arc 140T and Arc 140T GPU separately, 5634 vs 6607.
+    Dropping the trailing GPU here would merge two real parts."""
+    assert variant_key("intel arc 140t") != variant_key("intel arc 140t gpu")
+
+
+_REWRITE_TABLE = [
+    ("GeForce RTX 3050 4GB Laptop GPU", 9503),
+    ("GeForce RTX 4050 Laptop GPU", 14245),
+    ("GeForce RTX 5050 Laptop GPU", 14176),
+    ("GeForce RTX 5060 Laptop GPU", 16785),
+    ("GeForce RTX 5070 Laptop GPU", 19146),
+    ("GeForce RTX 5080 Laptop GPU", 26326),
+    ("GeForce RTX 5090 Laptop GPU", 28248),
+    ("GeForce RTX 5070 Ti Laptop GPU", 22465),
+    # The desktop rows a bare string would otherwise fuzzy-match onto.
+    ("GeForce RTX 4050", 16104),
+    ("GeForce RTX 5060", 20722),
+    ("RTX PRO 2000 Blackwell Embedded GPU", 16242),
+]
+
+
+@pytest.mark.parametrize(
+    "bare,laptop_row",
+    [
+        ("nvidia geforce rtx 4050", "GeForce RTX 4050 Laptop GPU"),
+        ("geforce rtx 4050", "GeForce RTX 4050 Laptop GPU"),
+        ("nvidia geforce rtx 5060", "GeForce RTX 5060 Laptop GPU"),
+        ("geforce rtx 5060", "GeForce RTX 5060 Laptop GPU"),
+    ],
+)
+def test_the_rewrite_fires_with_or_without_the_vendor_prefix(bare, laptop_row):
+    """The regression test: prefixed and bare forms must reach the same row."""
+    assert laptop_variant(bare, _REWRITE_TABLE) == laptop_row
+
+
+def test_a_ti_is_still_not_won_by_its_base_after_the_change():
+    """
+    The comparison stays EXACT on the canonical form. Loosening it to a prefix
+    or substring match is how "rtx 5070" would start winning "rtx 5070 ti
+    laptop gpu".
+
+    Asserted against a table holding ONLY the Ti row, because with both present
+    the base name correctly resolves to its own laptop row -- which proves
+    nothing about the Ti.
+    """
+    ti_only = [("GeForce RTX 5070 Ti Laptop GPU", 22465)]
+    assert laptop_variant("nvidia geforce rtx 5070", ti_only) is None
+    assert laptop_variant("geforce rtx 5070", ti_only) is None
+    # And with both rows present, the base picks its own -- never the Ti.
+    assert laptop_variant("geforce rtx 5070", _REWRITE_TABLE) == "GeForce RTX 5070 Laptop GPU"
+
+
+def test_the_variant_override_still_fires_with_a_prefix():
+    """_GPU_VARIANT_OVERRIDES is keyed on the bare normalized string. A
+    prefixed string has to reach it too, or the 4GB pin is bypassed."""
+    assert laptop_variant("geforce rtx 3050", _REWRITE_TABLE) == "GeForce RTX 3050 4GB Laptop GPU"
+    assert laptop_variant("nvidia geforce rtx 3050", _REWRITE_TABLE) == "GeForce RTX 3050 4GB Laptop GPU"

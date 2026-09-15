@@ -85,6 +85,32 @@ def test_a_bare_desktop_string_resolves_to_its_laptop_sibling(
     assert from_bare["score"] == from_laptop["score"] == _LAPTOP_MARKS[laptop_string]
 
 
+@pytest.mark.parametrize(
+    "prefixed,laptop_string",
+    [
+        ("NVIDIA GeForce RTX 3050", "GeForce RTX 3050 4GB Laptop GPU"),
+        ("NVIDIA GeForce RTX 4050", "GeForce RTX 4050 Laptop GPU"),
+        ("NVIDIA GeForce RTX 5050", "GeForce RTX 5050 Laptop GPU"),
+        ("NVIDIA GeForce RTX 5060", "GeForce RTX 5060 Laptop GPU"),
+        ("NVIDIA GeForce RTX 5070", "GeForce RTX 5070 Laptop GPU"),
+        ("NVIDIA GeForce RTX 5080", "GeForce RTX 5080 Laptop GPU"),
+        ("NVIDIA GeForce RTX 5090", "GeForce RTX 5090 Laptop GPU"),
+    ],
+)
+def test_a_vendor_prefix_does_not_defeat_the_rewrite(prefixed, laptop_string, gpu_benchmarks):
+    """
+    The same seven collisions, with the vendor word in front. _laptop_variant
+    used to compare the whole normalized string against the suffix-stripped row
+    name, so "nvidia geforce rtx 4050" never matched and the rewrite did not
+    fire; the string then fuzzy-matched to RTX PRO 2000 Blackwell Embedded GPU
+    (16242), an unrelated part. Measured, not hypothesised -- it is what the
+    golden fixture authoring turned up.
+    """
+    result = _bench.resolve_gpu_benchmark(prefixed, "Intel Core i7-14650HX", gpu_benchmarks)
+    assert result["score"] == _LAPTOP_MARKS[laptop_string]
+    assert result["score"] != 16242, "fell through to the fuzzy matcher again"
+
+
 def test_the_rewrite_never_reaches_for_the_desktop_mark(gpu_benchmarks):
     """The failure this prevents, stated as a number: a bare RTX 5060 scoring
     20722 instead of 16785 is 23% of free performance on a string convention."""

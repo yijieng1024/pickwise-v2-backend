@@ -113,6 +113,29 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
 
 _LAPTOP_SUFFIX = " laptop gpu"
 
+# Words naming only who made the part. ADR-0010's rule is to drop words that
+# carry no discriminating information and keep the ones that do: these three
+# say nothing a model number does not already say, while GeForce, Radeon and
+# Arc name product families and "Laptop" / the trailing " GPU" name different
+# parts (Intel Arc 140T and Intel Arc 140T GPU are 17% apart), so those stay.
+_VENDOR_WORDS = frozenset({"nvidia", "amd", "intel"})
+
+
+def _variant_key(s: str) -> str:
+    """The canonical form both sides of the rewrite are compared on.
+
+    Without this the comparison was against the raw normalized string, so
+    "nvidia geforce rtx 4050" never equalled "geforce rtx 4050" and the rewrite
+    silently did not fire for any vendor-prefixed name. The string then reached
+    the fuzzy matcher and landed on "RTX PRO 2000 Blackwell Embedded GPU" --
+    not the desktop variant of the right part, an unrelated one, which is worse
+    than the collisions the rewrite exists to fix. Today's catalog is safe only
+    by coincidence: Acer writes bare names and ASUS writes suffixed ones, so no
+    row is currently both prefixed and bare.
+    """
+    return " ".join(w for w in _normalize(s).split() if w not in _VENDOR_WORDS)
+
+
 _GPU_VARIANT_OVERRIDES: dict[str, str] = {
     "geforce rtx 3050": "GeForce RTX 3050 4GB Laptop GPU",
 }
@@ -121,16 +144,19 @@ def _laptop_variant(key: str, benchmarks: list[tuple[str, int]]) -> Optional[str
     """
     The laptop row that means the same part as `key`, or None.
 
-    Match is exact after removing the suffix, not fuzzy: "geforce rtx 5070"
-    must equal "geforce rtx 5070 ti laptop gpu" minus the suffix to win, and
-    it doesn't -- the Ti is a different part. Fuzzy matching here would
-    reintroduce exactly the ambiguity this function exists to remove.
+    Match is exact on the canonical form, not fuzzy: "geforce rtx 5070" must
+    equal "geforce rtx 5070 ti laptop gpu" minus the suffix to win, and it
+    doesn't -- the Ti is a different part. Dropping the vendor word is not a
+    loosening: it is applied to BOTH sides and removes a word that identifies
+    nothing. Relaxing to a prefix or substring match instead is how "rtx 5070"
+    would start winning "rtx 5070 ti laptop gpu".
     """
-    if key in _GPU_VARIANT_OVERRIDES:
-        return _GPU_VARIANT_OVERRIDES[key]
+    canonical = _variant_key(key)
+    if canonical in _GPU_VARIANT_OVERRIDES:
+        return _GPU_VARIANT_OVERRIDES[canonical]
     for name, _ in benchmarks:
         norm = _normalize(name)
-        if norm.endswith(_LAPTOP_SUFFIX) and norm[: -len(_LAPTOP_SUFFIX)] == key:
+        if norm.endswith(_LAPTOP_SUFFIX) and _variant_key(norm[: -len(_LAPTOP_SUFFIX)]) == canonical:
             return name
     return None
 
