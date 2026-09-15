@@ -33,11 +33,34 @@ CONFIDENCE_THRESHOLD = GPU_CONFIDENCE_THRESHOLD
 
 _JUNK = dict.fromkeys(map(ord, "®™©℠⁰¹²³⁴⁵⁶⁷⁸⁹\u2018\u2019\u201c\u201d"), None)
 
+# Apple writes "M5 (10-core)"; PassMark writes "Apple M5 10 Core". Same part,
+# 0.882 apart -- correct, and gated once CPU confidence went to 0.90
+# (ADR-0016), which cost 9 laptops a right answer.
+#
+# This is a FORM normalization, not a noise strip like `Processor`. The core
+# count is DISCRIMINATING: M5 10-core and M5 Pro 14-core are different parts
+# with different marks, so the three spellings must converge without 10 and 14
+# converging. Same lesson as ` GPU` and `Laptop` in ADR-0010, applied to a
+# spelling rather than to a word.
+#
+# Anchored on the word `core`, never on the hyphen: a blanket hyphen-to-space
+# would split i7-14650hx and re-match half the catalog. The hyphen class is
+# ASCII, non-breaking and en dash -- the same three _APPLE_KEY translates for
+# the GPU map.
+_CORE_COUNT = re.compile(r"\(?\s*(\d+)\s*[-\u2011\u2013 ]\s*core\s*\)?")
+
+
 def _normalize(s: str) -> str:
     s = s.translate(_JUNK)
     s = unicodedata.normalize("NFKD", s)    
     s = s.lower()
     s = re.sub(r"\bprocessor\b", " ", s)
+    # AFTER lower(), so "Core"/"CORE" are already folded and one pattern
+    # covers every casing. BEFORE the whitespace collapse below, because this
+    # injects spaces around the count and depends on that collapse to tidy
+    # them -- run after, it would leave "apple m5  10 core " and break the
+    # idempotence test.
+    s = _CORE_COUNT.sub(r" \1 core ", s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 

@@ -336,3 +336,60 @@ def test_a_gated_cpu_still_resolves_its_integrated_gpu():
     gpu = resolve_gpu("Qualcomm Adreno GPU", "Snapdragon X Elite X1E 78 100", table)
     assert gpu["score"] == 7565, "the iGPU must still resolve through the CPU string"
     assert gpu["is_proxy"] is True
+
+
+# --------------------------------------------------------------------------
+# Apple core counts are a FORM, not noise
+# --------------------------------------------------------------------------
+# PassMark writes "Apple M5 10 Core"; Apple's own marketing writes
+# "Apple M5 (10-core)". Those matched at 0.882 -- correct, and gated once the
+# CPU threshold went to 0.90, costing 9 laptops a right answer.
+#
+# The core COUNT is discriminating information: Apple M5 10-core and
+# Apple M5 Pro 14-core are different parts with different marks. So this is not
+# the `Processor` case (drop a word carrying nothing); it is a form
+# normalization -- make the three spellings one token while keeping 10 and 14
+# apart. Getting that backwards collapses Apple's whole line onto one mark.
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Apple M5 (10-core)",
+        "Apple M5 10-core",
+        "Apple M5 10 Core",
+        "Apple M5 10-Core",
+        "Apple M5 (10 core)",
+    ],
+)
+def test_every_core_count_spelling_normalizes_the_same(raw):
+    assert normalize(raw) == "apple m5 10 core"
+
+
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        ("Apple M5 (10-core)", "Apple M5 (14-core)"),
+        ("Apple M5 Pro (14-core)", "Apple M5 Pro (18-core)"),
+        ("Apple M5 Max (18-core)", "Apple M5 Max (20-core)"),
+    ],
+)
+def test_different_core_counts_do_not_collide(a, b):
+    """The count is the part number here. If these ever converge, every Apple
+    chip resolves to whichever row sorts first."""
+    assert normalize(a) != normalize(b)
+
+
+def test_the_core_form_survives_a_second_pass():
+    """Idempotence is already asserted generally; this pins the new step
+    specifically, since it inserts spaces and could otherwise keep growing."""
+    once = normalize("Apple M5 (10-core)")
+    assert normalize(once) == once
+
+
+def test_a_hyphenated_part_number_is_not_split():
+    """The rewrite is anchored on the word `core`, not on hyphens. A blanket
+    hyphen-to-space would turn i7-14650hx into two tokens and re-match half the
+    catalog."""
+    assert normalize("Intel Core i7-14650HX") == "intel core i7-14650hx"
+    assert normalize("Apple M5 Max (40-core) i7-14650HX") == "apple m5 max 40 core i7-14650hx"
