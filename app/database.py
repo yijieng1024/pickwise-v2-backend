@@ -36,8 +36,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from dotenv import load_dotenv
-from sqlalchemy import text
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, create_engine
 
 from app.config import _Lazy
 
@@ -104,14 +103,6 @@ engine = _Lazy(_build_engine, "Engine")
 def get_engine():
     """Explicit accessor for callers that would rather not rely on the proxy."""
     return engine._resolve()
-
-
-def init_db():
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        conn.commit()
-
-    SQLModel.metadata.create_all(engine)
 
 
 def get_session():
