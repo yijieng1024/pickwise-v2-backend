@@ -12,7 +12,24 @@ import re, unicodedata
 # three times, because each test's small table poisoned the next one's lookups.
 _cache: dict[tuple[str, int], tuple[dict, float]] = {}
 CACHE_TTL = 300
-CONFIDENCE_THRESHOLD = 0.85
+# One threshold per table. The single shared constant was raised 0.6 -> 0.85 in
+# August on GPU evidence (four measured mismatches, ADR-0010). The CPU evidence
+# points elsewhere and was never gathered until 2026-09-15: across 98 distinct
+# active processor_model strings, every match at 0.88 or above was correct with
+# cosmetic differences ("Apple M5 (10-core)" -> "Apple M5 10 Core"), and every
+# match at EXACTLY 0.85 was a wrong part -- 12 laptops, all Qualcomm, worst
+# case "Snapdragon X2 Elite (18-core) X2E88100" -> "AMD Athlon 64 X2 4200+",
+# mark 767, the catalog floor, on a 2025 flagship. "X2" matched "X2".
+#
+# The GPU value is deliberately NOT moved here: whether 0.90 suits it is
+# unexamined, and splitting the constant is what makes that a separate
+# question instead of a side effect. See ADR-0016.
+CPU_CONFIDENCE_THRESHOLD = 0.90
+GPU_CONFIDENCE_THRESHOLD = 0.85
+
+# Back-compat alias. Points at the GPU value, which is what this name has meant
+# since August.
+CONFIDENCE_THRESHOLD = GPU_CONFIDENCE_THRESHOLD
 
 _JUNK = dict.fromkeys(map(ord, "®™©℠⁰¹²³⁴⁵⁶⁷⁸⁹\u2018\u2019\u201c\u201d"), None)
 
@@ -179,10 +196,18 @@ def _integrated_gpu_for(cpu_model: str) -> Optional[str]:
 def resolve_benchmark(
     model_string: str,
     benchmarks: list[tuple[str, int]],
+    threshold: float = CPU_CONFIDENCE_THRESHOLD,
 ) -> dict:
     """
     Fuzzy-matches model_string against the benchmarks list.
     Returns: {score: int|None, match_confidence: float, is_proxy: bool}
+
+    `threshold` defaults to the CPU value because every DIRECT caller of this
+    function is resolving a CPU (_score_cpu, and get_laptop_ranges' cpu_mark).
+    GPU resolution goes through resolve_gpu_benchmark, which passes
+    GPU_CONFIDENCE_THRESHOLD explicitly on each of its calls. A new direct
+    caller resolving a GPU must pass it too -- the default is a convenience for
+    the common case, not a statement that 0.90 is right for both.
     """
     # Placeholder from the scraper, not a part name. Without this it fuzzy-matches
     # to whatever is nearest and returns a real-looking score.
@@ -193,7 +218,11 @@ def resolve_benchmark(
     # The whole table, not its length or its first row: the CPU and GPU tables
     # can hold the same name with different marks, which is the entire bug, and
     # a cheaper fingerprint collides on exactly the small tables tests use.
-    cache_key = (key, hash(tuple(benchmarks)))
+    # The threshold belongs in the key for the same reason the table does: the
+    # same string against the same table resolves differently under 0.85 and
+    # 0.90, so leaving it out would recreate the collision fixed one commit ago
+    # in a new dimension.
+    cache_key = (key, hash(tuple(benchmarks)), threshold)
     now = time.time()
 
     if cache_key in _cache:
@@ -218,7 +247,7 @@ def resolve_benchmark(
         matched_key, raw_confidence, _ = match
         matched_name = by_norm[matched_key]
         confidence = raw_confidence / 100.0
-        if confidence >= CONFIDENCE_THRESHOLD:
+        if confidence >= threshold:
             result = {
                 "score": score_map[matched_name],
                 "matched_name": matched_name,
@@ -265,20 +294,20 @@ def resolve_gpu_benchmark(
         if _LAPTOP_SUFFIX.strip() not in key:
             variant = _laptop_variant(key, benchmarks)
             if variant:
-                return resolve_benchmark(variant, benchmarks)
-        return resolve_benchmark(gpu_model, benchmarks)
+                return resolve_benchmark(variant, benchmarks, GPU_CONFIDENCE_THRESHOLD)
+        return resolve_benchmark(gpu_model, benchmarks, GPU_CONFIDENCE_THRESHOLD)
 
     apple_name = _APPLE_GPU_EQUIVALENT.get(
         _normalize(gpu_model).translate(_APPLE_KEY)
     )
     if apple_name:
-        result = resolve_benchmark(apple_name, benchmarks)
+        result = resolve_benchmark(apple_name, benchmarks, GPU_CONFIDENCE_THRESHOLD)
         if result["score"] is not None:
             return {**result, "is_proxy": True}
 
     igpu_name = _integrated_gpu_for(cpu_model)
     if igpu_name:
-        result = resolve_benchmark(igpu_name, benchmarks)
+        result = resolve_benchmark(igpu_name, benchmarks, GPU_CONFIDENCE_THRESHOLD)
         if result["score"] is not None:
             return {**result, "is_proxy": True}
 

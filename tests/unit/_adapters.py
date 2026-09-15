@@ -25,7 +25,6 @@ if str(_EVAL_DIR) not in sys.path:
 from app.pickscore.benchmark_service import (  # noqa: E402
     _APPLE_GPU_EQUIVALENT,
     _INTEGRATED_GPU_BY_CPU,
-    CONFIDENCE_THRESHOLD,
 )
 from app.pickscore import benchmark_service as _bench  # noqa: E402
 
@@ -87,7 +86,25 @@ def integrated_lookup(cpu_model: str):
 
 
 def confidence_threshold() -> float:
-    return CONFIDENCE_THRESHOLD
+    """Kept for the existing GPU-side test. The constant is now the GPU one --
+    see cpu_confidence_threshold/gpu_confidence_threshold."""
+    return _bench.GPU_CONFIDENCE_THRESHOLD
+
+
+def cpu_confidence_threshold() -> float:
+    return _bench.CPU_CONFIDENCE_THRESHOLD
+
+
+def gpu_confidence_threshold() -> float:
+    return _bench.GPU_CONFIDENCE_THRESHOLD
+
+
+def resolve_cpu(model, benchmarks):
+    return _bench.resolve_benchmark(model, benchmarks)
+
+
+def resolve_gpu(gpu_model, cpu_model, benchmarks):
+    return _bench.resolve_gpu_benchmark(gpu_model, cpu_model, benchmarks)
 
 
 # --------------------------------------------------------------------------

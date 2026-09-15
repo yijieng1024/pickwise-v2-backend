@@ -69,7 +69,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 33
         },
@@ -128,7 +129,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 36
         },
@@ -187,7 +189,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 39
         },
@@ -246,7 +249,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 39
         },
@@ -305,7 +309,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 31
         }
@@ -372,9 +377,10 @@
             "cpu_benchmark_unresolved": true,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": true
           },
-          "score": 47
+          "score": null
         },
         "gaming": {
           "factors": {
@@ -431,9 +437,10 @@
             "cpu_benchmark_unresolved": true,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": true
           },
-          "score": 48
+          "score": null
         },
         "general_use": {
           "factors": {
@@ -490,9 +497,10 @@
             "cpu_benchmark_unresolved": true,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": true
           },
-          "score": 56
+          "score": null
         },
         "office_study": {
           "factors": {
@@ -549,9 +557,10 @@
             "cpu_benchmark_unresolved": true,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": true
           },
-          "score": 59
+          "score": null
         },
         "programming": {
           "factors": {
@@ -608,9 +617,10 @@
             "cpu_benchmark_unresolved": true,
             "gpu_benchmark_unresolved": true,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": true
           },
-          "score": 49
+          "score": null
         }
       }
     },
@@ -675,7 +685,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -734,7 +745,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -793,7 +805,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 54
         },
@@ -852,7 +865,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -911,7 +925,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 56
         }
@@ -978,7 +993,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 64
         },
@@ -1037,7 +1053,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 66
         },
@@ -1096,7 +1113,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 50
         },
@@ -1155,7 +1173,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 49
         },
@@ -1214,7 +1233,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 57
         }
@@ -1281,7 +1301,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 28
         },
@@ -1340,7 +1361,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 28
         },
@@ -1399,7 +1421,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 42
         },
@@ -1458,7 +1481,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 43
         },
@@ -1517,7 +1541,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 34
         }
@@ -1584,7 +1609,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 45
         },
@@ -1643,7 +1669,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 48
         },
@@ -1702,7 +1729,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 40
         },
@@ -1761,7 +1789,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 39
         },
@@ -1820,7 +1849,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 40
         }
@@ -1887,7 +1917,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 41
         },
@@ -1946,7 +1977,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 39
         },
@@ -2005,7 +2037,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 47
         },
@@ -2064,7 +2097,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 48
         },
@@ -2123,7 +2157,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 43
         }
@@ -2190,7 +2225,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 63
         },
@@ -2249,7 +2285,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 62
         },
@@ -2308,7 +2345,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -2367,7 +2405,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -2426,7 +2465,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 59
         }
@@ -2493,7 +2533,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 73
         },
@@ -2552,7 +2593,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 73
         },
@@ -2611,7 +2653,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 61
         },
@@ -2670,7 +2713,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 61
         },
@@ -2729,7 +2773,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 69
         }
@@ -2796,7 +2841,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 47
         },
@@ -2855,7 +2901,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 49
         },
@@ -2914,7 +2961,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 49
         },
@@ -2973,7 +3021,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 48
         },
@@ -3032,7 +3081,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 47
         }
@@ -3099,7 +3149,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 56
         },
@@ -3158,7 +3209,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 58
         },
@@ -3217,7 +3269,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 48
         },
@@ -3276,7 +3329,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 48
         },
@@ -3335,7 +3389,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 52
         }
@@ -3402,7 +3457,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 71
         },
@@ -3461,7 +3517,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 72
         },
@@ -3520,7 +3577,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 54
         },
@@ -3579,7 +3637,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 52
         },
@@ -3638,7 +3697,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 64
         }
@@ -3705,7 +3765,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 65
         },
@@ -3764,7 +3825,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 65
         },
@@ -3823,7 +3885,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 58
         },
@@ -3882,7 +3945,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 58
         },
@@ -3941,7 +4005,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 64
         }
@@ -4008,7 +4073,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 72
         },
@@ -4067,7 +4133,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 74
         },
@@ -4126,7 +4193,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -4185,7 +4253,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 52
         },
@@ -4244,7 +4313,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 64
         }
@@ -4311,7 +4381,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 40
         },
@@ -4370,7 +4441,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 37
         },
@@ -4429,7 +4501,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 53
         },
@@ -4488,7 +4561,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -4547,7 +4621,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 47
         }
@@ -4614,7 +4689,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 37
         },
@@ -4673,7 +4749,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 40
         },
@@ -4732,7 +4809,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 40
         },
@@ -4791,7 +4869,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 38
         },
@@ -4850,7 +4929,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 37
         }
@@ -4917,7 +4997,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": true
+            "price_unavailable": true,
+            "score_withheld": false
           },
           "score": 21
         },
@@ -4976,7 +5057,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": true
+            "price_unavailable": true,
+            "score_withheld": false
           },
           "score": 20
         },
@@ -5035,7 +5117,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": true
+            "price_unavailable": true,
+            "score_withheld": false
           },
           "score": 30
         },
@@ -5094,7 +5177,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": true
+            "price_unavailable": true,
+            "score_withheld": false
           },
           "score": 29
         },
@@ -5153,7 +5237,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": true
+            "price_unavailable": true,
+            "score_withheld": false
           },
           "score": 25
         }
@@ -5220,7 +5305,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 47
         },
@@ -5279,7 +5365,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 43
         },
@@ -5338,7 +5425,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 53
         },
@@ -5397,7 +5485,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 53
         },
@@ -5456,7 +5545,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 52
         }
@@ -5523,7 +5613,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 51
         },
@@ -5582,7 +5673,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 48
         },
@@ -5641,7 +5733,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 59
         },
@@ -5700,7 +5793,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 61
         },
@@ -5759,7 +5853,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": true,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 56
         }
@@ -5826,7 +5921,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -5885,7 +5981,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 53
         },
@@ -5944,7 +6041,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 56
         },
@@ -6003,7 +6101,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 55
         },
@@ -6062,7 +6161,8 @@
             "cpu_benchmark_unresolved": false,
             "gpu_benchmark_unresolved": false,
             "gpu_score_is_proxy": false,
-            "price_unavailable": false
+            "price_unavailable": false,
+            "score_withheld": false
           },
           "score": 58
         }

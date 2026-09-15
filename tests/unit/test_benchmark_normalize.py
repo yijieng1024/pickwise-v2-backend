@@ -14,6 +14,10 @@ import pytest
 
 from ._adapters import (
     confidence_threshold,
+    cpu_confidence_threshold,
+    gpu_confidence_threshold,
+    resolve_cpu,
+    resolve_gpu,
     has_anchor_token,
     laptop_variant,
     normalize,
@@ -265,3 +269,70 @@ def test_the_variant_override_still_fires_with_a_prefix():
     prefixed string has to reach it too, or the 4GB pin is bypassed."""
     assert laptop_variant("geforce rtx 3050", _REWRITE_TABLE) == "GeForce RTX 3050 4GB Laptop GPU"
     assert laptop_variant("nvidia geforce rtx 3050", _REWRITE_TABLE) == "GeForce RTX 3050 4GB Laptop GPU"
+
+
+# --------------------------------------------------------------------------
+# One threshold per table
+# --------------------------------------------------------------------------
+# The single constant was raised 0.6 -> 0.85 in August on GPU evidence. The CPU
+# evidence points somewhere else: audited 2026-09-15 over 98 distinct active
+# processor_model strings, everything at 0.88+ was a correct match with
+# cosmetic differences and everything at EXACTLY 0.85 was a wrong part -- 12
+# laptops, all Qualcomm, worst case a 2025 Snapdragon X2 Elite resolving to an
+# AMD Athlon 64 X2 from 2005 at mark 767, the catalog floor.
+#
+# Whether 0.90 suits GPUs is unexamined, so the GPU value does not move here.
+
+
+def test_the_thresholds_are_separate_constants():
+    """One constant cannot answer two questions measured on different
+    evidence."""
+    assert cpu_confidence_threshold() == pytest.approx(0.90)
+    assert gpu_confidence_threshold() == pytest.approx(0.85)
+    assert cpu_confidence_threshold() != gpu_confidence_threshold()
+
+
+def test_the_gpu_threshold_did_not_move():
+    """August's GPU work set 0.85 after four measured mismatches. Splitting the
+    constant must not quietly re-tune the half that was already calibrated."""
+    assert confidence_threshold() == pytest.approx(0.85)
+
+
+# The real pair, at its real confidence: 0.855 -- above the GPU threshold,
+# below the CPU one. This is the exact straddle the split exists to express.
+_ATHLON = [("AMD Athlon 64 X2 4200+", 767)]
+_SNAPDRAGON = "Snapdragon X2 Elite (18-core) X2E88100"
+
+
+def test_a_0_855_cpu_match_is_now_rejected():
+    """
+    THE REGRESSION TEST for the Qualcomm cluster. "X2" in a 2025 ARM laptop
+    chip matched "X2" in a 2005 desktop CPU at 0.855 and scored 767.
+    """
+    result = resolve_cpu(_SNAPDRAGON, _ATHLON)
+    assert result["score"] is None
+    assert result["match_confidence"] == pytest.approx(0.855, abs=0.01)
+
+
+def test_the_same_0_855_match_still_passes_on_the_gpu_side():
+    """Proves the split is real rather than a global raise: identical string,
+    identical table, different answer because a different threshold applies."""
+    result = resolve_gpu(_SNAPDRAGON, "irrelevant", _ATHLON)
+    assert result["score"] == 767
+
+
+def test_a_gated_cpu_still_resolves_its_integrated_gpu():
+    """
+    THE INTERACTION THAT MATTERED. _INTEGRATED_GPU_BY_CPU is keyed on the CPU
+    STRING, not on the resolved CPU mark, so gating the mark must not break the
+    iGPU lookup. If it did, all 12 Qualcomm laptops would become
+    both-unresolved and ADR-0016 would withhold their scores entirely -- a far
+    larger user-visible change than intended.
+    """
+    table = [("Qualcomm Adreno X1-85 GPU", 7565), ("AMD Athlon 64 X2 4200+", 767)]
+    cpu = resolve_cpu("Snapdragon X Elite X1E 78 100", table)
+    assert cpu["score"] is None, "the CPU mark is gated"
+
+    gpu = resolve_gpu("Qualcomm Adreno GPU", "Snapdragon X Elite X1E 78 100", table)
+    assert gpu["score"] == 7565, "the iGPU must still resolve through the CPU string"
+    assert gpu["is_proxy"] is True
