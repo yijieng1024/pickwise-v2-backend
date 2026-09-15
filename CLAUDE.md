@@ -359,6 +359,27 @@ only when the diff touches `alembic/` or a model module. The nightly eval
 gates nothing — 20–30 min with ~17pp of run-to-run variance, and a check that
 goes red at random gets ignored.
 
+**If branch protection is ever enabled, do not mark `migrations` a required
+check without reading this first.** That job is path-filtered — it runs only
+when the diff touches `alembic/` or a model module — so on every other pull
+request it reports as **skipped**. Some branch-protection configurations treat
+a skipped required check as never satisfied, which blocks every merge that does
+not happen to touch a migration. The symptom (every PR stuck on a check that
+never runs) points nowhere near the path filter that causes it. Either leave it
+non-required, or add an always-running job that reports success when the filter
+says the migration tests were not needed.
+
+**The unit tier runs with no configuration, and that is enforced.**
+`tests/unit/test_no_secrets_required.py` imports the tier in a subprocess with
+every secret unset and `.env` unreachable. It exists because the property had
+never actually held — `_adapters` reached `app.database` through the agent tool
+package, and `create_engine`, `Settings()` and the Gemini embedder were all
+built at module scope, so a local `.env` was the only reason the tier ran. All
+three are now built on first use (`app/config.py::_Lazy`). If that test fails,
+the fix is to make the new module-scope construction lazy — **not** to give the
+CI job the secret, which would restore exactly the illusion it was written to
+remove.
+
 **Migrations do not target production by default.** `alembic/env.py` reads
 `TEST_DATABASE_URL` and errors with setup instructions if it is unset;
 production needs `ALEMBIC_TARGET=production`, which the Dockerfile's start
