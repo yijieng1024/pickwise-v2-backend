@@ -118,10 +118,20 @@ from app.pickscore.engine import (  # noqa: E402
     PURPOSE_MODIFIERS,
 )
 
-# REAL: _KNOWN_PURPOSES does not live in the engine. It is the agent search
-# tool's whitelist - which is part of why the label mismatch is invisible:
-# the two sets sit in different packages and nothing imports across.
-from app.agent.tools.search_laptops import _KNOWN_PURPOSES  # noqa: E402
+# The canonical label set. This used to import _KNOWN_PURPOSES from
+# app.agent.tools.search_laptops, which reaches a set of strings through the
+# entire agent stack: app/agent/tools/__init__.py -> laptop_tools ->
+# app.database -> create_engine() at module scope. That is why the unit tier
+# could not collect without a DATABASE_URL, masked the whole time by a local
+# .env.
+#
+# Since the label unification, _KNOWN_PURPOSES IS set(PURPOSES), and
+# app/purposes.py imports nothing -- it was built that way so every consumer
+# could read it without a cycle. So this is not a workaround for the import
+# problem; the agent tool was always the wrong module to ask.
+from app.purposes import PURPOSES  # noqa: E402
+
+_KNOWN_PURPOSES = set(PURPOSES)
 
 
 # REAL: the engine takes a range DICT per factor ({"min","max","values"}),
