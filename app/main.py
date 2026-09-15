@@ -79,6 +79,21 @@ app.include_router(jobs_router, prefix=API_PREFIX)
 
 
 @app.on_event("startup")
+def _validate_configuration() -> None:
+    """
+    Fail a misconfigured deploy before it serves a request.
+
+    `settings` is a lazy proxy (see app/config.py) so that importing a module
+    does not demand a full .env -- that eagerness is what made the unit tier
+    impossible to run without secrets. Validation is not weakened, only moved
+    from import time to first use, and THIS is the first use: touching a
+    required field here reinstates the fail-fast that import-time construction
+    used to give, at the point where it actually matters.
+    """
+    _ = settings.database_url
+
+
+@app.on_event("startup")
 def _recover_interrupted_jobs() -> None:
     """
     Background jobs run in-process, so a deploy or crash orphans anything still

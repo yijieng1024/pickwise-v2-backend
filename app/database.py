@@ -39,6 +39,8 @@ from dotenv import load_dotenv
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 
+from app.config import _Lazy
+
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -64,7 +66,9 @@ POOL_TIMEOUT = _int_env("DB_POOL_TIMEOUT", 30)
 #: Recycle below any idle-connection cutoff the database or a proxy applies.
 POOL_RECYCLE = _int_env("DB_POOL_RECYCLE", 1800)
 
-engine = create_engine(
+def _build_engine():
+    """The real engine. Called once, on first use of `engine`."""
+    return create_engine(
     DATABASE_URL,
     echo=False,
     pool_size=POOL_SIZE,
@@ -82,7 +86,24 @@ engine = create_engine(
     # round-robining traffic across every connection and keeping all of them
     # alive.
     pool_use_lifo=True,
-)
+    )
+
+
+# NOT `engine = create_engine(...)` at module scope. That demanded a
+# DATABASE_URL from every importer whether or not it ever touched the database,
+# which is why `from app.agent.tools.search_laptops import _KNOWN_PURPOSES`
+# -- reaching for a set of strings -- could not run without one.
+#
+# `from app.database import engine` still works and `Session(engine)` still
+# works; the connection pool is built on first attribute access. A test that
+# stubs `Session` therefore builds nothing, which is what keeps the unit tier
+# genuinely database-free rather than merely database-unused.
+engine = _Lazy(_build_engine, "Engine")
+
+
+def get_engine():
+    """Explicit accessor for callers that would rather not rely on the proxy."""
+    return engine._resolve()
 
 
 def init_db():

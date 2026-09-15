@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     # on the job machinery it is merely reporting to.
     from app.common.job_service import JobProgress
 
-from app.config import settings
+from app.config import _Lazy, settings
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
 from app.laptops.brand_model import LaptopBrand
 
@@ -22,11 +22,20 @@ from app.laptops.brand_model import LaptopBrand
 # this model live in a different embedding space than any previous model —
 # after any model change, POST /embeddings/generate-all must be re-run (and
 # review chunks re-processed) or similarity scores are garbage.
-_embedder = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-2",
-    google_api_key=settings.gemini_api_key,
-    output_dimensionality=768,
-)
+def _build_embedder() -> GoogleGenerativeAIEmbeddings:
+    return GoogleGenerativeAIEmbeddings(
+        model="models/gemini-embedding-2",
+        google_api_key=settings.gemini_api_key,
+        output_dimensionality=768,
+    )
+
+
+# Lazy: constructing this at module scope read settings.gemini_api_key at
+# IMPORT time, so every importer of this module -- including app.rag.retrieval,
+# which the unit tier legitimately uses with the embedding call stubbed --
+# demanded an API key it never called. Same defect as the eager engine and the
+# eager Settings, one layer further out. Built on first embed_text().
+_embedder = _Lazy(_build_embedder, "GoogleGenerativeAIEmbeddings")
 
 
 def build_laptop_embedding_text(laptop: Laptop, brand_name: str) -> str:
