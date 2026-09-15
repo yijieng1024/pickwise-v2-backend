@@ -1,0 +1,162 @@
+name: CI
+
+# Why this exists, in one sentence: the last regression to reach a commit was
+# caught only because someone remembered to run the whole suite. A `git
+# checkout` used to revert a mutation check also reverted an unstaged ranking
+# filter, and the test that caught it passes in isolation -- alone, its own rows
+# were the only ones present and the sort never met a None. CI takes "someone
+# remembered" out of the loop.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Which parts of the tree changed. Used only to decide whether the migration
+  # tests run (see the `migrations` job). Done with git rather than a
+  # third-party action so there is one less thing to trust and pin.
+  # ---------------------------------------------------------------------------
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      migrations: ${{ steps.filter.outputs.migrations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the base commit to diff against; the default shallow clone has
+          # only the tip.
+          fetch-depth: 0
+
+      - id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            CHANGED=$(git diff --name-only "$BASE"...HEAD)
+          else
+            # push to main: compare against the previous commit
+            CHANGED=$(git diff --name-only HEAD^ HEAD || git ls-files)
+          fi
+          echo "changed files:"; echo "$CHANGED"
+
+          # The migration tests must run when anything that can change the
+          # schema changes -- not only alembic/versions/. A model edit with no
+          # migration is exactly the drift `alembic check` exists to catch, so
+          # models count too.
+          if echo "$CHANGED" | grep -qE '^(alembic/|app/.*model.*\.py$|app/.*/models\.py$)'; then
+            echo "migrations=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "migrations=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # ~2 seconds. That speed is the tier's entire value, so it shares a job with
+  # nothing slower.
+  #
+  # DELIBERATELY NO SECRETS. No API key, no .env, no database URL. The tier's
+  # stated premise is "no database, no network, no API key", and the only way
+  # to keep that true is to make a violation fail here rather than pass quietly
+  # on a developer machine that happens to have a .env on disk. If this job
+  # fails for want of a secret, the import that needs it is the bug.
+  # ---------------------------------------------------------------------------
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Unit + golden tiers
+        run: |
+          pytest tests/unit tests/test_golden_pickscore.py -q \
+            --cov=app --cov-report=term-missing
+        # No `env:` block. See the comment above -- its absence is the point.
+
+  # ---------------------------------------------------------------------------
+  # ~5 minutes against the hosted Supabase test project.
+  #
+  # SERIALISED, AND QUEUED RATHER THAN CANCELLED. The tier migrates, truncates
+  # and rolls back against ONE shared database; two concurrent runs would have
+  # one run's `downgrade -> base` pull the schema out from under the other.
+  # cancel-in-progress stays false because cancelling a run mid-downgrade leaves
+  # the project schema-less, which is worse than waiting.
+  #
+  # Note on GitHub's semantics: with cancel-in-progress false, a newer run
+  # supersedes any PENDING run in the group but never the RUNNING one. So the
+  # in-flight migration always completes; only a queued run can be displaced,
+  # and a displaced run has not touched the database.
+  # ---------------------------------------------------------------------------
+  integration:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: integration-test-database
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Integration tier
+        env:
+          # Session pooler, port 5432. NOT transaction mode (6543): Alembic
+          # needs session-level state -- advisory locks, SET statements that
+          # outlive one statement, DDL in explicit transactions -- and
+          # transaction mode produces intermittent confusion rather than a
+          # clean error.
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          # Required. The guard refuses to start without it, which is the
+          # desired behaviour: the test and production databases are both
+          # Supabase and differ only by project ref, so every cheaper check
+          # ("contains supabase", "is not localhost") passes on production --
+          # and this tier drops every table.
+          PRODUCTION_DB_REF: ${{ secrets.PRODUCTION_DB_REF }}
+        run: |
+          pytest tests/integration -q \
+            --deselect tests/integration/test_migrations.py
+
+  # ---------------------------------------------------------------------------
+  # `alembic check` and the downgrade round-trip are ~45 s each and verify
+  # something that changes rarely. A PR that only edits the reranker should not
+  # wait 90 s to re-prove 22 revisions reverse cleanly.
+  #
+  # A PR that DOES touch migrations cannot skip them: the `changes` job's filter
+  # covers alembic/ and every model module, and this job is `needs:`-dependent
+  # on it, so the condition is evaluated from the real diff rather than from a
+  # label anyone can forget.
+  #
+  # Same database, same concurrency group as `integration` -- these two must
+  # never run at once either.
+  # ---------------------------------------------------------------------------
+  migrations:
+    needs: changes
+    if: needs.changes.outputs.migrations == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: integration-test-database
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Migration tests
+        env:
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          PRODUCTION_DB_REF: ${{ secrets.PRODUCTION_DB_REF }}
+        run: pytest tests/integration/test_migrations.py -q

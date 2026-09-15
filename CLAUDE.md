@@ -347,6 +347,18 @@ Bulk scrape queries `is_active=True` AND (`last_scraped_at IS NULL` OR `scrape_s
   nothing). ~5 min against the hosted test project over the Supabase session
   pooler; seconds against a local container.
 
+**CI** (`.github/workflows/ci.yml`, `nightly-eval.yml`): three jobs. `unit`
+(unit + golden, ~2 s) runs with **no secrets at all** — that is a deliberate
+constraint, not an oversight: the tier's premise is "no database, no network,
+no API key", and a violation must fail there rather than pass on a machine that
+happens to have a `.env`. `integration` (~5 min) and `migrations` share the
+concurrency group `integration-test-database` with `cancel-in-progress: false`,
+because they migrate and roll back against one shared Supabase project and a
+run cancelled mid-`downgrade` leaves it schema-less. The migration tests run
+only when the diff touches `alembic/` or a model module. The nightly eval
+gates nothing — 20–30 min with ~17pp of run-to-run variance, and a check that
+goes red at random gets ignored.
+
 **Migrations do not target production by default.** `alembic/env.py` reads
 `TEST_DATABASE_URL` and errors with setup instructions if it is unset;
 production needs `ALEMBIC_TARGET=production`, which the Dockerfile's start
