@@ -184,23 +184,36 @@ def score_ram_storage(ram_gb, storage_gb, storage_type, ranges) -> float:
 
 
 def score_cpu(cpu_model, ranges, benchmarks=None) -> float:
-    """REAL: _score_cpu(product, ranges, cpu_benchmarks) -> (score, result).
+    """REAL: _score_cpu(product, ranges, cpu_benchmarks) -> (score, flags).
     The benchmark table is a caller-supplied list of (name, mark) tuples, so
     the unit tier passes [] and exercises the unresolved path with no DB."""
-    score, _result = _engine._score_cpu(
+    return float(score_cpu_flagged(cpu_model, ranges, benchmarks)[0])
+
+
+def score_cpu_flagged(cpu_model, ranges, benchmarks=None):
+    """(score, flags). flags carries cpu_benchmark_unresolved."""
+    score, flags = _engine._score_cpu(
         _product(cpu_model=cpu_model), _ranges_to_engine(ranges), benchmarks or []
     )
-    return float(score)
+    return float(score), flags
 
 
 def score_gpu(gpu_model, ranges, cpu_model="Unknown", benchmarks=None) -> float:
-    """REAL: _score_gpu(product, ranges, gpu_benchmarks) -> (score, is_proxy, note)."""
-    score, _is_proxy, _note = _engine._score_gpu(
+    """REAL: _score_gpu(product, ranges, gpu_benchmarks) -> (score, flags, note)."""
+    return float(score_gpu_flagged(gpu_model, ranges, cpu_model, benchmarks)[0])
+
+
+def score_gpu_flagged(gpu_model, ranges, cpu_model="Unknown", benchmarks=None):
+    """(score, flags). flags carries gpu_score_is_proxy AND
+    gpu_benchmark_unresolved -- the two are different questions: an Apple or
+    integrated GPU is a proxy that DID resolve, while an unresolved one is a
+    fabricated neutral."""
+    score, flags, _note = _engine._score_gpu(
         _product(gpu_model=gpu_model, cpu_model=cpu_model),
         _ranges_to_engine(ranges),
         benchmarks or [],
     )
-    return float(score)
+    return float(score), flags
 
 
 def percentile_normalize(value, population) -> float:

@@ -129,12 +129,10 @@ def compute_snapshot(fixture: dict) -> dict:
     for row in fixture["laptops"]:
         product = _scorable(row)
 
-        # Recorded because _score_gpu has no flags entry for an unresolved
-        # benchmark, so a rejected match and a genuine mid score are the same
-        # number in the breakdown (the open xfail in
-        # tests/unit/test_pickscore_factors.py). Storing the mark itself means
-        # a diff shows `gpu_mark: 6607 -> null` even though no flag says so.
-        # A WORKAROUND, not a fix -- the flag is still the real answer.
+        # Recorded alongside the flags, not instead of them. The flags say
+        # WHETHER a benchmark resolved (ADR-0016); the mark says WHICH ONE, so
+        # a diff can distinguish "stopped resolving" from "resolved to a
+        # different row" -- two different bugs that a boolean cannot separate.
         cpu_mark = resolve_benchmark(product.cpu_model, cpu_bm)["score"]
         gpu_mark = resolve_gpu_benchmark(product.gpu_model, product.cpu_model, gpu_bm)["score"]
 

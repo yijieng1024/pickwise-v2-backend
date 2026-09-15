@@ -181,10 +181,25 @@ def _score_price(
     )
 
 
-def _score_cpu(product: ScorableProduct, ranges: dict, cpu_benchmarks: list[tuple[str, int]]) -> tuple[float, dict]:
+def _score_cpu(
+    product: ScorableProduct, ranges: dict, cpu_benchmarks: list[tuple[str, int]]
+) -> tuple[float, dict]:
+    """
+    Returns (score, flags).
+
+    The 50.0 on an unresolved CPU is a FABRICATED NEUTRAL, not a measurement,
+    and until now nothing said so -- this function returned a bare float and
+    the resolve dict was discarded at the call site. That is the same defect as
+    price_rm = 0 meaning both "free" and "unknown" (ADR-0016), one layer up,
+    and _score_price already returns its 50.0 with a reason attached.
+
+    The number is deliberately unchanged. This reports the reason; it does not
+    re-score anything.
+    """
     result = resolve_benchmark(product.cpu_model, cpu_benchmarks)
-    score = _normalize(float(result["score"]), ranges["cpu_mark"]) if result["score"] is not None else 50.0
-    return score, result
+    unresolved = result["score"] is None
+    score = 50.0 if unresolved else _normalize(float(result["score"]), ranges["cpu_mark"])
+    return score, {"cpu_benchmark_unresolved": unresolved}
 
 
 # Why a GPU score is what it is, in the words a laptop buyer would need. Keyed
@@ -213,9 +228,21 @@ def _score_gpu(
     product: ScorableProduct,
     ranges: dict,
     gpu_benchmarks: list[tuple[str, int]],
-) -> tuple[float, bool, Optional[str]]:
+) -> tuple[float, dict, Optional[str]]:
     """
-    Returns (score, is_proxy, note).
+    Returns (score, flags, note).
+
+    `flags` carries two SEPARATE facts, and conflating them is what kept the
+    second one invisible:
+
+      gpu_score_is_proxy        -- the mark is real but belongs to a stand-in
+                                   part (Apple equivalence, or the CPU's iGPU)
+      gpu_benchmark_unresolved  -- there is no mark at all and the 50.0 is
+                                   fabricated
+
+    Every unresolved GPU is also flagged a proxy, so folding the two together
+    would have hidden a fabricated neutral behind a flag the gaming ranking
+    already demotes for unrelated reasons -- a behaviour that looks deliberate.
 
     The Apple short-circuit that used to sit at the top of this function
     returned cpu_score directly as the GPU score. Under percentile
@@ -238,12 +265,18 @@ def _score_gpu(
 
     if result["score"] is not None:
         score = _normalize(float(result["score"]), ranges["gpu_mark"])
-        return score, result["is_proxy"], note
+        return score, {
+            "gpu_score_is_proxy": result["is_proxy"],
+            "gpu_benchmark_unresolved": False,
+        }, note
 
     # was `return 50.0, False` — a neutral 50 outranks a real RTX 3050 (30.4)
     # and RTX 4050 (48.0) on the current gpu_mark range, so an unresolved GPU
     # must at least be flagged.
-    return 50.0, True, note
+    return 50.0, {
+        "gpu_score_is_proxy": True,
+        "gpu_benchmark_unresolved": True,
+    }, note
 
 
 def _score_ram_storage(product: ScorableProduct, ranges: dict) -> float:
@@ -333,8 +366,8 @@ def calculate_pick_score(
     a real user's priorities always win over a use-case profile."""
     mode = "personalized" if user_pref else "general"
 
-    cpu_score, _ = _score_cpu(product, ranges, cpu_benchmarks)
-    gpu_score, gpu_is_proxy, gpu_note = _score_gpu(product, ranges, gpu_benchmarks)
+    cpu_score, cpu_flags = _score_cpu(product, ranges, cpu_benchmarks)
+    gpu_score, gpu_flags, gpu_note = _score_gpu(product, ranges, gpu_benchmarks)
     price_score, price_note = _score_price(product, user_pref, ranges, mode)
 
     factor_scores = {
@@ -351,6 +384,14 @@ def calculate_pick_score(
     factor_notes: dict[str, Optional[str]] = {
         "price": price_note,
         "gpu":   gpu_note,
+        # The CPU half of the same channel. _score_price and _score_gpu already
+        # carried their reason in the breakdown; cpu had nowhere to put one.
+        "cpu": (
+            "CPU could not be identified — scored as neutral (50) and flagged "
+            "as unverified"
+            if cpu_flags["cpu_benchmark_unresolved"]
+            else None
+        ),
     }
 
     weights = _compute_weights(user_pref, mode, priority_override)
@@ -375,7 +416,8 @@ def calculate_pick_score(
         mode=mode,
         breakdown=breakdown,
         flags={
-            "gpu_score_is_proxy": gpu_is_proxy,
+            **gpu_flags,
+            **cpu_flags,
             "price_unavailable": product.price == 0.0,
         },
     )

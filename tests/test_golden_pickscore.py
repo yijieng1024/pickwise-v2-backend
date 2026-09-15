@@ -170,10 +170,11 @@ def test_proxy_gpus_are_flagged(snapshot):
 
 def test_resolved_marks_are_recorded(snapshot):
     """
-    The workaround for the open xfail: _score_gpu has no flag for an unresolved
-    benchmark, so a rejected match and a genuine mid score are the same 50 in
-    the breakdown. Recording the mark means a diff shows `gpu_mark: 6607 ->
-    null` even when no flag does. The flag is still the real fix.
+    The flags (ADR-0016) say whether a benchmark resolved; the recorded mark
+    says which row it resolved TO. Keeping both means a diff can tell "stopped
+    resolving" from "resolved to a different part" -- two different bugs a
+    boolean cannot separate. This was a workaround for the missing flag before
+    stage 1 landed; it earns its place now for the second reason.
     """
     assert snapshot["chromebook"]["cpu_mark"] is None
     assert snapshot["chromebook"]["gpu_mark"] is None

@@ -21,7 +21,9 @@ import pytest
 from ._adapters import (
     percentile_normalize,
     score_cpu,
+    score_cpu_flagged,
     score_gpu,
+    score_gpu_flagged,
     score_price,
     score_price_reason,
     score_ram_storage,
@@ -169,26 +171,58 @@ def test_unresolved_gpu_returns_neutral(ranges):
     assert score_gpu("Unknown", ranges) == pytest.approx(50.0)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Known gap: flags carries gpu_score_is_proxy and price_unavailable but "
-        "nothing for an unresolved benchmark, so a rejected match is "
-        "indistinguishable from a genuine mid score. Same shape as price_rm = 0 "
-        "meaning both 'free' and 'unknown'. Remove the xfail when a flag is added."
-    ),
-    strict=False,
-)
 def test_unresolved_benchmark_is_flagged(ranges):
     """
-    An xfail marks a test that is EXPECTED to fail — it records a known gap in
-    the suite without turning the build red. When the gap is closed, the test
-    turns green and pytest reports it as XPASS, which is the reminder to delete
-    the marker.
-    """
-    from ._adapters import _engine  # local import: this reaches past the adapter
+    Was a strict xfail for three rounds: a rejected benchmark match and a
+    genuine mid score were both a bare 50.0, with nothing in the breakdown able
+    to tell them apart. Same defect as price_rm = 0 meaning both "free" and
+    "unknown", one layer up -- and _score_price already got its fix, returning
+    50.0 WITH a reason.
 
-    _score, flags = _engine._score_gpu("Unknown", ranges)
+    Only the setup line changed when the marker came off: it called
+    `_engine._score_gpu("Unknown", ranges)`, a two-argument signature that has
+    never existed in this codebase. Routed through the adapter, which is where
+    this suite puts signature fixes. The assertion is untouched.
+    """
+    _score, flags = score_gpu_flagged("Unknown", ranges)
     assert flags.get("gpu_benchmark_unresolved") is True
+
+
+def test_an_unresolved_cpu_is_flagged_too(ranges):
+    """The CPU half of the same channel. _score_cpu returned a bare float, so
+    it could not report this at all."""
+    score, flags = score_cpu_flagged("Unknown", ranges)
+    assert score == pytest.approx(50.0)
+    assert flags.get("cpu_benchmark_unresolved") is True
+
+
+def test_a_resolved_benchmark_is_not_flagged(ranges):
+    """The negative half: a flag that is always true reports nothing."""
+    table = [("Intel Core i7-14650HX", 33467)]
+    score, flags = score_cpu_flagged("Intel Core i7-14650HX", ranges, table)
+    assert score != pytest.approx(50.0)
+    assert flags.get("cpu_benchmark_unresolved") is False
+
+
+def test_a_proxy_gpu_is_not_an_unresolved_one(ranges):
+    """
+    Two different questions, and conflating them is how this stayed invisible.
+    An integrated GPU resolved through the CPU map IS a proxy but DID resolve
+    to a real mark; an unresolved one is a fabricated neutral. The gaming
+    ranking already demotes proxies, so folding "unresolved" into that flag
+    would have hidden it behind a behaviour that looks deliberate.
+    """
+    table = [("Intel Arc 140T GPU", 6607)]
+    score, flags = score_gpu_flagged(
+        "Intel Arc Graphics", ranges, "Intel Core Ultra 7 255H", table
+    )
+    assert flags["gpu_score_is_proxy"] is True
+    assert flags["gpu_benchmark_unresolved"] is False
+    assert score != pytest.approx(50.0)
+
+    _score, unresolved = score_gpu_flagged("Unknown", ranges, "Unknown", table)
+    assert unresolved["gpu_score_is_proxy"] is True
+    assert unresolved["gpu_benchmark_unresolved"] is True
 
 
 # --------------------------------------------------------------------------
