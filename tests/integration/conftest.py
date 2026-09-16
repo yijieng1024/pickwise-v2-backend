@@ -55,7 +55,7 @@ import app.main  # noqa: E402,F401
 _SKIP_REASON = (
     "No test database. Either start one:\n"
     "    docker compose -f docker-compose.test.yml up -d\n"
-    "    TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/pickwise_test\n"
+    "    TEST_DATABASE_URL=postgresql://postgres:${TEST_DB_PASSWORD:-postgres}@localhost:55432/pickwise_test\n"
     "or install Docker so testcontainers can start pgvector/pgvector itself.\n"
     "This tier is skipped rather than passed on purpose — it has run nothing."
 )

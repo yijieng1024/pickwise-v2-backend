@@ -73,7 +73,7 @@ else:
             "No TEST_DATABASE_URL. Start the throwaway database first:\n"
             "    docker compose -f docker-compose.test.yml up -d\n"
             "    export TEST_DATABASE_URL="
-            "postgresql://postgres:postgres@localhost:55432/pickwise_test\n"
+            "postgresql://postgres:${TEST_DB_PASSWORD:-postgres}@localhost:55432/pickwise_test\n"
             "To migrate production on purpose, run with ALEMBIC_TARGET=production."
         )
 
