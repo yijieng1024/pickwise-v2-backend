@@ -41,6 +41,16 @@ from app.laptops.laptop_models import Laptop, LaptopStatus  # noqa: F401
 from app.laptops.brand_model import LaptopBrand  # noqa: F401
 from app.laptops.family_model import LaptopFamily  # noqa: F401
 
+# The WHOLE app, so every table any route can touch is on SQLModel.metadata
+# before clean_schema builds it. create_all only creates what has been
+# imported, and Tier 4 drives real routes that reach users, conversations,
+# messages, agent_run_logs and more. Without this, a table is simply absent and
+# the failure looks like a route bug ("relation users does not exist") rather
+# than a missing import -- the same trap alembic/env.py documents for
+# autogenerate. Safe to import eagerly now that settings, the engine and the
+# embedder are built on first use.
+import app.main  # noqa: E402,F401
+
 _SKIP_REASON = (
     "No test database. Either start one:\n"
     "    docker compose -f docker-compose.test.yml up -d\n"
@@ -286,3 +296,123 @@ def active_and_suspended(session, brand):
     session.refresh(active)
     session.refresh(suspended)
     return active, suspended
+
+
+# ---------------------------------------------------------------------------
+# Tier 4 -- the API client
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def api_user(session):
+    """A real, persisted, ACTIVE, non-admin account. Non-admin on purpose: the
+    auth override below must not be able to grant a privilege the account does
+    not have."""
+    from app.users.models import User
+
+    user = User(
+        username=f"api-{uuid.uuid4().hex[:8]}",
+        email=f"api-{uuid.uuid4().hex[:8]}@example.invalid",
+        hashed_password="not-a-real-hash",
+        status="active",
+        role="user",
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def api_client(session, api_user, monkeypatch):
+    """
+    FastAPI's TestClient against the real app, inside the test's rollback
+    transaction. Three things have to be redirected, and the third is the one
+    that is easy to miss.
+
+    1. `get_session` -> the test's session. Routes that take a session
+       dependency then read and write inside the transaction that is rolled
+       back at the end, so nothing persists.
+
+    2. Authentication -> `api_user`. See WHAT THIS BYPASSES below.
+
+    3. Every module-level `engine` -> the test's CONNECTION. This is not
+       optional and not a detail. `session_scope()` -- used by the agent
+       endpoints, which deliberately take no session dependency -- builds
+       `Session(engine)` directly, and so does monitoring_service; `engine` is
+       built from DATABASE_URL, which in a developer .env is PRODUCTION.
+       TestClient runs the real app, so without this a test of /agent/chat
+       would write its conversation into the live database.
+
+       The swap is done by NAME in each module's namespace, not by pointing the
+       lazy proxy at the connection. That was the first attempt, and it failed
+       for a reason worth recording: SQLAlchemy decides how to use a bind with
+       isinstance(bind, Connection), and a proxy is not a Connection, so
+       Session treated it as an Engine and called .connect() on it. The
+       modules are found by scanning sys.modules for any attribute that IS the
+       proxy object, so a new `from app.database import engine` is covered
+       without editing this fixture. The proxy itself is never resolved, which
+       means no production engine is ever constructed during the tier.
+
+    WHAT THIS BYPASSES, precisely:
+      - JWT validation: signature, expiry, and presence of `sub`
+      - the user-exists lookup
+      - the `status != "active"` -> 403 re-check in _resolve_user
+    WHAT IT DOES NOT BYPASS:
+      - `get_current_admin`'s role check -- it depends on get_current_user, so
+        it receives the non-admin `api_user` and still returns 403
+      - per-resource ownership, e.g. service.get_conversation's user_id check
+    Both are asserted in test_api_contract.py, because a fixture that quietly
+    disabled more than authentication would let a broken authorization check
+    pass. The one real gap: a suspended account's 403 cannot be tested through
+    this override, since the override IS the account.
+
+    Startup hooks deliberately do NOT run (no `with TestClient(...)`): one of
+    them resolves settings, which in the CI integration job has no GEMINI key
+    or SMTP credentials, and another writes to background_jobs through the
+    engine before this redirect could matter.
+    """
+    import sys
+
+    import app.database as database
+    from fastapi.testclient import TestClient
+
+    from app.database import get_session
+    from app.main import app
+    from app.users.auth import get_current_user, get_current_user_detached
+
+    connection = session.connection()
+    assert_not_production(str(connection.engine.url))
+
+    proxy = database.engine
+    if object.__getattribute__(proxy, "_real") is not None:
+        # Something resolved the app's engine before this fixture ran. Whatever
+        # it built, it built from DATABASE_URL -- refuse rather than run a tier
+        # that may already have touched production.
+        pytest.fail(
+            "app.database.engine was resolved before Tier 4 redirected it; it was "
+            "built from DATABASE_URL, which may be production. Find what resolved "
+            "it and keep the integration tier from touching the app's engine."
+        )
+
+    swapped = []
+    for module in list(sys.modules.values()):
+        if module is None or not getattr(module, "__name__", "").startswith("app"):
+            continue
+        for name, value in list(vars(module).items()):
+            if value is proxy:
+                swapped.append((module, name))
+                monkeypatch.setattr(module, name, connection)
+    assert swapped, "found no module holding the app engine -- the redirect did nothing"
+
+    def _session_override():
+        yield session
+
+    app.dependency_overrides[get_session] = _session_override
+    app.dependency_overrides[get_current_user] = lambda: api_user
+    app.dependency_overrides[get_current_user_detached] = lambda: api_user
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+        # monkeypatch restores the module attributes itself.
