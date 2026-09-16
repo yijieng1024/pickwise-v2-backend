@@ -179,20 +179,35 @@ def get_pick_score_status(session: Session = Depends(get_session)) -> Dict[str, 
 
     Counts DISTINCT laptop_id: the table holds one row per laptop × use case,
     so a raw row count would report several times the catalog size.
+
+    Three states partition the active catalog (ADR-0016):
+      scored   -- at least one stored row with a score
+      withheld -- rows exist and every score is null: the generator ran and
+                  could not score it. Not scored (the ranking omits it), and
+                  not missing (re-running generate-all will not change it).
+      missing  -- no rows: generate-all has not covered it
+    coverage_pct is generator coverage, (scored + withheld) / total -- the same
+    number the dashboard rail always showed. `scored` used to include withheld.
     """
     total_laptops = session.execute(select(func.count()).select_from(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)).scalar() or 0
-    scored = session.execute(
-        select(func.count(func.distinct(LaptopPickScore.laptop_id)))
+    generated, scored = session.execute(
+        select(
+            func.count(func.distinct(LaptopPickScore.laptop_id)),
+            func.count(func.distinct(LaptopPickScore.laptop_id)).filter(
+                LaptopPickScore.score.is_not(None)  # type: ignore[union-attr]
+            ),
+        )
         .select_from(LaptopPickScore)
         .join(Laptop, Laptop.id == LaptopPickScore.laptop_id)
         .where(Laptop.status == LaptopStatus.ACTIVE.value)
-    ).scalar() or 0
+    ).one()
 
     return {
         "total_laptops": total_laptops,
         "scored": scored,
-        "missing": total_laptops - scored,
-        "coverage_pct": round(scored / total_laptops * 100, 1) if total_laptops > 0 else 0,
+        "withheld": generated - scored,
+        "missing": total_laptops - generated,
+        "coverage_pct": round(generated / total_laptops * 100, 1) if total_laptops > 0 else 0,
     }
 
 

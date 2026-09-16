@@ -253,6 +253,100 @@ def test_the_flag_names_the_frontend_contract_names_are_what_the_api_emits(
     assert isinstance(row["score"], int)
 
 
+def test_a_withheld_candidate_does_not_break_recommendations(
+    api_client, api_user, brand, session, monkeypatch
+):
+    """
+    Catches the recommendation pipeline treating a withheld score as a number.
+    It sorted by `.score` -- TypeError on None, a 500 for the whole request, not
+    one laptop sorted last -- and RecommendedLaptop.pick_score was `int`. It was
+    unreachable only because no active laptop is withheld today: a property of
+    the data, not of the code.
+
+    The withheld laptop is the CLOSER semantic match, so it is retrieved first
+    and the sort has to move it. It must come back after every scored
+    candidate, with pick_score null -- not dropped, since the candidate pool is
+    already narrowed by the user's own budget and brand, and not 0.
+
+    Embedding, LLM and API key are stubbed: this is about what the pipeline does
+    with the scores, and none of the three touches them.
+    """
+    from types import SimpleNamespace
+
+    from langchain_core.runnables import RunnableLambda
+
+    from app.benchmark.model import CPUBenchmark
+    from app.laptops.laptop_models import LaptopEmbedding
+    from app.recommendation import service
+    from app.recommendation.schemas import _LLMOutput
+    from app.users.models import LaptopUserPreference
+
+    near = [1.0] + [0.0] * 767
+    far = [1.0, 1.0] + [0.0] * 766
+
+    withheld = make_laptop(brand.id, product_name="Unidentifiable",
+                           processor_model="Unknown", gpu_model="Unknown")
+    scored = make_laptop(brand.id, product_name="Identifiable")
+    session.add_all([withheld, scored])
+    session.add(CPUBenchmark(cpu_name="Intel Core i7-14650HX", cpu_mark=33467))
+    session.commit()
+    session.add_all([
+        LaptopEmbedding(laptop_id=withheld.id, embedding=near),
+        LaptopEmbedding(laptop_id=scored.id, embedding=far),
+        LaptopUserPreference(user_id=api_user.id, budget={"min": None, "max": 9000},
+                             purpose=["Gaming"], priorities={"gpu": 9}),
+    ])
+    session.commit()
+
+    class _StubLLM:
+        def __init__(self, **_):
+            pass
+
+        def with_structured_output(self, _schema):
+            return RunnableLambda(lambda _: _LLMOutput(explanations=[], summary="stub"))
+
+    monkeypatch.setattr(service, "embed_text", lambda _q: near)
+    monkeypatch.setattr(service, "ChatGoogleGenerativeAI", _StubLLM)
+    monkeypatch.setattr(service, "settings", SimpleNamespace(gemini_api_key="stub-never-sent"))
+
+    r = api_client.post("/api/v2/recommendations/laptops", json={"query": "gaming laptop", "top_k": 3})
+    assert r.status_code == 200, r.text
+    recs = r.json()["recommendations"]
+    assert [x["laptop_id"] for x in recs] == [str(scored.id), str(withheld.id)]
+    assert isinstance(recs[0]["pick_score"], int)
+    assert recs[1]["pick_score"] is None
+
+
+def test_the_status_endpoint_counts_withheld_as_its_own_state(api_client, brand, session):
+    """
+    Catches /pick-scores/status reporting a withheld laptop as scored. Withheld
+    is a third state: the generator HAS run for it (so it is not missing), and
+    it has no score (so it is not scored -- and the ranking omits it). The three
+    counts partition the active catalog; coverage_pct stays what the dashboard
+    rail has always meant, the share the generator has covered.
+    """
+    scored = make_laptop(brand.id, product_name="Scored")
+    withheld = make_laptop(brand.id, product_name="Withheld")
+    missing = make_laptop(brand.id, product_name="Never generated")
+    session.add_all([scored, withheld, missing])
+    session.commit()
+    for use_case in ("gaming", "office_study"):
+        session.add(LaptopPickScore(laptop_id=scored.id, use_case=use_case, score=70,
+                                    breakdown=[], flags={"score_withheld": False}))
+        session.add(LaptopPickScore(laptop_id=withheld.id, use_case=use_case, score=None,
+                                    breakdown=[], flags={"score_withheld": True}))
+    session.commit()
+
+    r = api_client.get("/api/v2/laptops/pick-scores/status")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total_laptops"] == 3
+    assert body["scored"] == 1
+    assert body["withheld"] == 1
+    assert body["missing"] == 1
+    assert body["coverage_pct"] == pytest.approx(66.7)
+
+
 # --------------------------------------------------------------------------
 # Validation and writability
 # --------------------------------------------------------------------------
