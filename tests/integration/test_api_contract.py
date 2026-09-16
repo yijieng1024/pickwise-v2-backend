@@ -400,3 +400,37 @@ def test_a_route_that_opens_its_own_session_still_commits_nothing(
             text("SELECT count(*) FROM messages WHERE content = :m"), {"m": marker}
         ).scalar()
     assert leaked == 0, "the route COMMITTED -- it is not inside the rollback transaction"
+
+
+# --------------------------------------------------------------------------
+# Startup
+# --------------------------------------------------------------------------
+
+
+def test_a_bad_database_url_fails_startup_before_anything_runs(monkeypatch):
+    """
+    Catches a misconfigured deploy that boots and then fails on its first
+    request -- or, worse, boots and serves every route that happens not to touch
+    the database. Startup validation must run FIRST, raise out of startup
+    itself, and stop job recovery from ever running against the bad URL.
+
+    No session or client fixture on purpose: this enters the app's real
+    startup, and nothing here may resolve the engine. The recorder stands in
+    for reset_stale_jobs, so a regression that lets startup continue records a
+    call instead of touching a database.
+    """
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    recovered = []
+    monkeypatch.setattr(main.settings, "database_url", "not a database url")
+    monkeypatch.setattr(main, "reset_stale_jobs", lambda: recovered.append(True))
+
+    served = False
+    with pytest.raises(Exception):
+        with TestClient(main.app):
+            served = True
+
+    assert not served, "startup accepted a malformed DATABASE_URL"
+    assert recovered == [], "job recovery ran before configuration was validated"

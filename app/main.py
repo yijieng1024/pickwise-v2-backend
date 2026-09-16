@@ -1,7 +1,10 @@
 
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.engine import make_url
 from app.config import settings
 from app.logger import setup_logging
 from app.laptops.customization_router import router as customization_router
@@ -29,7 +32,41 @@ from app.common.job_service import reset_stale_jobs
 
 setup_logging()
 
+
+def _validate_configuration() -> None:
+    """
+    Fail a misconfigured deploy before it serves a request.
+
+    Parses DATABASE_URL without connecting. Presence alone proves nothing here:
+    `settings` is already resolved at import by the CORS middleware below, so a
+    missing URL never gets this far -- but a malformed one used to boot fine and
+    fail on the first query, while every route that never touched the database
+    kept answering. The engine is lazy (app/database.py), so this is the check
+    import-time construction used to give for free.
+    """
+    make_url(settings.database_url)
+
+
+def _recover_interrupted_jobs() -> None:
+    """
+    Background jobs run in-process, so a deploy or crash orphans anything still
+    running. Fail those rows on boot — otherwise the admin UI polls a
+    `processing` job that no longer exists, forever. Never raises.
+    """
+    reset_stale_jobs()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Order matters: validate first, so a bad URL fails startup itself and job
+    # recovery never runs against it (reset_stale_jobs swallows its errors).
+    _validate_configuration()
+    _recover_interrupted_jobs()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="PickWise v2 API",
     description="Backend for PickWise v2 — a LangGraph ReAct agent that reasons over laptop search, " \
     "PickScore ranking, and pricing to deliver conversational recommendations",
@@ -76,31 +113,6 @@ app.include_router(category_router, prefix=API_PREFIX)
 app.include_router(questionnaire_router, prefix=API_PREFIX)
 app.include_router(saved_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
-
-
-@app.on_event("startup")
-def _validate_configuration() -> None:
-    """
-    Fail a misconfigured deploy before it serves a request.
-
-    `settings` is a lazy proxy (see app/config.py) so that importing a module
-    does not demand a full .env -- that eagerness is what made the unit tier
-    impossible to run without secrets. Validation is not weakened, only moved
-    from import time to first use, and THIS is the first use: touching a
-    required field here reinstates the fail-fast that import-time construction
-    used to give, at the point where it actually matters.
-    """
-    _ = settings.database_url
-
-
-@app.on_event("startup")
-def _recover_interrupted_jobs() -> None:
-    """
-    Background jobs run in-process, so a deploy or crash orphans anything still
-    running. Fail those rows on boot — otherwise the admin UI polls a
-    `processing` job that no longer exists, forever. Never raises.
-    """
-    reset_stale_jobs()
 
 
 @app.get("/")

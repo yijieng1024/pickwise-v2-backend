@@ -368,10 +368,10 @@ def _app_client(session, user, monkeypatch):
     pass. The one real gap: a suspended account's 403 cannot be tested through
     this override, since the override IS the account.
 
-    Startup hooks deliberately do NOT run (no `with TestClient(...)`): one of
-    them resolves settings, which in the CI integration job has no GEMINI key
-    or SMTP credentials, and another writes to background_jobs through the
-    engine before this redirect could matter.
+    The lifespan deliberately does NOT run (no `with TestClient(...)`): its job
+    recovery writes to background_jobs, and nothing here should depend on it.
+    test_a_bad_database_url_fails_startup_before_anything_runs enters it on
+    purpose, with recovery stubbed.
     """
     import sys
 
