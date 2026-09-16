@@ -136,6 +136,15 @@ keyed on the CPU *string*, not on the resolved mark. The withholding path is
 built ahead of its need, which is the whole point: it is what makes the
 threshold raise an improvement rather than a re-hiding.
 
+**The route was missed, and the tests that should have caught it could not.**
+Stage 2 shipped with a mutation check, a golden diff and zero xfails, and
+`GET /{laptop_id}/pick-scores` still raised a validation error on every withheld
+row: the router's own response model, `UseCasePickScore.score`, was left `int`.
+Every test that round exercised the engine and the service; none crossed the
+router's response model. Tier 4's API contract tests found it. Auditing for the
+same class afterwards found the recommendation pipeline in the same state
+(reported separately, not fixed with this).
+
 **The threshold is now two constants** (see ADR-0010 Amendment II):
 `CPU_CONFIDENCE_THRESHOLD = 0.90`, `GPU_CONFIDENCE_THRESHOLD = 0.85`.
 

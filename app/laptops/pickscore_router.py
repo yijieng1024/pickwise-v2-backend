@@ -60,7 +60,11 @@ def _resolve_laptop(session: Session, laptop_id: uuid.UUID) -> tuple[Laptop, str
 
 class UseCasePickScore(BaseModel):
     use_case: str
-    score: int
+    # None when flags.score_withheld is true: both defining factors failed to
+    # resolve, so there is no score to publish (ADR-0016). Distinct from 0,
+    # which means "scored, and badly". This was `int` after ADR-0016 shipped,
+    # so the route raised on exactly the rows the ADR said it would serve.
+    score: Optional[int]
     breakdown: List[Dict[str, Any]]
     flags: Dict[str, Any]
     updated_at: datetime
@@ -116,6 +120,11 @@ class RankedLaptopPickScore(BaseModel):
     brand_name: str
     price_rm: float
     image_urls: List[str]
+    # Deliberately NOT Optional, unlike UseCasePickScore. get_ranking_for_use_case
+    # omits withheld rows before this model is built -- a laptop nobody could
+    # score has no position in an ordering -- so a null can never reach here,
+    # and typing it Optional would advertise to the frontend that rankings can
+    # contain unscored entries. If that ever changes, this is the line to move.
     score: int
     flags: Dict[str, Any]
 

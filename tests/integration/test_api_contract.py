@@ -99,24 +99,17 @@ def withheld_laptop(session, brand):
     return laptop
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LIVE BUG, reported not fixed. ADR-0016 stage 2 made laptop_pick_scores."
-        "score nullable and PickScoreResponse.score Optional, but missed the "
-        "ROUTER's own response model: app/laptops/pickscore_router.py "
-        "UseCasePickScore.score is still `int`. GET /{laptop_id}/pick-scores on a "
-        "withheld row therefore fails pydantic validation inside the route and "
-        "returns a server error instead of the null score and breakdown ADR-0016 "
-        "promises. The stage-2 commit message claimed this route 'returns it "
-        "unchanged: null score, flag set, full breakdown' -- it never did."
-    ),
-)
 def test_a_withheld_score_is_served_as_null_with_its_breakdown(api_client, withheld_laptop):
     """
     The contract: the row comes back, the total is null -- NEVER 0, which means
     "scored, and badly" -- and the breakdown survives, because withholding the
     total must not withhold the evidence needed to explain why there is none.
+
+    Was a strict xfail. ADR-0016 stage 2 shipped with a mutation check, a golden
+    diff and zero xfails, and this route still raised on every withheld row:
+    every test that round went through the engine and the service, and none
+    through the router's own response model, UseCasePickScore, whose score was
+    still `int`. The assertion is unchanged from when it was an xfail.
     """
     r = api_client.get(f"/api/v2/laptops/{withheld_laptop.id}/pick-scores")
     assert r.status_code == 200, r.text
@@ -136,8 +129,8 @@ def test_the_generator_writes_a_withheld_score_as_null(session, brand):
     engine's value: search_laptops checks flags.score_withheld and emits
     pick_score None itself, so an engine that returned 0 would sail straight
     past it. This is the test that sees the number the engine actually wrote.
-    Read from the table rather than through GET /{id}/pick-scores, because that
-    route currently cannot serve a withheld row at all (see the xfail above).
+    Read from the table, not through the route: this is about what the engine
+    WRITES, which the route test above cannot distinguish from what was seeded.
     """
     from app.laptops.pickscore_general import generate_all_pick_scores
 
