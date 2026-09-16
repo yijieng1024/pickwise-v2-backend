@@ -168,3 +168,21 @@ hand-verified anchor work of the same kind as `_INTEGRATED_GPU_BY_CPU` and
 `_APPLE_GPU_EQUIVALENT` — one source per entry — and it is a better decision to
 make now that those 12 rows are honestly marked unresolved instead of silently
 carrying an Athlon's mark.
+
+**Open items — consumers of a withheld score still outstanding.** The pattern
+this ADR keeps meeting is a decision made in one layer and missed in the layers
+that consume it: after it shipped, `UseCasePickScore.score`, the recommendation
+pipeline's sort and `RecommendedLaptop.pick_score`, and `/pick-scores/status`
+were each found still treating the score as a number, and each has since been
+fixed. The ADR is therefore not closed. These remain:
+
+- **Frontend, separate repo, outstanding.** `src/app/laptops/[id]/page.tsx:97`
+  and `src/components/pick-score-card.tsx:128` sort with `b.score - a.score`,
+  where JavaScript coerces `null` to 0: no crash, but a withheld laptop sorts as
+  zero. The card renders "PickScore null out of 100"
+  (`pick-score-card.tsx:150`). `compare-view.tsx` already handles null.
+- **`app/scripts/simulate_normalization.py:284`** sorts on `-score`, which raises
+  `TypeError` on `None`. Script only, not fixed.
+- **Reachable today only because the active catalog has zero withheld rows** — a
+  property of the data, not of the code. The first withheld laptop makes every
+  item above live at once.
