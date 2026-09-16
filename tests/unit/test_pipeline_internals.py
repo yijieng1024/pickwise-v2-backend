@@ -581,3 +581,53 @@ def test_gated_search_returns_no_results_and_a_bottleneck(monkeypatch):
     assert payload["confidence"] == "low"
     assert payload["bottleneck"]
     assert payload["message"]
+
+
+# --------------------------------------------------------------------------
+# The search result payload -- field snapshot
+# --------------------------------------------------------------------------
+# Lives in the UNIT tier although it belongs to Tier 4's contract work:
+# _to_result_dict is a pure function over a RankedCandidate, so it needs no
+# database, and putting it in the integration job would make a one-line change
+# wait five minutes for feedback.
+
+_SEARCH_RESULT_FIELDS = {
+    "laptop_id",
+    "model_code",
+    "product_name",
+    "price_rm",
+    "processor_model",
+    "gpu_model",
+    "ram_gb",
+    "storage_gb",
+    "storage_type",
+    "weight_kg",
+    "battery_wh",
+    "display_size_inch",
+    "similarity_score",
+}
+
+
+def test_the_search_result_payload_has_exactly_these_fields():
+    """
+    Catches a field silently added to or dropped from what the agent sees.
+    EXACT set equality on purpose: adding or removing a field must force a
+    deliberate edit here, because several eval rubrics ask about attributes
+    this dict does not carry -- refresh rate, screen quality, release year --
+    and that mismatch has to stay visible rather than be quietly absorbed.
+
+    Note for whoever reads the rubric gap: three of those are one line away.
+    display_refresh_rate_hz, display_resolution, display_brightness_nits and
+    release_year are all stored on Laptop and simply not emitted here. Colour
+    accuracy and battery RUNTIME are genuinely absent from the catalog --
+    battery_wh is capacity, not hours.
+
+    The brief that specified this snapshot listed twelve fields and omitted
+    laptop_id, which the dict has always carried and the router needs to build
+    cards. Asserted as it is.
+    """
+    payload = _search_tool._to_result_dict(_ranked(0.80))
+    assert set(payload) == _SEARCH_RESULT_FIELDS, (
+        f"added: {sorted(set(payload) - _SEARCH_RESULT_FIELDS)}  "
+        f"removed: {sorted(_SEARCH_RESULT_FIELDS - set(payload))}"
+    )
