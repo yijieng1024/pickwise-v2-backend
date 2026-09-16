@@ -173,12 +173,13 @@ def _product(**overrides) -> ScorableProduct:
 
 
 class _Pref:
-    """Stand-in for LaptopUserPreference. _score_price reads only .budget."""
+    """Stand-in for LaptopUserPreference. _score_price reads only .budget;
+    _score_screen_size and _score_brand read the other two."""
 
-    def __init__(self, budget_max):
+    def __init__(self, budget_max=None, screen_size=None, brand_preferences=None):
         self.budget = {"min": None, "max": budget_max}
-        self.screen_size = None
-        self.brand_preferences = None
+        self.screen_size = screen_size
+        self.brand_preferences = brand_preferences
 
 
 def _price_call(price_rm, ranges, budget_max, personalized):
@@ -208,6 +209,31 @@ def score_ram_storage(ram_gb, storage_gb, storage_type, ranges) -> float:
             _ranges_to_engine(ranges),
         )
     )
+
+
+def score_portability(weight_kg, ranges) -> float:
+    return float(_engine._score_portability(_product(weight_kg=weight_kg), _ranges_to_engine(ranges)))
+
+
+def score_battery(battery_wh, ranges) -> float:
+    return float(_engine._score_battery(_product(battery_wh=battery_wh), _ranges_to_engine(ranges)))
+
+
+def score_screen_size(display_size_inch, screen_size_pref) -> float:
+    """Personalized mode; screen_size_pref is the questionnaire's answer string."""
+    return float(_engine._score_screen_size(
+        _product(display_size_inch=display_size_inch),
+        _Pref(screen_size=[screen_size_pref]),
+        "personalized",
+    ))
+
+
+def score_brand(brand_name, brand_preferences) -> float:
+    return float(_engine._score_brand(
+        _product(brand_name=brand_name),
+        _Pref(brand_preferences=list(brand_preferences)),
+        "personalized",
+    ))
 
 
 def score_cpu(cpu_model, ranges, benchmarks=None) -> float:
