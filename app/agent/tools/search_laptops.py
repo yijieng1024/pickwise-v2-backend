@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.brand_model import LaptopBrand
+from app.purposes import PURPOSES, normalize_purpose
 from app.laptops.family_service import closest_to_budget, deduplicate_by_family
 from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
@@ -25,19 +26,26 @@ logger = get_logger(__name__)
 # lever. Tune here (not per-call) if the Gemini quota changes.
 _MAX_RESULTS = 6
 
-# Keys reranker.py's purpose-signal dicts are keyed by. Anything that doesn't
-# normalize to one of these falls back to "Office" — the neutral default —
-# so the tool never passes an unrecognized purpose string downstream.
-_KNOWN_PURPOSES = {"Gaming", "Creative", "Programming", "Office"}
+# The canonical labels, imported rather than restated. This set used to be
+# {"Gaming", "Creative", "Programming", "Office"} — a second vocabulary that
+# shared exactly one member with the questionnaire's, so four of five stored
+# purposes were rewritten to "Office" on the way into reranking.
+_KNOWN_PURPOSES = set(PURPOSES)
 
 
 def _normalize_purpose(purpose: Optional[str]) -> list[str]:
+    """
+    No purpose is a valid state; an unrecognised one is not.
+
+    The old version coerced anything it did not recognise to "Office", which
+    made a wrong purpose and a right one indistinguishable downstream. Now it
+    raises, and the model sees the allowed values in the error — the tool
+    argument comes from an LLM, so a loud failure it can correct on the next
+    step is strictly better than a silent rewrite nobody can see.
+    """
     if not purpose or not purpose.strip():
         return []
-    normalized = purpose.strip().title()
-    if normalized not in _KNOWN_PURPOSES:
-        normalized = "Office"
-    return [normalized]
+    return [normalize_purpose(purpose)]
 
 
 def _pick_scores_for(
@@ -70,6 +78,18 @@ def _pick_scores_for(
         product = laptop_to_scorable(laptop, brand_names[laptop.brand_id])
         resp = calculate_pick_score(product, user_pref, ranges, cpu_benchmarks, gpu_benchmarks)
         top_factors = sorted(resp.breakdown, key=lambda f: f.contribution, reverse=True)[:3]
+        if resp.flags.get("score_withheld"):
+            # Explicit, not absent (ADR-0016). A missing pick_score key means
+            # "scoring failed"; this says "could not be scored, and why", so
+            # the agent can relay it instead of quietly dropping the badge.
+            scores[str(laptop.id)] = {
+                "pick_score": None,
+                "pick_score_unavailable": (
+                    "neither the CPU nor the GPU could be identified, so this "
+                    "laptop has no PickScore -- do not state or estimate one"
+                ),
+            }
+            continue
         scores[str(laptop.id)] = {
             "pick_score": resp.score,
             "pick_score_top_factors": ", ".join(
@@ -120,8 +140,9 @@ _SEARCH_LAPTOPS_DOC = """
         brand: Brand name (e.g. "Apple", "Asus"). Treated as a soft preference,
             not a hard filter — laptops from other brands can still appear if
             they otherwise match well.
-        purpose: One of "Gaming", "Creative", "Programming", or "Office".
-            Anything else is treated as "Office".
+        purpose: One of "Office/Study", "Programming/Development", "Gaming",
+            "Creative Work", or "General Use". Any other value is rejected —
+            omit the argument if the user has not said what they need it for.
         top_k: Max number of results to return on a successful match.
 
     Returns:
@@ -167,7 +188,13 @@ def _run_search(
                 select(LaptopUserPreference).where(LaptopUserPreference.user_id == user_id)
             ).first()
 
-        candidates = retrieve_candidates(user_query, session, budget_max=budget_max)
+        candidates = retrieve_candidates(
+            user_query, session, budget_max=budget_max, weight_max=weight_max
+        )
+        # Read before relaxation: a relaxation retry re-enters the same
+        # retrieval function against the same embedding API, so if the first
+        # call fell back every retry did too.
+        retrieval_fallback = any(c.from_fallback for c in candidates)
         ranked = rerank(candidates, constraints)
 
         relaxation = None
@@ -194,6 +221,7 @@ def _run_search(
                 query=user_query,
                 relaxation=relaxation,
                 session=session,
+                retrieval_fallback=retrieval_fallback,
             )
         except Exception:
             logger.exception("search_laptops: failed to log pipeline result")

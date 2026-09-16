@@ -103,7 +103,7 @@ Each domain module under `app/` follows a consistent pattern: `models.py` (SQLMo
 - **`app/users/`** — Auth (username-or-email login, Google Sign-In via ID-token verification), JWT, bcrypt, email verification, preferences (`laptop_user_preference` table, `budget` stored as `{min, max}` JSON range). Avatar gateway: `PUT/DELETE /auth/me/avatar` + public `GET /auth/avatar/{user_id}` — bytes in the separate `user_avatars` bytea table (Render fs is ephemeral; separate table so `get_current_user` never loads the blob), magic-byte validation, 2 MB cap. Google login imports the `picture` claim into the same table on create/link only (best-effort, never on returning logins — a deleted avatar must stay deleted). `questionnaire_model.py`/`questionnaire_router.py` expose the 6-step preference survey as a dynamic catalog (`GET /questionnaire?product_type=laptop`, `include_inactive=true` for admin views) plus admin-only CRUD (create/update/delete; 409 if another active question occupies the same `step_order` for the product type). Answers are still written via the existing `PUT /me/preferences`. `question_type` is a native Postgres enum (`questiontype`) — adding a Python enum member requires an `ALTER TYPE ... ADD VALUE` migration (e.g. `MULTIPLE_CHOICE` in `c8f24d1e9a37`).
 - **`app/laptops/`** — 9-part laptop spec model, brands (UUID FK), customizations (bulk/pattern creation, `category_id` FK into `app/taxonomy/`), price history, hybrid vector search. `laptop_category_model.py` owns the `laptop_categories` many-to-many junction (laptops ↔ tags). `family_key.py`/`family_model.py`/`family_service.py`/`family_router.py` own the `laptop_family` grouping and the deduplication it drives (see the Laptop families section below). `Laptop.status` (`active`/`inactive`/`suspended` — same spelling as `users.status`; `LaptopStatus` in `laptop_models.py`, migration `d9e1f4a86c27`) is the listing state: plain VARCHAR like `users.status` (a new state needs no `ALTER TYPE`), defaults to `active` for every new/backfilled row, validated by a `field_validator` on `LaptopBase`/`LaptopUpdate` (SQLModel skips validation on `table=True`, so the check only bites on `LaptopCreate`/`LaptopUpdate` — which is every write path). The AI processor's upsert dict does not contain `status`, so re-processing a scraped page never resurrects a laptop an admin deactivated. `GET /laptops/?status=` filters on it (aliased to the `status_filter` argument — a param named `status` would shadow FastAPI's `status` import); **omitted means all statuses**, so the admin catalog view keeps seeing retired rows.
 
-**`DELETE /laptops/{id}` refuses (409) while user- or pipeline-owned rows still reference the laptop** — `saved_laptops`, `conversation_laptops`, `laptop_review_chunks`, `laptop_review_summary`, `raw_youtube_reviews.matched_laptop_id` (the `_DELETE_BLOCKING_REFERENCES` list in `laptop_router.py`), mirroring `brand_router.py`'s "still-referenced" 409. This is not a nicety: **every FK to `laptops.id` is `NO ACTION` — there is no `ON DELETE CASCADE` anywhere in the schema** — so without the guard those five produce a raw `IntegrityError` 500 (~50 of 276 laptops were undeletable). The other five children (customizations, embedding, price history, pick scores, category links) are derived data and *are* cleaned up, via `cascade="all, delete-orphan"` on `Laptop`'s relationships. Retiring a listing is `status: "inactive"`, not deletion — that is what the status field is for.
+**`DELETE /laptops/{id}` refuses (409) while user- or pipeline-owned rows still reference the laptop** — `saved_laptops`, `conversation_laptops`, `laptop_review_chunks`, `laptop_review_summary`, `raw_youtube_reviews.matched_laptop_id` (the `_DELETE_BLOCKING_REFERENCES` list in `laptop_router.py`), mirroring `brand_router.py`'s "still-referenced" 409. This is not a nicety: **every FK to `laptops.id` is `NO ACTION` — there is no `ON DELETE CASCADE` anywhere in the schema** — so without the guard those five produce a raw `IntegrityError` 500 (~50 of 276 laptops were undeletable). The other five children (customizations, embedding, price history, pick scores, category links) are derived data and *are* cleaned up, via `cascade="all, delete-orphan"` on `Laptop`'s relationships. Retiring a listing is `status: "suspended"`, not deletion — that is what the status field is for. Not `inactive`: ADR-0009 makes `inactive` the awaiting-a-price work queue and `suspended` the retired-and-no-longer-sold archive, so sending a discontinued machine to `inactive` files it in the list of machines to go find a price for. The 409 message says `suspended` to match.
 - **`app/taxonomy/`** — `product_type_model.py`/`product_type_router.py` (small stable set, e.g. `"laptop"`, scopes the questionnaire) and `category_model.py`/`category_router.py` (marketing/use-case tags for the frontend tag component) — both mirror `app/laptops/brand_model.py`'s CRUD shape exactly (admin-only writes, public reads, 409 on duplicate/still-referenced).
 - **`app/pickscore/`** — Product-agnostic scoring engine (see PickScore section below)
 - **`app/laptops/pickscore_adapter.py`** — Converts `Laptop` → `ScorableProduct`; owns laptop range DB queries (calibrated from catalog laptops, not global benchmark table)
@@ -325,6 +325,67 @@ Purpose modifiers (capped at ×1.3): Gaming→GPU×1.3/CPU×1.1, Creative→GPU�
 **`RawScrapLaptop.processing_status`** (`raw_scrap_laptops` table): `pending` → `processing` → `completed` / `failed`
 
 Bulk scrape queries `is_active=True` AND (`last_scraped_at IS NULL` OR `scrape_status = 'failed'`). Returns HTTP 207 on partial failures; writes timestamped failure logs to `logs/scraper/`.
+
+### Testing
+
+`pytest tests/ -q`. Two tiers, and **they must stay in separate CI jobs**:
+
+- `tests/unit/` — no database, no network, no API key. ~1.5 s for ~175 tests.
+  That speed is the tier's entire value; sharing a job with the integration
+  tier would drag it to five minutes and it would stop being run on every edit.
+- `tests/test_golden_pickscore.py` + `tests/golden/` — the PickScore golden
+  snapshot. Needs no database (the fixture is loaded into in-memory SQLite so
+  the real `get_laptop_ranges` runs against it) and no network, so it belongs
+  in the **unit** job: unit + golden together is ~2.2 s. It asserts that score
+  changes were deliberate, not that scores are correct. Regenerate with
+  `pytest tests/test_golden_pickscore.py --update-golden`, never automatically.
+  Its numbers are percentile ranks against 20 fixture laptops and **must not**
+  be compared with production scores or ADR-0011's figures.
+- `tests/integration/` — needs a Postgres with pgvector. Resolves
+  `TEST_DATABASE_URL` first, else starts a `pgvector/pgvector` container via
+  testcontainers, else **skips with instructions** (never passes having run
+  nothing). ~5 min against the hosted test project over the Supabase session
+  pooler; seconds against a local container.
+
+**CI** (`.github/workflows/ci.yml`, `nightly-eval.yml`): three jobs. `unit`
+(unit + golden, ~2 s) runs with **no secrets at all** — that is a deliberate
+constraint, not an oversight: the tier's premise is "no database, no network,
+no API key", and a violation must fail there rather than pass on a machine that
+happens to have a `.env`. `integration` (~5 min) and `migrations` share the
+concurrency group `integration-test-database` with `cancel-in-progress: false`,
+because they migrate and roll back against one shared Supabase project and a
+run cancelled mid-`downgrade` leaves it schema-less. The migration tests run
+only when the diff touches `alembic/` or a model module. The nightly eval
+gates nothing — 20–30 min with ~17pp of run-to-run variance, and a check that
+goes red at random gets ignored.
+
+**If branch protection is ever enabled, do not mark `migrations` a required
+check without reading this first.** That job is path-filtered — it runs only
+when the diff touches `alembic/` or a model module — so on every other pull
+request it reports as **skipped**. Some branch-protection configurations treat
+a skipped required check as never satisfied, which blocks every merge that does
+not happen to touch a migration. The symptom (every PR stuck on a check that
+never runs) points nowhere near the path filter that causes it. Either leave it
+non-required, or add an always-running job that reports success when the filter
+says the migration tests were not needed.
+
+**The unit tier runs with no configuration, and that is enforced.**
+`tests/unit/test_no_secrets_required.py` imports the tier in a subprocess with
+every secret unset and `.env` unreachable. It exists because the property had
+never actually held — `_adapters` reached `app.database` through the agent tool
+package, and `create_engine`, `Settings()` and the Gemini embedder were all
+built at module scope, so a local `.env` was the only reason the tier ran. All
+three are now built on first use (`app/config.py::_Lazy`). If that test fails,
+the fix is to make the new module-scope construction lazy — **not** to give the
+CI job the secret, which would restore exactly the illusion it was written to
+remove.
+
+**Migrations do not target production by default.** `alembic/env.py` reads
+`TEST_DATABASE_URL` and errors with setup instructions if it is unset;
+production needs `ALEMBIC_TARGET=production`, which the Dockerfile's start
+command sets explicitly. The integration tier additionally refuses to start if
+`TEST_DATABASE_URL` resolves to `PRODUCTION_DB_REF` — both databases are
+Supabase and differ only by project ref, so a hostname check is not a guard.
 
 ### Deployment
 

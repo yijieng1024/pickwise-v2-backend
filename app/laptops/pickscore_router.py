@@ -60,7 +60,11 @@ def _resolve_laptop(session: Session, laptop_id: uuid.UUID) -> tuple[Laptop, str
 
 class UseCasePickScore(BaseModel):
     use_case: str
-    score: int
+    # None when flags.score_withheld is true: both defining factors failed to
+    # resolve, so there is no score to publish (ADR-0016). Distinct from 0,
+    # which means "scored, and badly". This was `int` after ADR-0016 shipped,
+    # so the route raised on exactly the rows the ADR said it would serve.
+    score: Optional[int]
     breakdown: List[Dict[str, Any]]
     flags: Dict[str, Any]
     updated_at: datetime
@@ -116,6 +120,11 @@ class RankedLaptopPickScore(BaseModel):
     brand_name: str
     price_rm: float
     image_urls: List[str]
+    # Deliberately NOT Optional, unlike UseCasePickScore. get_ranking_for_use_case
+    # omits withheld rows before this model is built -- a laptop nobody could
+    # score has no position in an ordering -- so a null can never reach here,
+    # and typing it Optional would advertise to the frontend that rankings can
+    # contain unscored entries. If that ever changes, this is the line to move.
     score: int
     flags: Dict[str, Any]
 
@@ -170,20 +179,35 @@ def get_pick_score_status(session: Session = Depends(get_session)) -> Dict[str, 
 
     Counts DISTINCT laptop_id: the table holds one row per laptop × use case,
     so a raw row count would report several times the catalog size.
+
+    Three states partition the active catalog (ADR-0016):
+      scored   -- at least one stored row with a score
+      withheld -- rows exist and every score is null: the generator ran and
+                  could not score it. Not scored (the ranking omits it), and
+                  not missing (re-running generate-all will not change it).
+      missing  -- no rows: generate-all has not covered it
+    coverage_pct is generator coverage, (scored + withheld) / total -- the same
+    number the dashboard rail always showed. `scored` used to include withheld.
     """
     total_laptops = session.execute(select(func.count()).select_from(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)).scalar() or 0
-    scored = session.execute(
-        select(func.count(func.distinct(LaptopPickScore.laptop_id)))
+    generated, scored = session.execute(
+        select(
+            func.count(func.distinct(LaptopPickScore.laptop_id)),
+            func.count(func.distinct(LaptopPickScore.laptop_id)).filter(
+                LaptopPickScore.score.is_not(None)  # type: ignore[union-attr]
+            ),
+        )
         .select_from(LaptopPickScore)
         .join(Laptop, Laptop.id == LaptopPickScore.laptop_id)
         .where(Laptop.status == LaptopStatus.ACTIVE.value)
-    ).scalar() or 0
+    ).one()
 
     return {
         "total_laptops": total_laptops,
         "scored": scored,
-        "missing": total_laptops - scored,
-        "coverage_pct": round(scored / total_laptops * 100, 1) if total_laptops > 0 else 0,
+        "withheld": generated - scored,
+        "missing": total_laptops - generated,
+        "coverage_pct": round(generated / total_laptops * 100, 1) if total_laptops > 0 else 0,
     }
 
 

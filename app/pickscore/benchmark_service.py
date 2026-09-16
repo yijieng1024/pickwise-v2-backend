@@ -3,16 +3,80 @@ from typing import Optional
 from rapidfuzz import process, fuzz
 import re, unicodedata
 
-_cache: dict[str, tuple[dict, float]] = {}
+# Keyed on (normalized model string, table fingerprint) -- NOT the string
+# alone. resolve_benchmark serves both the CPU and the GPU table, so a
+# string-only key returned the first caller's mark to the second for the whole
+# TTL. "AMD Ryzen Z1 Extreme" is in both real tables (cpu_mark 24613, gpu_mark
+# 6428) and _score_cpu runs before _score_gpu, so that GPU scored 24613 -- 3.8x
+# its real mark. It also made unrelated tests pass alone and fail together,
+# three times, because each test's small table poisoned the next one's lookups.
+_cache: dict[tuple[str, int], tuple[dict, float]] = {}
 CACHE_TTL = 300
-CONFIDENCE_THRESHOLD = 0.85
+# One threshold per table. The single shared constant was raised 0.6 -> 0.85 in
+# August on GPU evidence (four measured mismatches, ADR-0010). The CPU evidence
+# points elsewhere and was never gathered until 2026-09-15: across 98 distinct
+# active processor_model strings, every match at 0.88 or above was correct with
+# cosmetic differences ("Apple M5 (10-core)" -> "Apple M5 10 Core"), and every
+# match at EXACTLY 0.85 was a wrong part -- 12 laptops, all Qualcomm, worst
+# case "Snapdragon X2 Elite (18-core) X2E88100" -> "AMD Athlon 64 X2 4200+",
+# mark 767, the catalog floor, on a 2025 flagship. "X2" matched "X2".
+#
+# The GPU value is deliberately NOT moved here: whether 0.90 suits it is
+# unexamined, and splitting the constant is what makes that a separate
+# question instead of a side effect. See ADR-0016.
+CPU_CONFIDENCE_THRESHOLD = 0.90
+GPU_CONFIDENCE_THRESHOLD = 0.85
+
+# Back-compat alias. Points at the GPU value, which is what this name has meant
+# since August.
+CONFIDENCE_THRESHOLD = GPU_CONFIDENCE_THRESHOLD
 
 _JUNK = dict.fromkeys(map(ord, "®™©℠⁰¹²³⁴⁵⁶⁷⁸⁹\u2018\u2019\u201c\u201d"), None)
+
+# Apple writes "M5 (10-core)"; PassMark writes "Apple M5 10 Core". Same part,
+# 0.882 apart -- correct, and gated once CPU confidence went to 0.90
+# (ADR-0016), which cost 9 laptops a right answer.
+#
+# This is a FORM normalization, not a noise strip like `Processor`. The core
+# count is DISCRIMINATING: M5 10-core and M5 Pro 14-core are different parts
+# with different marks, so the three spellings must converge without 10 and 14
+# converging. Same lesson as ` GPU` and `Laptop` in ADR-0010, applied to a
+# spelling rather than to a word.
+#
+# Anchored on the word `core`, never on the hyphen: a blanket hyphen-to-space
+# would split i7-14650hx and re-match half the catalog. The hyphen class is
+# ASCII, non-breaking and en dash -- the same three _APPLE_KEY translates for
+# the GPU map.
+#
+# A second pass must be a no-op (found by Hypothesis, test_properties.py). The
+# rewrite inserts spaces and removes parens, so anything a later pass would
+# match differently has to be matched the same way the first time:
+#   - A paren must TOUCH the count or `core`. `\(?\s*` / `\s*\)?` let the spaces
+#     this rewrite inserts bring a leftover paren within reach of the next
+#     pass: '(10-core))' -> '10 core )' -> '10 core'.
+#   - The separator is a hyphen (optionally spaced) OR any whitespace run, not
+#     only a literal space. The collapse below turns every whitespace into a
+#     space anyway, so '10<tab>core' was matched on the second pass and not the
+#     first. Hyphen handling is unchanged: still anchored on `core`.
+_CORE_COUNT = re.compile(r"\(?(\d+)(?:\s*[-\u2011\u2013]\s*|\s+)core\)?")
+
 
 def _normalize(s: str) -> str:
     s = s.translate(_JUNK)
     s = unicodedata.normalize("NFKD", s)    
     s = s.lower()
+    s = re.sub(r"\bprocessor\b", " ", s)
+    # AFTER lower(), so "Core"/"CORE" are already folded and one pattern
+    # covers every casing. BEFORE the whitespace collapse below, because this
+    # injects spaces around the count and depends on that collapse to tidy
+    # them -- run after, it would leave "apple m5  10 core " and break the
+    # idempotence test.
+    s = _CORE_COUNT.sub(r" \1 core ", s)
+    # Again, after the rewrite: its inserted spaces can hand the strip above a
+    # word boundary it did not have -- 'coreprocessor' becomes 'core processor'
+    # -- which a second pass would then act on. A word strip is idempotent, so
+    # repeating it is safe; moving it instead would re-open the mirror case
+    # '(10 processor core)', which needs the strip BEFORE the rewrite.
     s = re.sub(r"\bprocessor\b", " ", s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
@@ -113,6 +177,29 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
 
 _LAPTOP_SUFFIX = " laptop gpu"
 
+# Words naming only who made the part. ADR-0010's rule is to drop words that
+# carry no discriminating information and keep the ones that do: these three
+# say nothing a model number does not already say, while GeForce, Radeon and
+# Arc name product families and "Laptop" / the trailing " GPU" name different
+# parts (Intel Arc 140T and Intel Arc 140T GPU are 17% apart), so those stay.
+_VENDOR_WORDS = frozenset({"nvidia", "amd", "intel"})
+
+
+def _variant_key(s: str) -> str:
+    """The canonical form both sides of the rewrite are compared on.
+
+    Without this the comparison was against the raw normalized string, so
+    "nvidia geforce rtx 4050" never equalled "geforce rtx 4050" and the rewrite
+    silently did not fire for any vendor-prefixed name. The string then reached
+    the fuzzy matcher and landed on "RTX PRO 2000 Blackwell Embedded GPU" --
+    not the desktop variant of the right part, an unrelated one, which is worse
+    than the collisions the rewrite exists to fix. Today's catalog is safe only
+    by coincidence: Acer writes bare names and ASUS writes suffixed ones, so no
+    row is currently both prefixed and bare.
+    """
+    return " ".join(w for w in _normalize(s).split() if w not in _VENDOR_WORDS)
+
+
 _GPU_VARIANT_OVERRIDES: dict[str, str] = {
     "geforce rtx 3050": "GeForce RTX 3050 4GB Laptop GPU",
 }
@@ -121,16 +208,19 @@ def _laptop_variant(key: str, benchmarks: list[tuple[str, int]]) -> Optional[str
     """
     The laptop row that means the same part as `key`, or None.
 
-    Match is exact after removing the suffix, not fuzzy: "geforce rtx 5070"
-    must equal "geforce rtx 5070 ti laptop gpu" minus the suffix to win, and
-    it doesn't -- the Ti is a different part. Fuzzy matching here would
-    reintroduce exactly the ambiguity this function exists to remove.
+    Match is exact on the canonical form, not fuzzy: "geforce rtx 5070" must
+    equal "geforce rtx 5070 ti laptop gpu" minus the suffix to win, and it
+    doesn't -- the Ti is a different part. Dropping the vendor word is not a
+    loosening: it is applied to BOTH sides and removes a word that identifies
+    nothing. Relaxing to a prefix or substring match instead is how "rtx 5070"
+    would start winning "rtx 5070 ti laptop gpu".
     """
-    if key in _GPU_VARIANT_OVERRIDES:
-        return _GPU_VARIANT_OVERRIDES[key]
+    canonical = _variant_key(key)
+    if canonical in _GPU_VARIANT_OVERRIDES:
+        return _GPU_VARIANT_OVERRIDES[canonical]
     for name, _ in benchmarks:
         norm = _normalize(name)
-        if norm.endswith(_LAPTOP_SUFFIX) and norm[: -len(_LAPTOP_SUFFIX)] == key:
+        if norm.endswith(_LAPTOP_SUFFIX) and _variant_key(norm[: -len(_LAPTOP_SUFFIX)]) == canonical:
             return name
     return None
 
@@ -146,10 +236,18 @@ def _integrated_gpu_for(cpu_model: str) -> Optional[str]:
 def resolve_benchmark(
     model_string: str,
     benchmarks: list[tuple[str, int]],
+    threshold: float = CPU_CONFIDENCE_THRESHOLD,
 ) -> dict:
     """
     Fuzzy-matches model_string against the benchmarks list.
     Returns: {score: int|None, match_confidence: float, is_proxy: bool}
+
+    `threshold` defaults to the CPU value because every DIRECT caller of this
+    function is resolving a CPU (_score_cpu, and get_laptop_ranges' cpu_mark).
+    GPU resolution goes through resolve_gpu_benchmark, which passes
+    GPU_CONFIDENCE_THRESHOLD explicitly on each of its calls. A new direct
+    caller resolving a GPU must pass it too -- the default is a convenience for
+    the common case, not a statement that 0.90 is right for both.
     """
     # Placeholder from the scraper, not a part name. Without this it fuzzy-matches
     # to whatever is nearest and returns a real-looking score.
@@ -157,16 +255,24 @@ def resolve_benchmark(
         return {"score": None, "match_confidence": 0.0, "is_proxy": False}
     
     key = _normalize(model_string)
+    # The whole table, not its length or its first row: the CPU and GPU tables
+    # can hold the same name with different marks, which is the entire bug, and
+    # a cheaper fingerprint collides on exactly the small tables tests use.
+    # The threshold belongs in the key for the same reason the table does: the
+    # same string against the same table resolves differently under 0.85 and
+    # 0.90, so leaving it out would recreate the collision fixed one commit ago
+    # in a new dimension.
+    cache_key = (key, hash(tuple(benchmarks)), threshold)
     now = time.time()
 
-    if key in _cache:
-        cached_result, cached_at = _cache[key]
+    if cache_key in _cache:
+        cached_result, cached_at = _cache[cache_key]
         if (now - cached_at) < CACHE_TTL:
             return cached_result
 
     if not benchmarks:
         result: dict = {"score": None, "match_confidence": 0.0, "is_proxy": False}
-        _cache[key] = (result, now)
+        _cache[cache_key] = (result, now)
         return result
 
     # WRatio does no preprocessing, so a lowercased key was being matched
@@ -181,7 +287,7 @@ def resolve_benchmark(
         matched_key, raw_confidence, _ = match
         matched_name = by_norm[matched_key]
         confidence = raw_confidence / 100.0
-        if confidence >= CONFIDENCE_THRESHOLD:
+        if confidence >= threshold:
             result = {
                 "score": score_map[matched_name],
                 "matched_name": matched_name,
@@ -193,7 +299,7 @@ def resolve_benchmark(
     else:
         result = {"score": None, "match_confidence": 0.0, "is_proxy": False}
 
-    _cache[key] = (result, now)
+    _cache[cache_key] = (result, now)
     return result
 
 
@@ -228,20 +334,20 @@ def resolve_gpu_benchmark(
         if _LAPTOP_SUFFIX.strip() not in key:
             variant = _laptop_variant(key, benchmarks)
             if variant:
-                return resolve_benchmark(variant, benchmarks)
-        return resolve_benchmark(gpu_model, benchmarks)
+                return resolve_benchmark(variant, benchmarks, GPU_CONFIDENCE_THRESHOLD)
+        return resolve_benchmark(gpu_model, benchmarks, GPU_CONFIDENCE_THRESHOLD)
 
     apple_name = _APPLE_GPU_EQUIVALENT.get(
         _normalize(gpu_model).translate(_APPLE_KEY)
     )
     if apple_name:
-        result = resolve_benchmark(apple_name, benchmarks)
+        result = resolve_benchmark(apple_name, benchmarks, GPU_CONFIDENCE_THRESHOLD)
         if result["score"] is not None:
             return {**result, "is_proxy": True}
 
     igpu_name = _integrated_gpu_for(cpu_model)
     if igpu_name:
-        result = resolve_benchmark(igpu_name, benchmarks)
+        result = resolve_benchmark(igpu_name, benchmarks, GPU_CONFIDENCE_THRESHOLD)
         if result["score"] is not None:
             return {**result, "is_proxy": True}
 

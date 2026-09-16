@@ -68,6 +68,12 @@ class PipelineEvalLog(SQLModel, table=True):
     relaxed_from: Optional[float] = None        # original constraint value
     relaxed_to: Optional[float] = None          # relaxed constraint value
     bottleneck: Optional[str] = None            # populated when gated
+    # True when the embedding call failed and _relational_fallback answered
+    # instead. Not derivable from top_score -- the fallback's placeholder score
+    # is a constant that moves, and it can collide with a genuine hit.
+    retrieval_fallback: bool = Field(
+        default=False, sa_column_kwargs={"server_default": "false"}
+    )
     candidate_count: int = Field(default=0)     # laptops that passed the gate
     result_laptop_ids: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

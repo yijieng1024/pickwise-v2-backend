@@ -55,4 +55,58 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-settings = Settings() # type: ignore
+class _Lazy:
+    """
+    Defers construction of an expensive-or-configured object until something
+    actually uses it, while staying importable as a plain module-level name.
+
+    WHY A PROXY AND NOT A get_x() FUNCTION. Callers write
+    `from app.database import engine` and `Session(engine)`; a module-level
+    __getattr__ would fire on that import statement, which is the importing
+    module's import time -- exactly as eager as before. Only an object that is
+    cheap to build and resolves on ATTRIBUTE ACCESS defers past the import.
+
+    Verified against SQLAlchemy: `Session(proxy)` is accepted and builds
+    nothing, and the real engine is created on the first query. So a test that
+    stubs `Session` never constructs one at all.
+    """
+
+    __slots__ = ("_factory", "_real", "_label")
+
+    def __init__(self, factory, label):
+        object.__setattr__(self, "_factory", factory)
+        object.__setattr__(self, "_real", None)
+        object.__setattr__(self, "_label", label)
+
+    def _resolve(self):
+        if object.__getattribute__(self, "_real") is None:
+            object.__setattr__(self, "_real", object.__getattribute__(self, "_factory")())
+        return object.__getattribute__(self, "_real")
+
+    def __getattr__(self, name):
+        return getattr(self._resolve(), name)
+
+    def __setattr__(self, name, value):
+        setattr(self._resolve(), name, value)
+
+    def __repr__(self):
+        built = object.__getattribute__(self, "_real") is not None
+        label = object.__getattribute__(self, "_label")
+        return f"<lazy {label} ({'built' if built else 'not built yet'})>"
+
+
+def _build_settings() -> "Settings":
+    return Settings()  # type: ignore[call-arg]
+
+
+# Lazy for the same reason the engine is (see app/database.py): `Settings()`
+# validates five REQUIRED fields, so importing ANY module that reads settings
+# demanded a full .env at import time. That is what made the unit tier
+# impossible to run without secrets -- masked for months because a developer
+# machine always has a .env on disk, the same way production only ever worked
+# because Supabase happened to provision pgvector.
+#
+# Validation is not weakened, only moved from import to first use.
+# app/main.py touches it during startup so a misconfigured deploy still fails
+# before it serves a request, which is the property that actually mattered.
+settings = _Lazy(_build_settings, "Settings")

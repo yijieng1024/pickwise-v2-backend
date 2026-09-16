@@ -13,18 +13,29 @@ Formula:
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.purposes import PURPOSES
 from app.rag.retrieval import RetrievalCandidate
 
-# Purpose keyword signals for the bonus: maps purpose → gpu/cpu keywords that
-# indicate a strong match (checked against gpu_model / processor_model strings).
-_PURPOSE_GPU_SIGNALS: dict[str, list[str]] = {
-    "Gaming": ["rtx", "rx", "rog"],
-    "Creative": ["rtx", "rx", "radeon"],
-}
+# Purpose keyword signals for the bonus: maps purpose → cpu keywords that
+# indicate a strong match (checked against the processor_model string).
+#
+# There was a _PURPOSE_GPU_SIGNALS half (rtx/rx/radeon). It is gone: matching a
+# brand-family substring against gpu_model paid an RTX 5090 (gpu_mark 28248)
+# and a Radeon 610M (1299) the same +0.04, and paid Apple nothing at all,
+# because Apple's strings are core counts containing none of the three
+# keywords. PickScore already judges GPU strength downstream from resolved
+# PassMark marks, the integrated-GPU map and the Apple equivalence map, and it
+# disagreed with this one -- two definitions of GPU strength, the string-based
+# one wrong. See ADR-0015.
+#
+# The CPU half has the same structural weakness, but there is no downstream
+# component reranking could defer to in the same way, so removing it is a
+# separate decision and is deliberately not part of that change.
 _PURPOSE_CPU_SIGNALS: dict[str, list[str]] = {
-    "Programming": ["i5", "i7", "i9", "ryzen 5", "ryzen 7", "ryzen 9", "m3", "m4"],
-    "Office": ["i5", "i7", "ryzen 5", "ryzen 7"],
+    "Programming/Development": ["i5", "i7", "i9", "ryzen 5", "ryzen 7", "ryzen 9", "m3", "m4"],
+    "Office/Study": ["i5", "i7", "ryzen 5", "ryzen 7"],
 }
+assert set(_PURPOSE_CPU_SIGNALS) <= set(PURPOSES), "purpose labels have drifted"
 
 
 @dataclass
@@ -96,20 +107,17 @@ def _weight_penalty(weight_kg: float, weight_limit: Optional[float]) -> tuple[fl
 
 def _purpose_bonus(laptop, purpose: list[str]) -> tuple[float, list[str]]:
     """
-    Small additive bonus when the laptop's hardware signals match the purpose.
+    Small additive bonus when the laptop's CPU signals match the purpose.
     Capped at +0.08 total so a bonus never outweighs a real penalty.
+
+    gpu_model is deliberately not read here -- GPU strength is PickScore's
+    judgement, made against resolved benchmark marks rather than substrings.
     """
     bonus = 0.0
     reasons: list[str] = []
-    gpu = (laptop.gpu_model or "").lower()
     cpu = (laptop.processor_model or "").lower()
 
     for p in purpose:
-        for kw in _PURPOSE_GPU_SIGNALS.get(p, []):
-            if kw in gpu:
-                bonus += 0.04
-                reasons.append(f"GPU matches {p} purpose")
-                break
         for kw in _PURPOSE_CPU_SIGNALS.get(p, []):
             if kw in cpu:
                 bonus += 0.04

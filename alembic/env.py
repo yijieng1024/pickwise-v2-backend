@@ -46,7 +46,37 @@ load_dotenv()
 
 config = context.config
 
-db_url = os.environ.get("DATABASE_URL")
+# Which database a migration runs against, in order of preference.
+#
+# TEST_DATABASE_URL wins. Migration a3f7d21c6b84 was applied straight to the
+# live Supabase database because DATABASE_URL is what this file read and
+# DATABASE_URL is production -- `alembic upgrade head`, the most ordinary
+# command in the project, reached production with no flag and no prompt. That
+# one was additive and reversible; the next ALTER COLUMN or backfill would not
+# be. Exercising a migration locally must be the default, and production must
+# take a deliberate, differently-spelled command:
+#
+#   alembic upgrade head                          -> the test container
+#   ALEMBIC_TARGET=production alembic upgrade head -> Supabase, on purpose
+#
+# See docker-compose.test.yml and tests/integration/test_migrations.py.
+_TARGET = os.environ.get("ALEMBIC_TARGET", "").lower()
+if _TARGET == "production":
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("ALEMBIC_TARGET=production but DATABASE_URL is unset")
+    print(f"alembic: targeting PRODUCTION ({db_url.split('@')[-1]})")
+else:
+    db_url = os.environ.get("TEST_DATABASE_URL")
+    if not db_url:
+        raise RuntimeError(
+            "No TEST_DATABASE_URL. Start the throwaway database first:\n"
+            "    docker compose -f docker-compose.test.yml up -d\n"
+            "    export TEST_DATABASE_URL="
+            "postgresql://postgres:${TEST_DB_PASSWORD:-postgres}@localhost:55432/pickwise_test\n"
+            "To migrate production on purpose, run with ALEMBIC_TARGET=production."
+        )
+
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
 
