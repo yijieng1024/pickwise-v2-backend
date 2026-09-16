@@ -24,6 +24,7 @@ themselves rather than relying on the database being thrown away (the `session`
 fixture rolls back).
 """
 
+import contextlib
 import os
 import re
 import uuid
@@ -323,8 +324,8 @@ def api_user(session):
     return user
 
 
-@pytest.fixture
-def api_client(session, api_user, monkeypatch):
+@contextlib.contextmanager
+def _app_client(session, user, monkeypatch):
     """
     FastAPI's TestClient against the real app, inside the test's rollback
     transaction. Three things have to be redirected, and the third is the one
@@ -409,10 +410,49 @@ def api_client(session, api_user, monkeypatch):
         yield session
 
     app.dependency_overrides[get_session] = _session_override
-    app.dependency_overrides[get_current_user] = lambda: api_user
-    app.dependency_overrides[get_current_user_detached] = lambda: api_user
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_current_user_detached] = lambda: user
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.clear()
         # monkeypatch restores the module attributes itself.
+
+
+@pytest.fixture
+def api_client(session, api_user, monkeypatch):
+    """A client authenticated as the NON-admin api_user. See _app_client."""
+    with _app_client(session, api_user, monkeypatch) as client:
+        yield client
+
+
+@pytest.fixture
+def admin_user(session):
+    from app.users.models import User
+
+    user = User(
+        username=f"admin-{uuid.uuid4().hex[:8]}",
+        email=f"admin-{uuid.uuid4().hex[:8]}@example.invalid",
+        hashed_password="not-a-real-hash",
+        status="active",
+        role="admin",
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def admin_client(session, admin_user, monkeypatch):
+    """
+    A client authenticated as an admin. A SEPARATE fixture rather than a role
+    flag on api_client, so a test that needs admin rights has to ask for them by
+    name -- and so the non-admin client stays the default, which is the one that
+    can prove get_current_admin still enforces the role.
+
+    Do not request both clients in one test: each redirects the app's engine,
+    and the second would find nothing left to redirect.
+    """
+    with _app_client(session, admin_user, monkeypatch) as client:
+        yield client
