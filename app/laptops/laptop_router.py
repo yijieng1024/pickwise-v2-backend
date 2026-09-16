@@ -220,7 +220,17 @@ def update_laptop(
     db_laptop = session.get(Laptop, laptop_id)
     if not db_laptop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Laptop not found")
-    
+
+    # 400, not 422: the body is well-formed and family_id is a real column; this
+    # route declines to write it -- moves go through family_service.move_laptops,
+    # which is all-or-nothing and reports emptied families. Explicit null counts
+    # too: releasing a laptop from its family is a move, and must be stated there.
+    if "family_id" in laptop_update.model_fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="family_id is not writable through PUT /laptops/{id}; use POST /families/laptops/move",
+        )
+
     update_data = laptop_update.model_dump(exclude_unset=True)
     price_changed = "price_rm" in update_data and update_data["price_rm"] != db_laptop.price_rm
 

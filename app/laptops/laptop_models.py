@@ -331,6 +331,14 @@ class LaptopUpdate(SQLModel):
     raw_specs: Optional[Dict[str, Any]] = None
     image_urls: Optional[List[str]] = None
 
+    # Declared only so update_laptop can SEE it and refuse it (400). Unknown keys
+    # are dropped silently, and family_id used to be one: PUT returned 200 and
+    # changed nothing. Membership moves go through POST /families/laptops/move.
+    family_id: Optional[uuid.UUID] = Field(
+        default=None,
+        description="Not writable here; sending it is a 400. Use POST /families/laptops/move.",
+    )
+
     @field_validator("status")
     @classmethod
     def check_status(cls, value: Optional[str]) -> Optional[str]:

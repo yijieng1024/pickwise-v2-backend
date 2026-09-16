@@ -316,18 +316,16 @@ def test_family_id_cannot_be_changed_through_put_laptops(admin_client, brand, se
     assert laptop.family_id is None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FINDING, reported not fixed. PUT /laptops/{id} with family_id returns 200 "
-        "and silently IGNORES the field: LaptopUpdate has no family_id and does not "
-        "set extra='forbid', so pydantic drops unknown keys. The write is refused, "
-        "which protects the invariant, but a caller is told it succeeded. That is "
-        "worse than rejecting it -- an admin screen would show a successful save of "
-        "a change that never happened."
-    ),
-)
 def test_family_id_through_put_laptops_is_rejected_not_ignored(admin_client, brand, session):
+    """
+    Catches a write the route refuses but reports as a success. The sibling test
+    above proves family_id does not change; this one proves the caller is TOLD.
+    Both are needed: a 200 that drops the field keeps the invariant and still
+    shows an admin screen a save that never happened.
+
+    Was a strict xfail: LaptopUpdate did not declare family_id, so pydantic
+    dropped it before the route could see it. The assertion is unchanged.
+    """
     laptop = make_laptop(brand.id)
     family = LaptopFamily(brand_id=brand.id, name="Target", family_key="target")
     session.add(laptop)
