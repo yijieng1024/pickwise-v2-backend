@@ -12,7 +12,6 @@ too often filtered, the strategy is what shrinks, not the example count.
 
 import math
 
-import pytest
 from hypothesis import assume, example, given
 from hypothesis import strategies as st
 
@@ -234,20 +233,9 @@ _names = st.lists(
 ).map("".join)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FINDING, reported not fixed. normalize() is not idempotent around the "
-        "core-count rewrite. Shrunk: '(10-core))' -> '10 core )' -> '10 core'; "
-        "'((10-core)' -> '( 10 core' -> '10 core'; '10-coreProcessor' -> "
-        "'10 core processor' -> '10 core'. _CORE_COUNT's optional parens take one "
-        "per pass, and its inserted spaces create the word boundary the earlier "
-        "'processor' strip needed. Real names ('Apple M5 (10-core)', "
-        "'M5 (10-core CPU, 10-core GPU)') are unaffected."
-    ),
-)
-# The shrunk counter-examples, pinned: without them this strict xfail would
-# depend on what Hypothesis happens to draw, and XPASS at random in CI.
+# The shrunk counter-examples of a bug this property found (a strict xfail
+# until the core-count rewrite was fixed), pinned so they are checked on every
+# run rather than only when Hypothesis happens to draw them.
 @example(s="(10-core))")
 @example(s="((10-core)")
 @example(s="10-coreProcessor")

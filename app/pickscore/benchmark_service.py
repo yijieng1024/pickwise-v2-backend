@@ -47,7 +47,18 @@ _JUNK = dict.fromkeys(map(ord, "®™©℠⁰¹²³⁴⁵⁶⁷⁸⁹\u2018\u201
 # would split i7-14650hx and re-match half the catalog. The hyphen class is
 # ASCII, non-breaking and en dash -- the same three _APPLE_KEY translates for
 # the GPU map.
-_CORE_COUNT = re.compile(r"\(?\s*(\d+)\s*[-\u2011\u2013 ]\s*core\s*\)?")
+#
+# A second pass must be a no-op (found by Hypothesis, test_properties.py). The
+# rewrite inserts spaces and removes parens, so anything a later pass would
+# match differently has to be matched the same way the first time:
+#   - A paren must TOUCH the count or `core`. `\(?\s*` / `\s*\)?` let the spaces
+#     this rewrite inserts bring a leftover paren within reach of the next
+#     pass: '(10-core))' -> '10 core )' -> '10 core'.
+#   - The separator is a hyphen (optionally spaced) OR any whitespace run, not
+#     only a literal space. The collapse below turns every whitespace into a
+#     space anyway, so '10<tab>core' was matched on the second pass and not the
+#     first. Hyphen handling is unchanged: still anchored on `core`.
+_CORE_COUNT = re.compile(r"\(?(\d+)(?:\s*[-\u2011\u2013]\s*|\s+)core\)?")
 
 
 def _normalize(s: str) -> str:
@@ -61,6 +72,12 @@ def _normalize(s: str) -> str:
     # them -- run after, it would leave "apple m5  10 core " and break the
     # idempotence test.
     s = _CORE_COUNT.sub(r" \1 core ", s)
+    # Again, after the rewrite: its inserted spaces can hand the strip above a
+    # word boundary it did not have -- 'coreprocessor' becomes 'core processor'
+    # -- which a second pass would then act on. A word strip is idempotent, so
+    # repeating it is safe; moving it instead would re-open the mirror case
+    # '(10 processor core)', which needs the strip BEFORE the rewrite.
+    s = re.sub(r"\bprocessor\b", " ", s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 
