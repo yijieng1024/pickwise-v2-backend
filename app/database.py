@@ -38,11 +38,13 @@ from typing import Iterator
 from dotenv import load_dotenv
 from sqlmodel import Session, create_engine
 
-from app.config import _Lazy
+from app.config import _Lazy, settings
 
+# No longer what the engine connects to (see _build_engine). What it still
+# feeds: the optional DB_POOL_* reads below, when set in a .env rather than the
+# real environment -- no .env in this repo sets one today. Left in place on
+# purpose; removing it is a separate change with its own blast radius.
 load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def _int_env(name: str, default: int) -> int:
@@ -66,9 +68,16 @@ POOL_TIMEOUT = _int_env("DB_POOL_TIMEOUT", 30)
 POOL_RECYCLE = _int_env("DB_POOL_RECYCLE", 1800)
 
 def _build_engine():
-    """The real engine. Called once, on first use of `engine`."""
+    """The real engine. Called once, on first use of `engine`.
+
+    The URL comes from settings -- the same value app/main.py's startup
+    validation parses. This used to be a module-level os.getenv copy taken at
+    import, so validation and connection read two different sources: if they
+    disagreed, startup passed and the app connected somewhere else. Read here,
+    inside the factory, so importing this module still resolves nothing.
+    """
     return create_engine(
-    DATABASE_URL,
+    settings.database_url,
     echo=False,
     pool_size=POOL_SIZE,
     max_overflow=MAX_OVERFLOW,

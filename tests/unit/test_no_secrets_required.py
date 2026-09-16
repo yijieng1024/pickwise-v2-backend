@@ -184,6 +184,44 @@ def test_imports_with_no_configuration(module):
         )
 
 
+_ENGINE_SOURCE_PROBE = """
+    import importlib
+    import os
+
+    # Two different answers to "where is the database": the environment says
+    # one host, the resolved settings another. Startup validation reads
+    # settings.database_url, so the engine must connect to THAT one.
+    os.environ["DATABASE_URL"] = "postgresql://u:p@stale-env-host:5432/db"
+
+    config = importlib.import_module("app.config")
+    fresh = config.Settings.model_construct(
+        database_url="postgresql://u:p@validated-settings-host:5432/db"
+    )
+    object.__setattr__(config.settings, "_real", fresh)
+
+    database = importlib.import_module("app.database")
+    # Building the engine does not connect; its URL is what it WOULD connect to.
+    print("ENGINE-HOST:", database.get_engine().url.host)
+"""
+
+
+def test_the_engine_connects_to_the_url_startup_validated():
+    """
+    Catches the engine and the startup validation reading the database URL from
+    different places. They did: the lifespan validated settings.database_url
+    while app/database.py built the engine from its own os.getenv copy taken at
+    import. If the two disagree, startup passes and the app connects somewhere
+    else -- and a developer .env points at production.
+
+    Scrubbed subprocess, so the only DATABASE_URL in play is the one set here.
+    """
+    result = _run_scrubbed(_ENGINE_SOURCE_PROBE)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "ENGINE-HOST: validated-settings-host" in result.stdout, (
+        "the engine was not built from settings.database_url:\n" + result.stdout
+    )
+
+
 def test_no_unit_test_imports_app_directly():
     """
     The derivation above is only complete while _adapters really is the single
