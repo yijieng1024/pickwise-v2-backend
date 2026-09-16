@@ -134,7 +134,7 @@ _IMPORT_PROBE = """
     # "THE ONLY FILE THAT TOUCHES PRODUCTION IMPORTS"), and
     # test_no_unit_test_imports_app_directly below enforces it.
     try:
-        importlib.import_module("tests.unit._adapters")
+        importlib.import_module("__MODULE__")
     except BaseException:
         # The CHAIN is the diagnosis, not the exception. The original finding
         # was actionable only because the path was visible:
@@ -151,7 +151,13 @@ _IMPORT_PROBE = """
 """
 
 
-def test_the_unit_tier_imports_with_no_configuration():
+# app.main is here for the integration and migrations CI jobs, whose shared
+# conftest imports it: that import built Settings() through the CORS middleware,
+# so both jobs failed at COLLECTION for want of five secrets they never use.
+# Same property, same detector -- a second probe would be a second place for
+# the dotenv disarming to go subtly wrong.
+@pytest.mark.parametrize("module", ["tests.unit._adapters", "app.main"])
+def test_imports_with_no_configuration(module):
     """
     Catches the reintroduction of module-scope construction that needs a
     secret: an engine, a settings object, an API client. All three existed and
@@ -160,14 +166,14 @@ def test_the_unit_tier_imports_with_no_configuration():
     The failure message is the import chain, because "import failed" is not a
     diagnosis and the chain is.
     """
-    result = _run_scrubbed(_IMPORT_PROBE)
+    result = _run_scrubbed(_IMPORT_PROBE.replace("__MODULE__", module))
 
     if result.returncode != 0:
         chain = ""
         if "IMPORT-CHAIN-START" in result.stdout:
             chain = result.stdout.split("IMPORT-CHAIN-START")[1].split("IMPORT-CHAIN-END")[0]
         pytest.fail(
-            "the unit tier cannot be imported without configuration.\n\n"
+            f"{module} cannot be imported without configuration.\n\n"
             "IMPORT CHAIN (innermost last):\n"
             + "\n".join(f"    {line}" for line in chain.strip().splitlines())
             + "\n\nSomething on that chain builds an object at MODULE SCOPE that "

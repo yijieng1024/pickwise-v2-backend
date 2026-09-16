@@ -37,11 +37,10 @@ def _validate_configuration() -> None:
     """
     Fail a misconfigured deploy before it serves a request.
 
-    Parses DATABASE_URL without connecting. Presence alone proves nothing here:
-    `settings` is already resolved at import by the CORS middleware below, so a
-    missing URL never gets this far -- but a malformed one used to boot fine and
-    fail on the first query, while every route that never touched the database
-    kept answering. The engine is lazy (app/database.py), so this is the check
+    Parses DATABASE_URL without connecting. Reading it resolves `settings`,
+    so a missing required field fails here too; a malformed URL used to boot
+    fine and fail on the first query, while every route that never touched the
+    database kept answering. The engine is lazy (app/database.py), so this is the check
     import-time construction used to give for free.
     """
     make_url(settings.database_url)
@@ -77,19 +76,30 @@ API_PREFIX = "/api/v2"
 
 # Browser clients (the Next.js frontend) need CORS headers; requests are
 # authenticated with bearer tokens, not cookies, so no credentials needed.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # Custom response headers are invisible to browser JS unless explicitly
-    # exposed. X-Total-Count carries the row count for list endpoints that
-    # deliberately kept a bare-array response body (see /laptops/,
-    # /benchmarks/cpu, /benchmarks/gpu) instead of a {items,total} envelope.
-    # X-Unassigned-Count rides along on GET /families with the null-family
-    # backlog, so the admin screen can show it without a second round trip.
-    expose_headers=["X-Total-Count", "X-Unassigned-Count"],
-)
+#
+# A FACTORY, not the class plus kwargs. kwargs are evaluated here, at import,
+# and reading settings.cors_origins built Settings() -- five required secrets --
+# for every importer of app.main, including the integration conftest. Starlette
+# calls the factory when it builds the middleware stack, on the app's first ASGI
+# event (lifespan startup under uvicorn), which is the first moment the origins
+# are actually needed.
+def _cors_middleware(asgi_app):
+    return CORSMiddleware(
+        asgi_app,
+        allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        # Custom response headers are invisible to browser JS unless explicitly
+        # exposed. X-Total-Count carries the row count for list endpoints that
+        # deliberately kept a bare-array response body (see /laptops/,
+        # /benchmarks/cpu, /benchmarks/gpu) instead of a {items,total} envelope.
+        # X-Unassigned-Count rides along on GET /families with the null-family
+        # backlog, so the admin screen can show it without a second round trip.
+        expose_headers=["X-Total-Count", "X-Unassigned-Count"],
+    )
+
+
+app.add_middleware(_cors_middleware)
 
 # declare routes before including routers to avoid circular imports
 app.include_router(users_router, prefix=API_PREFIX)

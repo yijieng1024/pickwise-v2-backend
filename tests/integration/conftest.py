@@ -160,6 +160,41 @@ def database_url():
         container.stop()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def app_settings(database_url):
+    """
+    The app's `settings`, for this tier: the test database URL and every default,
+    and NOTHING else -- no secret, real or dummy.
+
+    The app needs a settings object here even though no test uses a secret:
+    Starlette builds the middleware stack on the first request and the CORS
+    factory reads settings.cors_origins, and the lifespan test patches
+    settings.database_url. Left to itself the proxy would build Settings(),
+    which demands five secrets (so the CI job could not run) and, locally, reads
+    .env -- whose DATABASE_URL is production.
+
+    model_construct skips validation, so a secret field is simply ABSENT: a
+    route that reaches Gemini or SMTP raises AttributeError instead of calling
+    out with a real key. Dummy values would hide exactly that, and would need
+    updating every time a required setting is added.
+    """
+    import app.config as config
+    from app.config import Settings
+
+    proxy = config.settings
+    if object.__getattribute__(proxy, "_real") is not None:
+        pytest.fail(
+            "app.config.settings was resolved before the integration tier set it; "
+            "it was built from the environment and .env, whose DATABASE_URL may be "
+            "production. Find what read settings at import."
+        )
+    object.__setattr__(proxy, "_real", Settings.model_construct(database_url=database_url))
+    try:
+        yield proxy
+    finally:
+        object.__setattr__(proxy, "_real", None)
+
+
 @pytest.fixture(scope="session")
 def engine(database_url):
     """
