@@ -57,8 +57,11 @@ def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session))
     session.commit()
     session.refresh(db_laptop)
 
-    session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
-    session.commit()
+    # 0 is "price unknown", not a data point: recorded, it is a fabricated drop
+    # to zero in the series the price-history chart plots.
+    if db_laptop.price_rm:
+        session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
+        session.commit()
 
     return db_laptop
 
