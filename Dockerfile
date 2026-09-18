@@ -30,4 +30,8 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# ALEMBIC_TARGET=production is required, not incidental: alembic/env.py now
+# defaults to the throwaway test database so that a developer running
+# `alembic upgrade head` cannot reach Supabase by accident. The deploy is the
+# one place that SHOULD migrate production, so it says so.
+CMD ["sh", "-c", "ALEMBIC_TARGET=production alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

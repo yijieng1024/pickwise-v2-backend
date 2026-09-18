@@ -12,6 +12,7 @@ from app.common.rate_limit import build_gemma_limiter
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import settings
+from app.logger import get_logger
 from app.laptops.family_service import resolve_family_id
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.laptops.laptop_category_model import LaptopCategory
@@ -21,6 +22,9 @@ from app.processor.schemas import ExtractedLaptopCategories, ExtractedLaptopFami
 from app.taxonomy.category_model import Category
 
 _SIZE_TOKEN_RE = re.compile(r"(\d{2})[-_]inch")
+
+
+logger = get_logger(__name__)
 
 
 def _filter_variant_images(
@@ -238,6 +242,11 @@ def process_raw_laptop_data(
         saved_count = 0
         updated_count = 0
         categories_linked = 0
+        # model_codes whose extraction found no price, where a real stored price
+        # was KEPT instead of overwritten. Returned (and so persisted in the
+        # background job's result), because keeping the old price silently would
+        # hide the failed extraction as completely as erasing it hid the price.
+        prices_not_extracted: list[str] = []
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         for variant in extracted_data.variants:
@@ -327,6 +336,17 @@ def process_raw_laptop_data(
                 # Price history: only record if price actually changed and is non-zero
                 price_changed = variant.price_rm > 0 and variant.price_rm != existing.price_rm
 
+                # 0.0 is the schema's "price unknown", not a price. Writing it over
+                # a real one turned a laptop that HAD a price into one that reads as
+                # never priced (scored a neutral 50), and left it active.
+                if variant.price_rm == 0 and existing.price_rm:
+                    laptop_data.pop("price_rm")
+                    prices_not_extracted.append(existing.model_code)
+                    logger.warning(
+                        "re-processing %s found no price; kept stored RM%s",
+                        existing.model_code, existing.price_rm,
+                    )
+
                 for key, value in laptop_data.items():
                     if key != "model_code":  # model_code is the lookup key — never overwrite
                         setattr(existing, key, value)
@@ -378,6 +398,7 @@ def process_raw_laptop_data(
             "variants_saved": saved_count,
             "variants_updated": updated_count,
             "categories_linked": categories_linked,
+            "prices_not_extracted": prices_not_extracted,
         }
 
     except Exception as e:
@@ -487,6 +508,7 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
     results_summary: list[dict] = []
     total_saved = 0
     total_updated = 0
+    prices_not_extracted: list[str] = []
     requests_made = 0
 
     for i, record in enumerate(pending_records):
@@ -512,6 +534,7 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
                 "variants_extracted": res.get("variants_extracted", 0),
                 "variants_saved": res.get("variants_saved", 0),
                 "variants_updated": res.get("variants_updated", 0),
+                "prices_not_extracted": res.get("prices_not_extracted", []),
                 "error": None if succeeded else res.get("message"),
             }
         )
@@ -519,6 +542,7 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
         if succeeded:
             total_saved += res.get("variants_saved", 0)
             total_updated += res.get("variants_updated", 0)
+            prices_not_extracted.extend(res.get("prices_not_extracted", []))
 
         if progress:
             progress.advance(
@@ -540,6 +564,8 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
         "requests_made": requests_made,
         "total_new_variants_saved": total_saved,
         "total_variants_updated": total_updated,
+        # Laptops whose stored price was kept because extraction found none.
+        "prices_not_extracted": prices_not_extracted,
         "pending_remaining": pending_remaining,
         "details": results_summary,
     }

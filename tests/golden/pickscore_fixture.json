@@ -1,0 +1,479 @@
+{
+  "_readme": [
+    "INPUTS for the PickScore golden snapshot. Hardcoded on purpose: a golden",
+    "file whose inputs drift is not a golden file.",
+    "",
+    "THESE SCORES ARE NOT PRODUCTION SCORES. _normalize ranks by percentile",
+    "against the population it is given, and this population is 20 laptops, not",
+    "the ~238 in the catalog. A laptop's score here is its rank among these 20.",
+    "Never compare a number in tests/golden/pickscore.json with a number from",
+    "the live API or from ADR-0011 (which quotes the F16 at 57/59/62/61/56 from",
+    "the full catalog). They answer different questions and will not agree.",
+    "",
+    "The benchmark rows below are FROZEN: only the rows these 20 laptops",
+    "actually resolve to, copied once from the production tables on 2026-09-14.",
+    "The engine is handed these instead of the 5985 cpu / 2852 gpu rows in the",
+    "database, so re-scraping PassMark cannot move the golden file. Tier 2 tests",
+    "the SCORING LOGIC; benchmark RESOLUTION is covered in Tier 0 (string",
+    "pipeline, anchor gate) and Tier 3 (the desktop/laptop rewrite against the",
+    "seven real collisions).",
+    "",
+    "Each laptop's `why` field says which code path it covers. Read it before",
+    "deleting a row -- that is the coverage you would be dropping."
+  ],
+  "frozen_on": "2026-09-14",
+  "laptops": [
+    {
+      "key": "f16",
+      "brand": "Asus",
+      "product_name": "TUF Gaming F16",
+      "processor_model": "Intel Core i7-14650HX",
+      "gpu_model": "NVIDIA GeForce RTX 5060 Laptop GPU",
+      "price_rm": 5899.0,
+      "ram_gb": 16,
+      "ssd_gb": 1024,
+      "weight_kg": 2.2,
+      "display_size_inch": 16.0,
+      "battery_wh": 90.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "ADR-0011's reference machine -- the one row whose numbers can be read against the ADR"
+    },
+    {
+      "key": "nitro_v16",
+      "brand": "Acer",
+      "product_name": "Nitro V 16",
+      "processor_model": "AMD Ryzen 7 8845HS",
+      "gpu_model": "GeForce RTX 4050",
+      "price_rm": 4299.0,
+      "ram_gb": 16,
+      "ssd_gb": 512,
+      "weight_kg": 2.1,
+      "display_size_inch": 16.0,
+      "battery_wh": 57.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "Acer's bare DESKTOP gpu string -- exercises the laptop-variant rewrite"
+    },
+    {
+      "key": "mbp16_m5max",
+      "brand": "Apple",
+      "product_name": "MacBook Pro 16 M5 Max",
+      "processor_model": "Apple M5 Max",
+      "gpu_model": "40-core GPU",
+      "price_rm": 14999.0,
+      "ram_gb": 48,
+      "ssd_gb": 1024,
+      "weight_kg": 2.15,
+      "display_size_inch": 16.2,
+      "battery_wh": 100.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "Apple GPU equivalence map at the top end -- sets gpu_score_is_proxy"
+    },
+    {
+      "key": "mba13_m4",
+      "brand": "Apple",
+      "product_name": "MacBook Air 13 M4",
+      "processor_model": "Apple M4",
+      "gpu_model": "8-core GPU",
+      "price_rm": 4999.0,
+      "ram_gb": 16,
+      "ssd_gb": 256,
+      "weight_kg": 1.24,
+      "display_size_inch": 13.6,
+      "battery_wh": 53.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "Apple equivalence at the low end -- a proxy that must NOT score like the M5 Max"
+    },
+    {
+      "key": "zenbook14",
+      "brand": "Asus",
+      "product_name": "Zenbook 14",
+      "processor_model": "Intel Core Ultra 7 255H",
+      "gpu_model": "Intel Arc Graphics",
+      "price_rm": 4799.0,
+      "ram_gb": 16,
+      "ssd_gb": 512,
+      "weight_kg": 1.28,
+      "display_size_inch": 14.0,
+      "battery_wh": 75.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "anchorless GPU string resolved through _INTEGRATED_GPU_BY_CPU on the CPU"
+    },
+    {
+      "key": "chromebook",
+      "brand": "Acer",
+      "product_name": "Chromebook Plus 514",
+      "processor_model": "Unknown",
+      "gpu_model": "Unknown",
+      "price_rm": 1429.0,
+      "ram_gb": 8,
+      "ssd_gb": 128,
+      "weight_kg": 1.4,
+      "display_size_inch": 14.0,
+      "battery_wh": 58.0,
+      "storage_type": "eMMC",
+      "status": "active",
+      "why": "PRICE FLOOR, and the scraper-placeholder row: resolve_benchmark rejects 'Unknown' outright, so BOTH defining factors fall back to 50"
+    },
+    {
+      "key": "scar18",
+      "brand": "Asus",
+      "product_name": "ROG Strix SCAR 18",
+      "processor_model": "Intel Core i9-14900HX",
+      "gpu_model": "NVIDIA GeForce RTX 5090 Laptop GPU",
+      "price_rm": 16999.0,
+      "ram_gb": 64,
+      "ssd_gb": 2048,
+      "weight_kg": 3.1,
+      "display_size_inch": 18.0,
+      "battery_wh": 90.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "gpu_mark ceiling -- the top of the GPU distribution"
+    },
+    {
+      "key": "aspire3",
+      "brand": "Acer",
+      "product_name": "Aspire 3",
+      "processor_model": "Intel Core i3-1215U",
+      "gpu_model": "Intel UHD Graphics",
+      "price_rm": 1899.0,
+      "ram_gb": 8,
+      "ssd_gb": 256,
+      "weight_kg": 1.7,
+      "display_size_inch": 15.6,
+      "battery_wh": 40.0,
+      "storage_type": "HDD",
+      "status": "active",
+      "why": "the only HDD row -- isolates the -15 storage penalty"
+    },
+    {
+      "key": "vivobook15",
+      "brand": "Asus",
+      "product_name": "Vivobook 15",
+      "processor_model": "AMD Ryzen 5 7520U",
+      "gpu_model": "AMD Radeon 610M",
+      "price_rm": 0.0,
+      "ram_gb": 8,
+      "ssd_gb": 512,
+      "weight_kg": 1.7,
+      "display_size_inch": 15.6,
+      "battery_wh": 42.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "price_rm = 0 means UNKNOWN -- sets flags.price_unavailable and skips the price factor"
+    },
+    {
+      "key": "precision7780",
+      "brand": "Dell",
+      "product_name": "Precision 7780",
+      "processor_model": "Intel Core i9-13950HX",
+      "gpu_model": "NVIDIA RTX 5000 Ada Generation Laptop GPU",
+      "price_rm": 36999.0,
+      "ram_gb": 128,
+      "ssd_gb": 4096,
+      "weight_kg": 3.73,
+      "display_size_inch": 17.0,
+      "battery_wh": 97.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "PRICE CEILING, heaviest, and the max of both ram_gb and storage_gb"
+    },
+    {
+      "key": "helios16",
+      "brand": "Acer",
+      "product_name": "Predator Helios 16",
+      "processor_model": "Intel Core i7-13700HX",
+      "gpu_model": "NVIDIA GeForce RTX 4080 Laptop GPU",
+      "price_rm": 10499.0,
+      "ram_gb": 32,
+      "ssd_gb": 1024,
+      "weight_kg": 2.6,
+      "display_size_inch": 16.0,
+      "battery_wh": 90.0,
+      "storage_type": "SSD",
+      "status": "suspended",
+      "why": "SUSPENDED -- must be scored but never counted in any range denominator. Its price is unique among the 20 so the exclusion is checkable by value, not just by count."
+    },
+    {
+      "key": "x1carbon",
+      "brand": "Lenovo",
+      "product_name": "ThinkPad X1 Carbon",
+      "processor_model": "Intel Core Ultra 7 165H",
+      "gpu_model": "Intel Arc",
+      "price_rm": 7499.0,
+      "ram_gb": 32,
+      "ssd_gb": 1024,
+      "weight_kg": 1.09,
+      "display_size_inch": 14.0,
+      "battery_wh": 57.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "LIGHTEST row -- the portability ceiling; Meteor Lake iGPU"
+    },
+    {
+      "key": "omen16",
+      "brand": "HP",
+      "product_name": "Omen 16",
+      "processor_model": "AMD Ryzen 9 8945HS",
+      "gpu_model": "NVIDIA GeForce RTX 4070 Laptop GPU",
+      "price_rm": 7299.0,
+      "ram_gb": 16,
+      "ssd_gb": 1024,
+      "weight_kg": 2.3,
+      "display_size_inch": 16.0,
+      "battery_wh": 83.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "mid-range discrete gaming -- fills the middle of the gpu distribution"
+    },
+    {
+      "key": "proart_p16",
+      "brand": "Asus",
+      "product_name": "ProArt P16",
+      "processor_model": "AMD Ryzen AI 9 HX 370",
+      "gpu_model": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "price_rm": 9499.0,
+      "ram_gb": 32,
+      "ssd_gb": 2048,
+      "weight_kg": 1.85,
+      "display_size_inch": 16.0,
+      "battery_wh": 90.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "creator profile: strong CPU and RAM at low weight"
+    },
+    {
+      "key": "swift_go14",
+      "brand": "Acer",
+      "product_name": "Swift Go 14",
+      "processor_model": "Intel Core Ultra 5 125H",
+      "gpu_model": "Intel Arc",
+      "price_rm": 3499.0,
+      "ram_gb": 16,
+      "ssd_gb": 512,
+      "weight_kg": 1.32,
+      "display_size_inch": 14.0,
+      "battery_wh": 65.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "second Meteor Lake iGPU row -- two laptops must resolve to the SAME iGPU"
+    },
+    {
+      "key": "katana15",
+      "brand": "MSI",
+      "product_name": "Katana 15",
+      "processor_model": "Intel Core i7-13620H",
+      "gpu_model": "GeForce RTX 4060",
+      "price_rm": 4999.0,
+      "ram_gb": 16,
+      "ssd_gb": 512,
+      "weight_kg": 2.25,
+      "display_size_inch": 15.6,
+      "battery_wh": 53.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "second bare desktop string -- the rewrite must fire on more than one model"
+    },
+    {
+      "key": "ideapad_slim3",
+      "brand": "Lenovo",
+      "product_name": "IdeaPad Slim 3",
+      "processor_model": "AMD Ryzen 5 150",
+      "gpu_model": "AMD Radeon Graphics",
+      "price_rm": 2199.0,
+      "ram_gb": 8,
+      "ssd_gb": 256,
+      "weight_kg": 1.6,
+      "display_size_inch": 15.6,
+      "battery_wh": 47.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "the anchorless string that started it all -- 'AMD Radeon Graphics' via the CPU"
+    },
+    {
+      "key": "mbp14_m5pro",
+      "brand": "Apple",
+      "product_name": "MacBook Pro 14 M5 Pro",
+      "processor_model": "Apple M5 Pro",
+      "gpu_model": "20-core GPU",
+      "price_rm": 9999.0,
+      "ram_gb": 24,
+      "ssd_gb": 512,
+      "weight_kg": 1.6,
+      "display_size_inch": 14.2,
+      "battery_wh": 72.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "middle Apple tier -- three Apple rows must not collapse to one score"
+    },
+    {
+      "key": "zenbook_duo",
+      "brand": "Asus",
+      "product_name": "Zenbook Duo",
+      "processor_model": "Intel Core Ultra 9 285H",
+      "gpu_model": "Intel Arc 140T GPU",
+      "price_rm": 8999.0,
+      "ram_gb": 32,
+      "ssd_gb": 1024,
+      "weight_kg": 1.65,
+      "display_size_inch": 14.0,
+      "battery_wh": 75.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "EXPLICIT 'Arc 140T GPU' -- must resolve directly, not through the CPU map"
+    },
+    {
+      "key": "victus15",
+      "brand": "HP",
+      "product_name": "Victus 15",
+      "processor_model": "Intel Core i5-13420H",
+      "gpu_model": "GeForce RTX 3050",
+      "price_rm": 3299.0,
+      "ram_gb": 16,
+      "ssd_gb": 512,
+      "weight_kg": 2.29,
+      "display_size_inch": 15.6,
+      "battery_wh": 52.5,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "bare RTX 3050 -- hits the _GPU_VARIANT_OVERRIDES 4GB pin, not the generic row"
+    }
+  ],
+  "cpu_benchmarks": [
+    [
+      "AMD Ryzen 5 150",
+      17514
+    ],
+    [
+      "AMD Ryzen 5 7520U",
+      8934
+    ],
+    [
+      "AMD Ryzen 7 8845HS",
+      28307
+    ],
+    [
+      "AMD Ryzen 9 8945HS",
+      29255
+    ],
+    [
+      "AMD Ryzen AI 9 HX 370",
+      34956
+    ],
+    [
+      "Apple M4 10 Core",
+      23606
+    ],
+    [
+      "Apple M5 Max 18 Core",
+      57439
+    ],
+    [
+      "Apple M5 Pro 15 Core",
+      48928
+    ],
+    [
+      "Intel Core Ultra 5 125H",
+      20056
+    ],
+    [
+      "Intel Core Ultra 7 165H",
+      25850
+    ],
+    [
+      "Intel Core Ultra 7 255H",
+      30701
+    ],
+    [
+      "Intel Core Ultra 9 285H",
+      34194
+    ],
+    [
+      "Intel Core i3-1215U",
+      10109
+    ],
+    [
+      "Intel Core i5-13420H",
+      16847
+    ],
+    [
+      "Intel Core i7-13620H",
+      23257
+    ],
+    [
+      "Intel Core i7-13700HX",
+      31626
+    ],
+    [
+      "Intel Core i7-14650HX",
+      33467
+    ],
+    [
+      "Intel Core i9-13950HX",
+      40478
+    ],
+    [
+      "Intel Core i9-14900HX",
+      43729
+    ]
+  ],
+  "gpu_benchmarks": [
+    [
+      "GeForce RTX 3050 4GB Laptop GPU",
+      9505
+    ],
+    [
+      "GeForce RTX 4050 Laptop GPU",
+      14222
+    ],
+    [
+      "GeForce RTX 4060 Laptop GPU",
+      17346
+    ],
+    [
+      "GeForce RTX 4070 Laptop GPU",
+      19485
+    ],
+    [
+      "GeForce RTX 4080 Laptop GPU",
+      24745
+    ],
+    [
+      "GeForce RTX 5060 Laptop GPU",
+      16704
+    ],
+    [
+      "GeForce RTX 5070 Ti Laptop GPU",
+      22404
+    ],
+    [
+      "GeForce RTX 5090 Laptop GPU",
+      28312
+    ],
+    [
+      "Intel Arc",
+      5483
+    ],
+    [
+      "Intel Arc 140T GPU",
+      6607
+    ],
+    [
+      "RTX 5000 Ada Generation Laptop GPU",
+      23247
+    ],
+    [
+      "Radeon 610M",
+      1288
+    ],
+    [
+      "Radeon 660M",
+      3142
+    ]
+  ]
+}

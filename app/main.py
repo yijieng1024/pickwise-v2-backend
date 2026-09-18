@@ -1,7 +1,10 @@
 
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.engine import make_url
 from app.config import settings
 from app.logger import setup_logging
 from app.laptops.customization_router import router as customization_router
@@ -29,7 +32,40 @@ from app.common.job_service import reset_stale_jobs
 
 setup_logging()
 
+
+def _validate_configuration() -> None:
+    """
+    Fail a misconfigured deploy before it serves a request.
+
+    Parses DATABASE_URL without connecting. Reading it resolves `settings`,
+    so a missing required field fails here too; a malformed URL used to boot
+    fine and fail on the first query, while every route that never touched the
+    database kept answering. The engine is lazy (app/database.py), so this is the check
+    import-time construction used to give for free.
+    """
+    make_url(settings.database_url)
+
+
+def _recover_interrupted_jobs() -> None:
+    """
+    Background jobs run in-process, so a deploy or crash orphans anything still
+    running. Fail those rows on boot — otherwise the admin UI polls a
+    `processing` job that no longer exists, forever. Never raises.
+    """
+    reset_stale_jobs()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Order matters: validate first, so a bad URL fails startup itself and job
+    # recovery never runs against it (reset_stale_jobs swallows its errors).
+    _validate_configuration()
+    _recover_interrupted_jobs()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="PickWise v2 API",
     description="Backend for PickWise v2 — a LangGraph ReAct agent that reasons over laptop search, " \
     "PickScore ranking, and pricing to deliver conversational recommendations",
@@ -40,19 +76,30 @@ API_PREFIX = "/api/v2"
 
 # Browser clients (the Next.js frontend) need CORS headers; requests are
 # authenticated with bearer tokens, not cookies, so no credentials needed.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # Custom response headers are invisible to browser JS unless explicitly
-    # exposed. X-Total-Count carries the row count for list endpoints that
-    # deliberately kept a bare-array response body (see /laptops/,
-    # /benchmarks/cpu, /benchmarks/gpu) instead of a {items,total} envelope.
-    # X-Unassigned-Count rides along on GET /families with the null-family
-    # backlog, so the admin screen can show it without a second round trip.
-    expose_headers=["X-Total-Count", "X-Unassigned-Count"],
-)
+#
+# A FACTORY, not the class plus kwargs. kwargs are evaluated here, at import,
+# and reading settings.cors_origins built Settings() -- five required secrets --
+# for every importer of app.main, including the integration conftest. Starlette
+# calls the factory when it builds the middleware stack, on the app's first ASGI
+# event (lifespan startup under uvicorn), which is the first moment the origins
+# are actually needed.
+def _cors_middleware(asgi_app):
+    return CORSMiddleware(
+        asgi_app,
+        allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        # Custom response headers are invisible to browser JS unless explicitly
+        # exposed. X-Total-Count carries the row count for list endpoints that
+        # deliberately kept a bare-array response body (see /laptops/,
+        # /benchmarks/cpu, /benchmarks/gpu) instead of a {items,total} envelope.
+        # X-Unassigned-Count rides along on GET /families with the null-family
+        # backlog, so the admin screen can show it without a second round trip.
+        expose_headers=["X-Total-Count", "X-Unassigned-Count"],
+    )
+
+
+app.add_middleware(_cors_middleware)
 
 # declare routes before including routers to avoid circular imports
 app.include_router(users_router, prefix=API_PREFIX)
@@ -76,16 +123,6 @@ app.include_router(category_router, prefix=API_PREFIX)
 app.include_router(questionnaire_router, prefix=API_PREFIX)
 app.include_router(saved_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
-
-
-@app.on_event("startup")
-def _recover_interrupted_jobs() -> None:
-    """
-    Background jobs run in-process, so a deploy or crash orphans anything still
-    running. Fail those rows on boot — otherwise the admin UI polls a
-    `processing` job that no longer exists, forever. Never raises.
-    """
-    reset_stale_jobs()
 
 
 @app.get("/")

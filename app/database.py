@@ -36,12 +36,15 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from dotenv import load_dotenv
-from sqlalchemy import text
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, create_engine
 
+from app.config import _Lazy, settings
+
+# No longer what the engine connects to (see _build_engine). What it still
+# feeds: the optional DB_POOL_* reads below, when set in a .env rather than the
+# real environment -- no .env in this repo sets one today. Left in place on
+# purpose; removing it is a separate change with its own blast radius.
 load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def _int_env(name: str, default: int) -> int:
@@ -64,8 +67,17 @@ POOL_TIMEOUT = _int_env("DB_POOL_TIMEOUT", 30)
 #: Recycle below any idle-connection cutoff the database or a proxy applies.
 POOL_RECYCLE = _int_env("DB_POOL_RECYCLE", 1800)
 
-engine = create_engine(
-    DATABASE_URL,
+def _build_engine():
+    """The real engine. Called once, on first use of `engine`.
+
+    The URL comes from settings -- the same value app/main.py's startup
+    validation parses. This used to be a module-level os.getenv copy taken at
+    import, so validation and connection read two different sources: if they
+    disagreed, startup passed and the app connected somewhere else. Read here,
+    inside the factory, so importing this module still resolves nothing.
+    """
+    return create_engine(
+    settings.database_url,
     echo=False,
     pool_size=POOL_SIZE,
     max_overflow=MAX_OVERFLOW,
@@ -82,15 +94,24 @@ engine = create_engine(
     # round-robining traffic across every connection and keeping all of them
     # alive.
     pool_use_lifo=True,
-)
+    )
 
 
-def init_db():
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        conn.commit()
+# NOT `engine = create_engine(...)` at module scope. That demanded a
+# DATABASE_URL from every importer whether or not it ever touched the database,
+# which is why `from app.agent.tools.search_laptops import _KNOWN_PURPOSES`
+# -- reaching for a set of strings -- could not run without one.
+#
+# `from app.database import engine` still works and `Session(engine)` still
+# works; the connection pool is built on first attribute access. A test that
+# stubs `Session` therefore builds nothing, which is what keeps the unit tier
+# genuinely database-free rather than merely database-unused.
+engine = _Lazy(_build_engine, "Engine")
 
-    SQLModel.metadata.create_all(engine)
+
+def get_engine():
+    """Explicit accessor for callers that would rather not rely on the proxy."""
+    return engine._resolve()
 
 
 def get_session():

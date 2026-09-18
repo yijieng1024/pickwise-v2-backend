@@ -265,7 +265,11 @@ class LaptopPickScore(SQLModel, table=True):
     laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
     laptop: Optional["Laptop"] = Relationship(back_populates="pick_scores")
     use_case: str = Field(index=True)  # slug from pickscore_general.USE_CASE_PRIORITIES
-    score: int
+    # Nullable so a withheld score is an EXPLICIT absence (ADR-0016). The row
+    # is still written, with flags.score_withheld saying why -- a missing row
+    # and a withheld score look identical to a caller, and that ambiguity is
+    # the whole thing being fixed.
+    score: Optional[int] = Field(default=None, nullable=True)
     breakdown: list = Field(default_factory=list, sa_column=Column(JSON))
     flags: dict = Field(default_factory=dict, sa_column=Column(JSON))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -346,6 +350,14 @@ class LaptopUpdate(SQLModel):
     # Part 9: External/Raw Assets
     raw_specs: Optional[Dict[str, Any]] = None
     image_urls: Optional[List[str]] = None
+
+    # Declared only so update_laptop can SEE it and refuse it (400). Unknown keys
+    # are dropped silently, and family_id used to be one: PUT returned 200 and
+    # changed nothing. Membership moves go through POST /families/laptops/move.
+    family_id: Optional[uuid.UUID] = Field(
+        default=None,
+        description="Not writable here; sending it is a 400. Use POST /families/laptops/move.",
+    )
 
     @field_validator("status")
     @classmethod

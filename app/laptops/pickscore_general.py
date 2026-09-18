@@ -147,7 +147,16 @@ def get_ranking_for_use_case(
         .where(LaptopPickScore.use_case == use_case)
         .where(Laptop.status == LaptopStatus.ACTIVE.value)
     )
-    rows = [(row[0], row[1], row[2]) for row in session.exec(stmt).all()]
+    # A withheld score has no position in an ordering, so it is omitted HERE
+    # and only here (ADR-0016): the row still exists and GET /{id}/pick-scores
+    # still returns it with a null score and the flag. A ranking answers "what
+    # is best"; a laptop nobody could score has no answer to that question.
+    # The sort below also does -score, which raises TypeError on a None.
+    rows = [
+        (row[0], row[1], row[2])
+        for row in session.exec(stmt).all()
+        if row[0].score is not None
+    ]
 
     demote_proxy = use_case == "gaming"
     rows.sort(

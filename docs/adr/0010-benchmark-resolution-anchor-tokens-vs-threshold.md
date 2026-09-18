@@ -1,6 +1,7 @@
 # ADR-0010: Resolve benchmarks by structure, not by confidence
 
-- **Status:** Accepted — amended 2026-08-21 (see Amendment)
+- **Status:** Accepted — amended 2026-08-21, amended again 2026-09-15
+  (see Amendment II)
 - **Date:** 2026-08-17
 - **Related:** ADR-0004 (gating threshold 0.53), ADR-0006 (PickScore positioning),
   ADR-0009 (laptop status), ADR-0011 (normalization curve)
@@ -404,3 +405,153 @@ a measurement of one machine: `Radeon 610M` ranges from 1,237 to 5,947 across
 the CPUs it ships with, 4.8×. Nine map entries point at generic rows of this
 kind. The map resolves *which part*, not *how that part performs in this
 chassis*, and no amount of care in choosing the target changes that.
+
+---
+
+## Amendment II — 2026-09-15: the CPU half, the vendor prefix, and the cache
+
+The August work fixed the **GPU** half of resolution. Two of the three defences
+it established were never extended to the CPU path, and the rewrite had a gap
+nobody had reason to look at. This records what was found when all three were
+examined together, backed by the Tier 0 / Tier 2 / Tier 3 suites that did not
+exist in August.
+
+### The anchor gate does not transfer to CPUs, and adding it would be theatre
+
+The gate was going to be applied to `resolve_benchmark`'s CPU path on the
+assumption that it would catch the same class of error. **It would catch
+nothing.** Audited across every distinct `processor_model` in the active
+catalog on 2026-09-15:
+
+| | |
+|---|---|
+| distinct active `processor_model` strings | 98 |
+| active laptops | 238 |
+| resolve to a mark | 98 strings / 238 laptops (100%) |
+| **anchorless by the GPU gate's own rule** | **0 strings / 0 laptops** |
+
+Every CPU string carries a digit-bearing token of three or more characters,
+because a CPU's marketing name *is* its part number — `i7-14650HX`,
+`Ultra 7 255H`, `Ryzen AI 9 HX 370`. The gate's premise, that a string can
+name a family without naming a part, is a property of GPU marketing
+(`AMD Radeon Graphics`, `Intel Arc Graphics`) and not of CPU marketing.
+
+It also would not have caught the case that prompted the work: `MediaTek
+MT8186` resolves to `MediaTek MT8163` at 0.93, and `mt8186` passes the gate.
+Shipping the gate here would have added a defence that reads as protection in
+the file and protects nothing — the failure mode this project keeps
+rediscovering, in a new place.
+
+### What the CPU path is actually getting wrong
+
+Confidence distribution over the 238 active laptops:
+
+| confidence | laptops |
+|---|---|
+| 1.00 (exact) | 196 |
+| 0.95–0.99 | 12 |
+| 0.90–0.94 | 9 |
+| 0.85–0.89 | 21 |
+
+Everything at 0.88 and above is a correct match with cosmetic differences —
+`Apple M5 (10-core)` → `Apple M5 10 Core`, `13th Gen Intel Core i5-13450HX
+Processor` → `Intel Core i5-13450HX`. Everything at **exactly 0.85** is wrong,
+and it is all Qualcomm:
+
+| catalog string | laptops | resolved to | mark |
+|---|---|---|---|
+| `Snapdragon X X1 26 100 Processor` | 4 | `Cobalt 100` | 8134 |
+| `Snapdragon® X X1 26 100 Processor` | 3 | `Cobalt 100` | 8134 |
+| `Snapdragon X2 Elite (18-core) X2E88100` | 2 | **`AMD Athlon 64 X2 4200+`** | **767** |
+| `Snapdragon® X Elite X1E 78 100 Processor` | 1 | `Cobalt 100` | 8134 |
+| `Snapdragon X Plus X1P 42 100 Processor` | 1 | `Cobalt 100` | 8134 |
+| `Snapdragon® X2 Elite (18-core) X2E88100` | 1 | **`AMD Athlon 64 X2 4200+`** | **767** |
+
+**12 laptops, 6 strings.** A 2025 flagship ARM laptop chip scoring 767 because
+`X2` matched a desktop CPU from 2005 is worse than any GPU collision the August
+work fixed. `Cobalt 100` is Microsoft's ARM server part, not a Snapdragon.
+
+This is deliberately **not fixed here**, because unlike the other two items it
+has no single correct answer:
+
+- Raising `CONFIDENCE_THRESHOLD` to 0.90 gates all 12 wrong rows — and also the
+  9 correct `Apple M5 (n-core)` rows, which then score a fabricated 50.0.
+  Trading 12 wrong marks for 9 fabricated neutrals is not obviously a win, and
+  ADR-0010's original finding was precisely that this class is *not* a
+  threshold problem.
+- A part-number agreement rule (require the query's alphanumeric part token to
+  appear in the matched name) rejects the Athlon case cleanly and leaves Apple
+  alone, but does nothing for the `Cobalt 100` rows, whose query token is
+  `x1`/`x1e` — two characters.
+
+Both need a decision about what a CPU that cannot be resolved should score,
+which is the same open question as `_score_gpu`'s missing unresolved flag.
+
+**Resolved 2026-09-15 by ADR-0016, and the threshold is now two constants.**
+`CONFIDENCE_THRESHOLD` was one number answering two questions measured on
+different evidence; it is split into `CPU_CONFIDENCE_THRESHOLD = 0.90` and
+`GPU_CONFIDENCE_THRESHOLD = 0.85`. The GPU value is unchanged — August's four
+measured mismatches still set it, and whether 0.90 suits GPUs is unexamined.
+The CPU raise gates exactly 7 strings / 21 laptops: the 6 Qualcomm strings
+above (12 laptops, all wrong) plus `Apple M5 (10-core)` at 0.882 (9 laptops,
+correct, accepted as collateral). Nothing else moves.
+
+`resolve_benchmark` takes the threshold as an argument, defaulting to the CPU
+value because every direct caller resolves a CPU; `resolve_gpu_benchmark`
+passes the GPU value explicitly on all four of its internal calls. The
+threshold joins the cache key alongside the table, for the same reason: the
+same string against the same table resolves differently under 0.85 and 0.90.
+
+The raise was only safe once ADR-0016's flag channel existed — without it, 21
+wrong-or-lost marks would have become 21 indistinguishable 50.0s.
+
+### The rewrite now survives a vendor prefix
+
+`_laptop_variant` compared the whole normalized string against the
+suffix-stripped row name, so `nvidia geforce rtx 4050` never equalled
+`geforce rtx 4050` and the rewrite silently did not fire. The string then
+reached the fuzzy matcher and resolved to **`RTX PRO 2000 Blackwell Embedded
+GPU` (16242)** — not the desktop variant of the right part, an unrelated one.
+Worse than the seven collisions the rewrite exists for.
+
+Today's catalog is safe by coincidence only: Acer writes bare `GeForce RTX
+5050`, ASUS writes suffixed `NVIDIA … Laptop GPU`, and no row is both prefixed
+and bare. One scraper change ends that.
+
+`_variant_key` applies this ADR's own rule — drop words carrying no
+discriminating information, keep the ones that do — to **both** sides of the
+comparison. `NVIDIA`, `AMD` and `Intel` name a vendor and nothing else.
+`GeForce`, `Radeon` and `Arc` name product families and stay; `Laptop` and the
+trailing ` GPU` stay, because `Intel Arc 140T` and `Intel Arc 140T GPU` are
+different rows 17% apart. The match remains **exact on the canonical form** —
+relaxing it to a prefix or substring match is how `rtx 5070` would begin
+winning `rtx 5070 ti laptop gpu`, and a test asserts that against a Ti-only
+table. All seven pinned marks are unchanged, and the `_GPU_VARIANT_OVERRIDES`
+RTX 3050 4GB pin is now reachable from the prefixed form too, which it was not
+before.
+
+### The cache is keyed per table
+
+`_cache` was keyed on the normalized model string alone while
+`resolve_benchmark` serves both tables, so the second lookup of a string
+returned the first's result for the TTL. `AMD Ryzen Z1 Extreme` is in both real
+tables — `cpu_mark` 24613, `gpu_mark` 6428 — and `_score_cpu` runs before
+`_score_gpu`, so that GPU would have scored **3.8× its real mark**.
+
+Filed twice as needing a design decision. It did not: it is a one-line bug with
+one correct answer. It had three concrete consequences in the test suite before
+it was fixed, the last being the golden snapshot and the data-invariant tests
+passing in isolation and failing together — the four-row `gpu_table` in one
+poisoned the other's lookups. The key is now `(normalized string, hash of the
+table)`: the whole table, because the two tables can hold the same *name* with
+different marks, which is the entire bug, and a cheaper fingerprint collides on
+exactly the small tables tests use.
+
+### What this leaves open
+
+One item, and it is the same one as before: `_score_gpu` has no flag for an
+unresolved benchmark, so a rejected match and a genuine mid score are both a
+bare 50.0. The CPU threshold question above lands in the same place. Until a
+`gpu_resolution` field exists on `PickScoreResponse.flags`, the golden snapshot
+records each laptop's resolved `cpu_mark` and `gpu_mark` so a diff shows
+`6607 → null` even when no flag does — a workaround, not an answer.

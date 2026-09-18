@@ -14,7 +14,6 @@ not a column at all, it is the output of a three-path resolution.
 """
 
 import pytest
-from sqlalchemy import update
 from sqlmodel import select
 
 from app.laptops.family_model import LaptopFamily
@@ -41,19 +40,8 @@ def test_an_active_laptop_with_no_price_is_a_violation(session, brand):
     trivially affordable — which is how nine of the twenty most-recommended
     laptops came to be unpriced rows (ADR-0009). An unpriced row belongs in
     `inactive`, the work queue, not in `active`.
-
-    The ORM will no longer produce this state -- `_deactivate_unpriced` demotes
-    an unpriced row on every insert and update -- so the violation is forced
-    through a Core UPDATE, which fires no mapper event. That is not cheating:
-    the row is still reachable by hand, by a migration, or by a path predating
-    the rule, which is exactly what leaves a checker something to find.
     """
-    unpriced = make_laptop(brand.id, price_rm=0.0)
-    session.add(unpriced)
-    session.commit()
-    session.execute(
-        update(Laptop).where(Laptop.id == unpriced.id).values(status="active")
-    )
+    session.add(make_laptop(brand.id, price_rm=0.0, status="active"))
     session.commit()
     assert len(_unpriced_active(session)) == 1
 

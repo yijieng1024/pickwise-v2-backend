@@ -30,7 +30,10 @@ class FactorBreakdown(BaseModel):
 
 class PickScoreResponse(BaseModel):
     product_id: uuid.UUID
-    score: int
+    # None when flags.score_withheld is true -- both defining factors failed to
+    # resolve, so there is no score to publish (ADR-0016). Distinct from 0,
+    # which means "scored, and badly".
+    score: Optional[int]
     mode: str
     breakdown: List[FactorBreakdown]
     flags: Dict[str, Any]

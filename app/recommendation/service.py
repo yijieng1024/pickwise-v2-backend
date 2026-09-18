@@ -55,6 +55,13 @@ _HUMAN_PROMPT = (
 )
 
 
+def _score_text(pick_resp) -> str:
+    # "None/100" would read to the model as a score it can quote (ADR-0016).
+    if pick_resp.score is None:
+        return "withheld (neither CPU nor GPU could be identified; do not state or estimate one)"
+    return f"{pick_resp.score}/100"
+
+
 def _build_laptop_block(laptop: Laptop, brand_name: str, pick_resp, similarity: float) -> str:
     breakdown_str = " | ".join(
         f"{f.factor}={f.raw_score:.0f}" for f in pick_resp.breakdown
@@ -63,7 +70,7 @@ def _build_laptop_block(laptop: Laptop, brand_name: str, pick_resp, similarity: 
         f"laptop_id: {laptop.id}\n"
         f"Name: {brand_name} {laptop.product_name}\n"
         f"Price: RM {laptop.price_rm:.0f}\n"
-        f"PickScore: {pick_resp.score}/100  (mode: {pick_resp.mode})\n"
+        f"PickScore: {_score_text(pick_resp)}  (mode: {pick_resp.mode})\n"
         f"CPU: {laptop.processor_model} | GPU: {laptop.gpu_model}\n"
         f"RAM: {laptop.ram_gb}GB | Storage: {laptop.ssd_gb}GB {laptop.storage_type or ''}\n"
         f"Display: {laptop.display_size_inch}\" | Weight: {laptop.weight_kg}kg | Battery: {laptop.battery_wh}Wh\n"
@@ -120,8 +127,15 @@ def get_recommendations(
         pick_resp = calculate_pick_score(product, user_pref, ranges, cpu_benchmarks, gpu_benchmarks)
         scored.append((laptop, brand_name, round(1 - row_distance, 4), pick_resp))
 
-    # 4. Re-rank by PickScore, keep top_k
-    scored.sort(key=lambda x: x[3].score, reverse=True)  # type: ignore[attr-defined]
+    # 4. Re-rank by PickScore, keep top_k. A withheld score (None, ADR-0016)
+    # sorts after every scored candidate, in retrieval order -- not dropped:
+    # the pool is already narrowed by the user's budget and brand, and it may
+    # be the only match. Sorting on the bare score raised TypeError on None and
+    # took down the whole request.
+    scored.sort(
+        key=lambda x: (x[3].score is not None, x[3].score or 0),  # type: ignore[attr-defined]
+        reverse=True,
+    )
     top = scored[:top_k]
 
     # 5. Build LLM prompt context

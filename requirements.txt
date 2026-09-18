@@ -125,4 +125,7 @@ youtube-transcript-api==1.2.4
 zstandard==0.25.0
 
 # Dev only (not imported by the app): tests/
-pytest==8.3.4
+pytest==9.1.1
+pytest-cov==7.1.0
+testcontainers==4.15.0
+hypothesis==6.168.0

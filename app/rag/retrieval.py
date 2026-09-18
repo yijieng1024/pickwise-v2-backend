@@ -11,8 +11,11 @@ from sqlalchemy import select as sa_select
 from sqlmodel import Session
 
 from app.embeddings.service import embed_text
+from app.logger import get_logger
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopStatus
+
+logger = get_logger(__name__)
 
 # Wide net — retrieve many candidates so the reranker has room to work.
 # Precision is NOT the goal here; recall is.
@@ -23,12 +26,35 @@ _DEFAULT_RECALL_SIZE = 50
 _QUERY_CACHE: dict[str, tuple[list[float], float]] = {}
 _CACHE_TTL_SECONDS = 300  # 5 minutes
 
+# The placeholder similarity every _relational_fallback row carries.
+#
+# Derived, not picked. It has to satisfy two constraints at once:
+#
+#   - above gating.RELEVANCE_THRESHOLD (0.53), or every fallback result is
+#     gated and the rescue path rescues nothing -- which is what 0.5 did;
+#   - below the bottom of the real score distribution, so a placeholder never
+#     outranks a genuine semantic match.
+#
+# Measured over the 241 rows in pipeline_eval_logs (2026-09-14): p10 0.5867,
+# p25 0.6270, p50 0.6778, p90 0.7754. 0.58 sits 0.05 above the gate and just
+# under p10, so a fallback row reaches the user while sorting beneath roughly
+# nine out of ten genuine hits.
+#
+# Re-derive alongside RELEVANCE_THRESHOLD on any embedding-model change: both
+# are properties of the same score distribution, and a model swap moves it.
+_FALLBACK_SIMILARITY = 0.58
+
 
 @dataclass
 class RetrievalCandidate:
     laptop: Laptop
     brand_name: str
     cosine_distance: float
+    # Which retrieval path produced this row. The fallback's score is a
+    # placeholder, not a measurement, so anything reading the score needs to
+    # be able to tell the two apart -- and it must not be inferable from the
+    # score itself, which is a constant that can and does move.
+    from_fallback: bool = False
 
     @property
     def similarity_score(self) -> float:
@@ -53,6 +79,7 @@ def retrieve_candidates(
     budget_max: Optional[float] = None,
     brand: Optional[str] = None,
     recall_size: int = _DEFAULT_RECALL_SIZE,
+    weight_max: Optional[float] = None,
 ) -> list[RetrievalCandidate]:
     """
     Embed the query and run pgvector cosine similarity search.
@@ -70,7 +97,19 @@ def retrieve_candidates(
     try:
         query_vector = _get_query_vector(query)
     except Exception:
-        return _relational_fallback(session, budget_max, brand, recall_size)
+        # ERROR, not warning: semantic search is the product, and what replaces
+        # it is a price-ordered SQL list that answers a different question.
+        # exc_info keeps the traceback — the cause (quota, timeout, bad key)
+        # decides whether this is a five-minute blip or an outage, and a
+        # formatted message would throw that away.
+        logger.error(
+            "Embedding call failed for query %r — falling back to relational retrieval",
+            query,
+            exc_info=True,
+        )
+        return _relational_fallback(
+            session, budget_max, brand, recall_size, weight_max
+        )
 
     distance_col = LaptopEmbedding.embedding.cosine_distance(query_vector)
 
@@ -104,11 +143,12 @@ def _relational_fallback(
     budget_max: Optional[float],
     brand: Optional[str],
     limit: int,
+    weight_max: Optional[float] = None,
 ) -> list[RetrievalCandidate]:
     """
     Pure SQL fallback when the embedding API is unavailable.
-    Returns laptops ordered by price (ascending) with similarity_score = 0.5
-    as a neutral placeholder so downstream modules can still run.
+    Returns laptops ordered by price (ascending) with a fixed placeholder
+    similarity (_FALLBACK_SIMILARITY) so downstream modules can still run.
     """
     from sqlmodel import select
 
@@ -119,13 +159,36 @@ def _relational_fallback(
     )
     if budget_max is not None:
         stmt = stmt.where(Laptop.price_rm <= budget_max)
+    # Weight is filtered HERE and nowhere else on this path. The reranker's
+    # weight penalty exists to demote candidates that pgvector retrieved but
+    # that fit a numeric constraint poorly -- semantic retrieval cannot filter
+    # on a column, so demotion is the only tool it has. This query has no such
+    # limitation and already filters price; taking a x0.7 multiplier for
+    # something SQL could simply exclude is applying a semantic remedy to a
+    # relational problem, and it put every weight-constrained fallback back
+    # under the gate (0.58 x 0.7 = 0.406).
+    #
+    # On NULLs: both weight_kg and price_rm are NOT NULL on `laptops`, so the
+    # "row with an unknown weight" case does not arise. If either is ever made
+    # nullable, SQL drops those rows here (NULL <= x is NULL, not true), which
+    # is the behaviour to want anyway -- an unknown weight is not evidence that
+    # a laptop is light, and this is already the degraded path.
+    if weight_max is not None:
+        stmt = stmt.where(Laptop.weight_kg <= weight_max)
     if brand is not None:
         stmt = stmt.where(LaptopBrand.name.ilike(brand))
     stmt = stmt.order_by(Laptop.price_rm.asc(), Laptop.id).limit(limit)  # type: ignore
 
     rows = session.execute(stmt).all()
-    # cosine_distance=0.5 → similarity_score=0.5 (neutral, not misleading)
+    # similarity_score is 1 - cosine_distance, so the distance is the inverse of
+    # the placeholder. Downstream reads from_fallback, never the score -- which
+    # is exactly the mistake this constant's history records.
     return [
-        RetrievalCandidate(laptop=laptop, brand_name=brand_name, cosine_distance=0.5)
+        RetrievalCandidate(
+            laptop=laptop,
+            brand_name=brand_name,
+            cosine_distance=1.0 - _FALLBACK_SIMILARITY,
+            from_fallback=True,
+        )
         for laptop, brand_name in rows
     ]

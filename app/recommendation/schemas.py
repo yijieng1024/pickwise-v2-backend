@@ -18,7 +18,8 @@ class RecommendedLaptop(BaseModel):
     laptop_id: uuid.UUID
     product_name: str
     price_rm: float
-    pick_score: int
+    # None when the score is withheld (ADR-0016); such laptops sort last.
+    pick_score: Optional[int]
     similarity_score: float
     breakdown: List[FactorBreakdown]
     explanation: str

@@ -105,7 +105,7 @@ Each domain module under `app/` follows a consistent pattern: `models.py` (SQLMo
 
 **An unpriced laptop is never left `active`**: `_deactivate_unpriced`, a `before_insert`/`before_update` mapper event on `Laptop` in `laptop_models.py`, demotes any row whose `price_rm` is 0 (the schema's "price unknown") from `active` to `inactive` — ADR-0009's awaiting-a-price work queue, which is what nine of the twenty most-recommended laptops should have been in. It is a mapper event rather than a guard at the four write sites (`POST /laptops/`, `PUT /laptops/{id}`, and the processor's insert and update branches) because all four end in a flush of this class, and a per-caller guard is a guard the fifth caller will not have. Two deliberate non-behaviours: it never touches `suspended` (the retired archive — demoting it would file a discontinued machine in the list of machines to go find a price for), and restoring a price does **not** re-activate, because an `inactive` row may be delisted for other reasons and that call is an admin's. Not a CHECK constraint: the processor's scraped-but-unpriced intermediate state is legitimate, it just must not be recommendable. `tests/integration/test_data_invariants.py` still checks the invariant and now forces its violation through a Core UPDATE (no mapper event), since the ORM can no longer produce one.
 
-**`DELETE /laptops/{id}` refuses (409) while user- or pipeline-owned rows still reference the laptop** — `saved_laptops`, `conversation_laptops`, `laptop_review_chunks`, `laptop_review_summary`, `raw_youtube_reviews.matched_laptop_id` (the `_DELETE_BLOCKING_REFERENCES` list in `laptop_router.py`), mirroring `brand_router.py`'s "still-referenced" 409. This is not a nicety: **every FK to `laptops.id` is `NO ACTION` — there is no `ON DELETE CASCADE` anywhere in the schema** — so without the guard those five produce a raw `IntegrityError` 500 (~50 of 276 laptops were undeletable). The other five children (customizations, embedding, price history, pick scores, category links) are derived data and *are* cleaned up, via `cascade="all, delete-orphan"` on `Laptop`'s relationships. Retiring a listing is `status: "inactive"`, not deletion — that is what the status field is for.
+**`DELETE /laptops/{id}` refuses (409) while user- or pipeline-owned rows still reference the laptop** — `saved_laptops`, `conversation_laptops`, `laptop_review_chunks`, `laptop_review_summary`, `raw_youtube_reviews.matched_laptop_id` (the `_DELETE_BLOCKING_REFERENCES` list in `laptop_router.py`), mirroring `brand_router.py`'s "still-referenced" 409. This is not a nicety: **every FK to `laptops.id` is `NO ACTION` — there is no `ON DELETE CASCADE` anywhere in the schema** — so without the guard those five produce a raw `IntegrityError` 500 (~50 of 276 laptops were undeletable). The other five children (customizations, embedding, price history, pick scores, category links) are derived data and *are* cleaned up, via `cascade="all, delete-orphan"` on `Laptop`'s relationships. Retiring a listing is `status: "suspended"`, not deletion — that is what the status field is for. Not `inactive`: ADR-0009 makes `inactive` the awaiting-a-price work queue and `suspended` the retired-and-no-longer-sold archive, so sending a discontinued machine to `inactive` files it in the list of machines to go find a price for. The 409 message says `suspended` to match.
 - **`app/taxonomy/`** — `product_type_model.py`/`product_type_router.py` (small stable set, e.g. `"laptop"`, scopes the questionnaire) and `category_model.py`/`category_router.py` (marketing/use-case tags for the frontend tag component) — both mirror `app/laptops/brand_model.py`'s CRUD shape exactly (admin-only writes, public reads, 409 on duplicate/still-referenced).
 - **`app/pickscore/`** — Product-agnostic scoring engine (see PickScore section below)
 - **`app/laptops/pickscore_adapter.py`** — Converts `Laptop` → `ScorableProduct`; owns laptop range DB queries (calibrated from catalog laptops, not global benchmark table)
@@ -333,8 +333,6 @@ Purpose modifiers (capped at ×1.3): Gaming→GPU×1.3/CPU×1.1, Creative→GPU�
 
 Bulk scrape queries `is_active=True` AND (`last_scraped_at IS NULL` OR `scrape_status = 'failed'`). Returns HTTP 207 on partial failures; writes timestamped failure logs to `logs/scraper/`.
 
-<<<<<<< Updated upstream
-=======
 ### Testing
 
 `pytest tests/ -q`. Two tiers, and **they must stay in separate CI jobs**:
@@ -350,21 +348,11 @@ Bulk scrape queries `is_active=True` AND (`last_scraped_at IS NULL` OR `scrape_s
   `pytest tests/test_golden_pickscore.py --update-golden`, never automatically.
   Its numbers are percentile ranks against 20 fixture laptops and **must not**
   be compared with production scores or ADR-0011's figures.
-- `tests/test_ingest_skip.py` + `tests/test_config_step.py` — pure functions
-  over fixtures, no DB and no network, so they run in the **unit** job too.
-  Each pins a decision that is otherwise only prose: that ingest rewrites
-  `rejected` rows and nothing else, and that the configuration step is not
-  asked when the source material cannot answer it.
 - `tests/integration/` — needs a Postgres with pgvector. Resolves
-  `TEST_DATABASE_URL` first (container password from `TEST_DB_PASSWORD`), else
-  starts a `pgvector/pgvector` container via testcontainers, else **skips with
-  instructions** (never passes having run nothing). ~5 min against the hosted
-  test project over the Supabase session pooler; seconds against a local
-  container. `test_api_contract.py` earns its cost specifically: the withheld-score
-  work shipped with a mutation check, a golden diff and zero xfails, and
-  `GET /{id}/pick-scores` still 500'd on every withheld row because the router's
-  own response model was left `int`. Every other test that round exercised the
-  engine and the service; none crossed the router.
+  `TEST_DATABASE_URL` first, else starts a `pgvector/pgvector` container via
+  testcontainers, else **skips with instructions** (never passes having run
+  nothing). ~5 min against the hosted test project over the Supabase session
+  pooler; seconds against a local container.
 
 **CI** (`.github/workflows/ci.yml`, `nightly-eval.yml`): three jobs. `unit`
 (unit + golden, ~2 s) runs with **no secrets at all** — that is a deliberate
@@ -406,7 +394,6 @@ command sets explicitly. The integration tier additionally refuses to start if
 `TEST_DATABASE_URL` resolves to `PRODUCTION_DB_REF` — both databases are
 Supabase and differ only by project ref, so a hostname check is not a guard.
 
->>>>>>> Stashed changes
 ### Deployment
 
 `.github/workflows/deploy.yml` on push to `main` (doc-only changes excluded via `paths-ignore` — note the key is `paths-ignore`, **not** `path-ignore`, which GitHub silently ignores):

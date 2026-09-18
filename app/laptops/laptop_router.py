@@ -57,8 +57,11 @@ def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session))
     session.commit()
     session.refresh(db_laptop)
 
-    session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
-    session.commit()
+    # 0 is "price unknown", not a data point: recorded, it is a fabricated drop
+    # to zero in the series the price-history chart plots.
+    if db_laptop.price_rm:
+        session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
+        session.commit()
 
     return db_laptop
 
@@ -220,7 +223,17 @@ def update_laptop(
     db_laptop = session.get(Laptop, laptop_id)
     if not db_laptop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Laptop not found")
-    
+
+    # 400, not 422: the body is well-formed and family_id is a real column; this
+    # route declines to write it -- moves go through family_service.move_laptops,
+    # which is all-or-nothing and reports emptied families. Explicit null counts
+    # too: releasing a laptop from its family is a move, and must be stated there.
+    if "family_id" in laptop_update.model_fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="family_id is not writable through PUT /laptops/{id}; use POST /families/laptops/move",
+        )
+
     update_data = laptop_update.model_dump(exclude_unset=True)
     price_changed = "price_rm" in update_data and update_data["price_rm"] != db_laptop.price_rm
 
@@ -274,8 +287,10 @@ def delete_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
     """
     Hard-delete a laptop, refusing (409) while anything a user or the review
     pipeline owns still points at it. To retire a listing from search and the
-    storefront without destroying that data, PUT `status: "inactive"` instead —
-    that is what the status field is for.
+    storefront without destroying that data, PUT `status: "suspended"` instead —
+    that is what the status field is for. NOT `inactive`, which is ADR-0009's
+    awaiting-a-price work queue: sending a discontinued machine there files it
+    in the list of machines to go find a price for.
     """
     db_laptop = session.get(Laptop, laptop_id)
     if not db_laptop:
@@ -292,7 +307,7 @@ def delete_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Cannot delete laptop: still referenced by {', '.join(blockers)}. "
-                "Set status to 'inactive' to retire it instead."
+                "Set status to 'suspended' to retire it instead."
             ),
         )
 
