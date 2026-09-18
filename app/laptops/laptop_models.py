@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pydantic import field_validator
 from sqlmodel import Relationship, SQLModel, Field
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, JSON, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
@@ -179,6 +179,26 @@ class Laptop(LaptopBase, table=True):
         back_populates="laptops",
         link_model=LaptopCategory
     )
+
+
+# A laptop with no price is not sellable, and `price_rm = 0` is the schema's
+# "price unknown" (see LaptopPriceHistory and the processor's upsert) -- so it
+# belongs in the awaiting-a-price work queue, which ADR-0009 says is `inactive`.
+# Done as a mapper event rather than at the four write sites (POST /laptops/,
+# PUT /laptops/{id}, and the processor's insert and update branches) because
+# every one of them ends in a flush of this class, and a guard per caller is a
+# guard the fifth caller will not have.
+#
+# One direction only, and never out of `suspended`: `suspended` is the retired
+# archive, and demoting it would file a discontinued machine in the list of
+# machines to go find a price for. Restoring a price does NOT re-activate --
+# that is an admin decision (an `inactive` row may be delisted for other
+# reasons), so status stays put until someone sets it.
+@event.listens_for(Laptop, "before_insert")
+@event.listens_for(Laptop, "before_update")
+def _deactivate_unpriced(_mapper, _connection, target: "Laptop") -> None:
+    if not target.price_rm and target.status == LaptopStatus.ACTIVE.value:
+        target.status = LaptopStatus.INACTIVE.value
 
 
 class LaptopRead(LaptopBase):
