@@ -25,6 +25,7 @@ from app.laptops.brand_model import LaptopBrand
 from app.users.auth import get_current_admin
 from .apple_scraper import crawl_apple_specs_links, scrape_official_website
 from .asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
+from .hp_scraper import crawl_hp_specs_links, scrape_hp_laptop_specs
 from .acer_scraper import (
     _parse_image_urls,
     crawl_acer_specs_links,
@@ -127,6 +128,10 @@ async def feed_crawler_queue(
         # from uploaded HTML (the store's WAF refuses automated requests)
         found_urls = await crawl_acer_specs_links(start_url, session, brand.id)
 
+    elif brand.name.lower() == "hp":
+        # Magento store, live-crawlable — walks the listing's ?p=N pages
+        found_urls = await crawl_hp_specs_links(start_url)
+
     else:
         raise HTTPException(
             status_code=400, detail=f"Currently, {brand.name} brand crawling is not supported."
@@ -195,6 +200,10 @@ async def scrape_url(
         variant_results = await scrape_acer_laptop_specs(
             request.url, request.brand_id, session
         )
+
+    elif brand.name.lower() == "hp":
+        # Returns list[dict] — always exactly one (one SKU per page)
+        variant_results = await scrape_hp_laptop_specs(request.url, request.brand_id)
 
     else:
         raise HTTPException(

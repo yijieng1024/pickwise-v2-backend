@@ -33,6 +33,7 @@ from app.laptops.brand_model import LaptopBrand
 from app.scraper.apple_scraper import scrape_official_website
 from app.scraper.asus_scraper import scrape_asus_laptop_specs
 from app.scraper.acer_scraper import scrape_acer_laptop_specs
+from app.scraper.hp_scraper import scrape_hp_laptop_specs
 from app.scraper.models import RawScrapLaptop, ScrapeStatus, ScrapeTarget
 
 # Brands whose pages are uploaded by an admin and read from `raw_product_htmls`
@@ -128,6 +129,9 @@ async def _dispatch_scraper(
     elif name == "acer":
         # Acer scraper returns list[dict] — always one (simple products)
         return await scrape_acer_laptop_specs(url, brand_id, session)
+    elif name == "hp":
+        # HP scraper returns list[dict] — always one (one SKU per page)
+        return await scrape_hp_laptop_specs(url, brand_id)
     else:
         raise ValueError(f"Bulk scraping is not supported for brand: {brand_name}")
 
