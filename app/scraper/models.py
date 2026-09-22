@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import uuid
 from sqlalchemy import Column, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 
 
 class ScrapeStatus:
@@ -57,7 +57,15 @@ class RawScrapLaptop(SQLModel, table=True):
     source_url: str = Field(unique=True, index=True)
     brand_id: uuid.UUID = Field(foreign_key="laptop_brands.id")
     raw_product_name: str
-    raw_prices: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    # Untyped JSONB, and every scraper writes `[{"price": "RM4,999.00"}]` —
+    # never bare strings. The old `List[str]` annotation was not enforced by
+    # the column, so the dicts stored fine and only surfaced at serialization
+    # time, as a PydanticSerializationUnexpectedValue warning per row on every
+    # GET /laptops/raw-scrap-laptops. `str` stays in the union because the
+    # column predates the current scrapers and older rows may hold either.
+    raw_prices: List[Union[str, Dict[str, Any]]] = Field(
+        default_factory=list, sa_column=Column(JSONB)
+    )
     image_urls: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
 
     raw_specs_dump: Dict[str, Any] = Field(
