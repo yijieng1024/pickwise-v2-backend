@@ -16,6 +16,7 @@ from app.processor.engine import (
     categorize_untagged_laptops,
     process_pending_laptops,
     process_raw_laptop_data,
+    PROCESSABLE_STATUSES,
 )
 from app.scraper.models import RawScrapLaptop
 from app.users.auth import get_current_admin
@@ -93,7 +94,7 @@ def process_all_pending_laptops(
     queued = len(
         session.exec(
             select(RawScrapLaptop.id)
-            .where(RawScrapLaptop.processing_status == "pending")
+            .where(RawScrapLaptop.processing_status.in_(PROCESSABLE_STATUSES))
             .limit(limit)
         ).all()
     )
@@ -118,6 +119,64 @@ def process_all_pending_laptops(
             f"Processing {queued} pending record(s) in the background."
             if queued
             else "No pending records found — the job will finish immediately."
+        ),
+    )
+
+
+@router.post(
+    "/retry-failed",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_failed_laptops(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_admin: User = Depends(get_current_admin),
+    limit: int = Query(
+        default=_DEFAULT_BATCH_LIMIT,
+        ge=1,
+        le=_MAX_BATCH_LIMIT,
+        description=f"Max failed records to retry in this run (default {_DEFAULT_BATCH_LIMIT}).",
+    ),
+) -> JobAccepted:
+    """
+    Re-run the AI extractor over `failed` records only.
+
+    `/process-pending` already picks failed rows back up, but it works through
+    the whole queue: with a large pending backlog the retries sit at the end of
+    a run that may be cancelled or cut short by the daily quota. This takes the
+    same job machinery and the same 202 envelope, scoped to the failures.
+    """
+    queued = len(
+        session.exec(
+            select(RawScrapLaptop.id)
+            .where(RawScrapLaptop.processing_status == "failed")
+            .limit(limit)
+        ).all()
+    )
+
+    job = create_job(
+        session,
+        job_type=JobType.PROCESS_PENDING,
+        total_count=queued,
+        params={"limit": limit, "statuses": ["failed"]},
+        created_by=current_admin.id,
+        seconds_per_item=_SECONDS_PER_ITEM,
+    )
+
+    def worker(work_session: Session, progress: JobProgress) -> dict:
+        return process_pending_laptops(
+            work_session, limit=limit, progress=progress, statuses=("failed",)
+        )
+
+    background_tasks.add_task(run_job, job.id, worker)
+
+    return job_accepted(
+        job,
+        message=(
+            f"Retrying {queued} failed record(s) in the background."
+            if queued
+            else "No failed records found — the job will finish immediately."
         ),
     )
 

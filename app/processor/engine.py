@@ -458,6 +458,12 @@ _CATEGORIZE_SYSTEM_PROMPT = """
 #
 # The limiter now lives on the LLM (as it does for Pico in agent/graph.py), so
 # every call is paced whatever calls it.
+# A `failed` record is retried on the next bulk run, same as the scraper's
+# `laptop_scrape_urls` queue: most failures are transient (429, truncated
+# page, a malformed LLM response), and without this the only way back in was
+# the single-record route, one id at a time.
+PROCESSABLE_STATUSES = ("pending", "failed")
+
 _RATE_LIMIT_KEYWORDS = ("429", "quota", "resource exhausted", "rate limit")
 _RETRY_WAIT_S = 65
 
@@ -492,7 +498,12 @@ def _bounded_json(payload, limit: int = _MAX_SPEC_CHARS) -> str:
     return blob[:limit] + _TRUNCATION_NOTE
 
 
-def process_pending_laptops(session: Session, limit: int = 100, progress=None) -> dict:
+def process_pending_laptops(
+    session: Session,
+    limit: int = 100,
+    progress=None,
+    statuses: tuple[str, ...] = PROCESSABLE_STATUSES,
+) -> dict:
     """
     Process pending `raw_scrap_laptops` rows through the LLM, one at a time.
 
@@ -504,10 +515,13 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
 
     On a 429 / quota error the record is retried once after a 65 s wait before
     being marked failed.
+
+    *statuses* narrows the queue — ``("failed",)`` is the retry-only run behind
+    `POST /processor/retry-failed`.
     """
     pending_records = session.exec(
         select(RawScrapLaptop)
-        .where(RawScrapLaptop.processing_status == "pending")
+        .where(RawScrapLaptop.processing_status.in_(statuses))
         .limit(limit)
     ).all()
 
@@ -580,7 +594,7 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
     pending_remaining = len(
         session.exec(
             select(RawScrapLaptop.id).where(
-                RawScrapLaptop.processing_status == "pending"
+                RawScrapLaptop.processing_status.in_(statuses)
             )
         ).all()
     )
