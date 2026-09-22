@@ -112,8 +112,9 @@ See `.env.example` and `app/config.py`:
 | `SECRET_KEY` | ✅ | JWT signing key |
 | `ALGORITHM` | — | JWT algorithm (default `HS256`) |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | — | Access-token TTL (default 10080 = 7 days) |
-| `SMTP_USERNAME` / `SMTP_PASSWORD` | ✅ | Gmail SMTP credentials for verification emails |
-| `SMTP_SERVER` / `SMTP_PORT` | — | Default `smtp.gmail.com:465` |
+| `BREVO_API_KEY` | ✅ | Brevo HTTP API key for transactional email (verification, password reset) |
+| `EMAIL_SENDER_ADDRESS` | — | From-address; must be a **verified sender** in Brevo (default `noreply@ngyijie.com`) |
+| `EMAIL_SENDER_NAME` | — | From-name (default `PickWise`) |
 | `FRONTEND_URL` / `BACKEND_URL` | — | Base URLs for links inside emails (password reset / verification) — default to `localhost` if unset |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | — | Connection-pool sizing (default 10 + 20) |
 | `DB_POOL_TIMEOUT` / `DB_POOL_RECYCLE` | — | Seconds waiting for a free connection (30) and idle-connection recycle age (1800) |
@@ -204,6 +205,7 @@ The harness calls the agent in-process with the exact production model and syste
 - **Logging:** `app/logger.py` sets up console + rotating file logs (`logs/app.log`); pipeline evaluation traces go to `logs/eval/pipeline_trace.jsonl`. File logging is best-effort — if `logs/` isn't writable (read-only container fs), it falls back to console instead of crashing startup.
 - **Standalone scripts:** every model module is importable on its own (deferred bottom-of-module imports resolve the `Laptop` ↔ `LaptopCustomization` ↔ `Category` string relationships), so scripts and tests need no import-order workaround. Keep it that way when adding a relationship whose target lives in another module.
 - **Connection pool:** never hold a pooled connection across slow non-database work. The chat endpoints take no `Depends(get_session)` — a session lives until the response completes, which for SSE means the last byte — and bracket their reads/writes in `session_scope()` instead. Pool size is configurable (`DB_POOL_SIZE` / `DB_MAX_OVERFLOW`).
-- **Email does not send from Render:** free instances block outbound SMTP ports, so verification/reset mail fails silently in production (registration still returns 201). Google Sign-In sets `is_verified` directly and is the working path until an HTTP-API mail provider is wired in.
+- **Email goes over Brevo's HTTP API, not SMTP:** Render's instances block outbound SMTP ports (25/465/587), which used to make verification/reset mail fail silently in production while registration still returned 201. `app/users/email.py` now POSTs to `api.brevo.com` on 443. The sender address must be a *verified sender* in Brevo, not just an address on the authenticated domain.
+- **Auth flows are enumeration-resistant and rate-limited:** the email-taking endpoints return one generic response whatever happened, reset links are single-use (an HMAC of the current password hash is baked into the token), and `app/common/http_rate_limit.py` caps each endpoint per IP *and* per account/address. See CLAUDE.md for the limits and the `X-Forwarded-For` caveat.
 
 For deeper architectural details (PickScore factor logic, scraping status flow, key design decisions), see [CLAUDE.md](CLAUDE.md). Decisions with a rationale worth keeping are recorded as ADRs in [`docs/adr/`](docs/adr) — PickScore positioning, percentile normalization, the two-kinds-of-hidden status column, benchmark resolution, review linkage, and non-English review coverage.

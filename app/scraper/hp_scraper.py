@@ -45,12 +45,20 @@ _SPECS_JS = """
 
 # The gallery placeholder holds only this product's photos — the page also
 # carries accessory/recommendation images, which must not be picked up.
-_IMAGES_JS = """
-() => [...document.querySelectorAll(
-        '[data-gallery-role="gallery-placeholder"] img, .fotorama__img, .fotorama__stage img')]
-    .map(i => i.src || i.getAttribute('data-src') || '')
-    .filter(u => u.includes('/catalog/product/'))
-    .map(u => u.split('?')[0])
+# The same photo is served from several `/cache/<hash>/` dirs (one per size
+# preset), so collapse on the path after the hash to dedupe.
+_IMAGES_JS = r"""
+() => {
+    const seen = new Map();
+    for (const i of document.querySelectorAll(
+            '[data-gallery-role="gallery-placeholder"] img, .fotorama__img, .fotorama__stage img')) {
+        const u = (i.src || i.getAttribute('data-src') || '').split('?')[0];
+        if (!u.includes('/catalog/product/')) continue;
+        const key = u.replace(/\/cache\/[0-9a-f]{32}\//, '/');
+        if (!seen.has(key)) seen.set(key, u);
+    }
+    return [...seen.values()];
+}
 """
 
 _PRODUCT_JS = """
@@ -141,6 +149,16 @@ async def _async_scrape_hp_laptop_specs(url: str) -> list[dict]:
                 price_val = 0.0
             specs["Price"] = f"RM{price_val:,.2f}" if price_val > 0 else "N/A"
 
+            # Fotorama renders one placeholder <img> immediately and fills
+            # the rest of the gallery seconds later, so reading right after
+            # the specs yields exactly one photo. Wait for it to settle.
+            try:
+                await page.wait_for_function(
+                    "() => document.querySelectorAll('.fotorama__img').length > 1",
+                    timeout=15000,
+                )
+            except Exception:  # noqa: BLE001 - some SKUs genuinely have one photo
+                pass
             image_urls: list[str] = await page.evaluate(_IMAGES_JS)
 
             await browser.close()

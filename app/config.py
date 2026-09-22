@@ -12,15 +12,18 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 10080
     email_verification_token_expire_hours: int = 1
 
-    # SMTP Configuration.
+    # Transactional email — Brevo HTTP API (api.brevo.com/v3/smtp/email).
     #
-    # Note: this works locally but NOT on Render's free instances, which
-    # block outbound traffic to SMTP ports (25/465/587) — sends there fail
-    # with "[Errno 101] Network is unreachable".
-    smtp_server: str = "smtp.gmail.com"
-    smtp_port: int = 465
-    smtp_username: str
-    smtp_password: str
+    # HTTP, not SMTP, on purpose: Render's free instances block outbound
+    # traffic to ports 25/465/587, so the previous smtplib path failed there
+    # with "[Errno 101] Network is unreachable" while registration still
+    # returned 201. Port 443 is not blocked.
+    #
+    # The sender address must be a *verified sender* in Brevo, not merely an
+    # address on the authenticated domain — Brevo rejects the send otherwise.
+    brevo_api_key: str
+    email_sender_address: str = "noreply@ngyijie.com"
+    email_sender_name: str = "PickWise"
 
     # Public base URLs used to build links inside emails.
     frontend_url: str = "http://localhost:3000"

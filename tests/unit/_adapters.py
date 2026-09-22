@@ -478,3 +478,58 @@ def progress_seeing_status(status: str) -> JobProgress:
     progress = JobProgress(uuid.uuid4())
     progress._status = status
     return progress
+
+
+# --------------------------------------------------------------------------
+# Auth email + reset tokens - app/users/email.py, app/users/auth.py
+# --------------------------------------------------------------------------
+# These two are exposed as MODULES rather than wrapped call-by-call, and the
+# reason is specific: both read `settings` at call time (a secret the unit tier
+# does not have) and `email` calls `httpx.post`. The tests have to replace
+# those names inside the module, which needs the module object. Everything
+# else they touch is wrapped below, so a signature change still lands here.
+from app.users import auth as _users_auth  # noqa: E402
+from app.users import email as _users_email  # noqa: E402
+
+
+def email_module():
+    """app/users/email.py, for monkeypatching `settings` and `httpx`."""
+    return _users_email
+
+
+def auth_module():
+    """app/users/auth.py, for monkeypatching `settings`."""
+    return _users_auth
+
+
+def password_reset_fingerprint(password_hash):
+    """The HMAC of the account's current password hash that makes a reset link
+    single-use. Accepts None (Google-only accounts store no hash)."""
+    return _users_auth.password_reset_fingerprint(password_hash)
+
+
+def create_password_reset_token(email: str, password_hash) -> str:
+    return _users_auth.create_password_reset_token(email, password_hash)
+
+
+def verify_password_reset_token(token: str):
+    """REAL: returns `(email, fingerprint)` or None -- not the bare email it
+    returned before the single-use change."""
+    return _users_auth.verify_password_reset_token(token)
+
+
+def create_email_verification_token(email: str) -> str:
+    return _users_auth.create_email_verification_token(email)
+
+
+# --------------------------------------------------------------------------
+# Auth-endpoint throttling - app/common/http_rate_limit.py
+# --------------------------------------------------------------------------
+# NOT app/common/rate_limit.py, which paces outbound Gemini calls. This one
+# throttles inbound HTTP. Exposed as a module too: the window tests replace
+# `time.monotonic` inside it.
+from app.common import http_rate_limit as _http_rate_limit  # noqa: E402
+
+
+def rate_limit_module():
+    return _http_rate_limit

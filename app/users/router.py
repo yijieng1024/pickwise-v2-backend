@@ -1,14 +1,16 @@
+import hmac
 import re
 import requests
 from datetime import timedelta, datetime, timezone
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from sqlmodel import Session, select
 
+from app.common.http_rate_limit import check_quota, client_ip, rate_limit
 from app.database import get_session
 from app.config import settings
 from app.users.models import User, UserRead, Token, LaptopUserPreference
@@ -16,6 +18,7 @@ from app.users.avatar_model import UserAvatar
 from app.users.auth import (
     create_password_reset_token,
     get_password_hash,
+    password_reset_fingerprint,
     verify_password,
     create_access_token,
     create_email_verification_token,
@@ -23,11 +26,79 @@ from app.users.auth import (
     verify_password_reset_token
 )
 
-from app.users.email import send_password_reset_email, send_verification_email
-from app.users.schema import ForgotPasswordRequest, GoogleLoginRequest, ResetPasswordRequest, UserPreferences, UserRegisterRequest, UserProfile
+from app.users.email import (
+    send_google_account_notice_email,
+    send_password_reset_email,
+    send_verification_email,
+)
+from app.users.schema import ForgotPasswordRequest, GoogleLoginRequest, ResendVerificationRequest, ResetPasswordRequest, UserPreferences, UserRegisterRequest, UserProfile
 from app.users.auth import get_current_user
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+# One response for every outcome of an endpoint that takes an email address:
+# sent, already verified, no such account, Google account. Any variation is an
+# oracle for "is this address registered here".
+GENERIC_EMAIL_RESPONSE = {
+    "message": "If that email is registered, we've sent it a link. Please check your inbox."
+}
+
+# Both a bad/expired token and a token whose fingerprint no longer matches
+# come back as this. "User not found" used to be a 404 here, which told an
+# attacker that a guessed address was NOT registered.
+INVALID_RESET_MESSAGE = "Invalid or expired password reset link."
+
+# Sending endpoints are capped per address as well as per IP: the per-IP limit
+# alone does not protect the Brevo quota (300 emails/day) against a
+# distributed caller, and the daily cap is what bounds the worst case.
+_EMAIL_COOLDOWN_SECONDS = 60
+_EMAIL_DAILY_LIMIT = 5
+_EMAIL_DAY_SECONDS = 86_400
+
+
+# ===========================================================================
+# TEMPORARY DIAGNOSTIC — REMOVE AFTER THE X-FORWARDED-FOR SHAPE IS CONFIRMED
+# ===========================================================================
+# Why it exists: `client_ip()` currently takes the FIRST X-Forwarded-For
+# entry, which is whatever the CLIENT sent. A caller can therefore forge a
+# fresh IP per request and walk straight past every per-IP limit, including
+# the ones protecting the Brevo 300/day quota. The fix is to count from the
+# RIGHT — the rightmost entries are appended by infrastructure we trust —
+# but the correct offset depends on how many proxies Render puts in front of
+# this app, and that is an empirical question, not a guessable one.
+#
+# So: deploy, sign in a few times, read the log, THEN change the logic.
+# Logged at WARNING so it survives any sane production log level and greps
+# cleanly. It prints IP addresses, so it must not outlive the measurement.
+def _log_forwarding_headers(request: Request, endpoint: str) -> None:
+    forwarded = request.headers.get("x-forwarded-for")
+    entries = [p.strip() for p in forwarded.split(",")] if forwarded else []
+    logger.warning(
+        "XFF-PROBE endpoint=%s socket=%s x-forwarded-for=%r entries=%d parsed=%r "
+        "x-real-ip=%r forwarded=%r current_client_ip=%s",
+        endpoint,
+        request.client.host if request.client else None,
+        forwarded,
+        len(entries),
+        entries,
+        request.headers.get("x-real-ip"),
+        request.headers.get("forwarded"),
+        client_ip(request),
+    )
+
+
+# ===========================================================================
+
+
+def _may_send_to(bucket: str, email: str) -> bool:
+    """Per-address cooldown + daily cap. Silent: the caller answers the same
+    either way, or the throttle itself becomes the enumeration oracle."""
+    if not check_quota(f"{bucket}:cooldown", email, 1, _EMAIL_COOLDOWN_SECONDS):
+        return False
+    return check_quota(f"{bucket}:daily", email, _EMAIL_DAILY_LIMIT, _EMAIL_DAY_SECONDS)
 
 def _ensure_account_active(user: User) -> None:
     """Shared status gate for every login path (password + Google)."""
@@ -42,10 +113,14 @@ def _ensure_account_active(user: User) -> None:
             detail="Your account is inactive.",
         )
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit("register", 5, 3600))],
+)
 def register(
     request: UserRegisterRequest,
-    background_tasks: BackgroundTasks, 
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session)
 ):
      
@@ -78,14 +153,17 @@ def register(
 def verify_email(token: str, session: Session = Depends(get_session)):
     # decode token to get email
     email = verify_email_token(token)
+    invalid = HTTPException(status_code=400, detail="Invalid or expired verification token")
     if not email:
-        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
-    
-    # find user by email
+        raise invalid
+
+    # find user by email. A missing account is reported as an invalid token,
+    # not a 404 — the address inside a signed token is not a secret, but
+    # answering differently here is still a free membership check.
     user = session.exec(select(User).where(User.email == email)).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
+        raise invalid
+
     if user.is_verified:
         return {"message": "Email is already verified"}
     
@@ -132,8 +210,32 @@ def update_my_profile(
     
     return user
 
-@router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
+@router.post(
+    "/login",
+    response_model=Token,
+    dependencies=[Depends(rate_limit("login", 10, 300))],
+)
+def login(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    session: Session = Depends(get_session),
+):
+    _log_forwarding_headers(request, "login")
+
+    bad_credentials = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Incorrect username/email or password",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    # Per-account limit, on top of the per-IP one above. The IP limit is the
+    # weaker of the two here: an attacker spreading a credential-stuffing run
+    # across many addresses controls their own IP but not which account they
+    # are attacking. Deliberately the same 401 as a wrong password — a 429
+    # would confirm the account exists and is worth queuing for later.
+    if not check_quota("login:account", form_data.username, 10, 300):
+        raise bad_credentials
+
     # search user by username or email
     statement = select(User).where(
         (User.username == form_data.username) | (User.email == form_data.username)
@@ -142,21 +244,23 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = D
 
     # verify password (social-login accounts have no local password)
     if not user or not user.password or not verify_password(form_data.password, user.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username/email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise bad_credentials
 
     _ensure_account_active(user)
 
     # check if email is verified
     if not user.is_verified:
+        # Structured detail so the frontend can branch on `code` and offer the
+        # resend button, instead of pattern-matching English prose that any
+        # copy edit would silently break.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email before logging in."
+            detail={
+                "code": "email_unverified",
+                "message": "Please verify your email before logging in.",
+            },
         )
-    
+
     # generate JWT token
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = create_access_token(
@@ -211,7 +315,13 @@ def _import_google_avatar(session: Session, user: User, picture_url: Optional[st
         session.rollback()  # avatar import is cosmetic — never block login
 
 
-@router.post("/google", response_model=Token)
+@router.post(
+    "/google",
+    response_model=Token,
+    # Every call verifies the ID token against Google's endpoint, so this is
+    # an outbound request we pay for on someone else's schedule.
+    dependencies=[Depends(rate_limit("google", 20, 300))],
+)
 def google_login(request: GoogleLoginRequest, session: Session = Depends(get_session)):
     """
     Sign in with Google. The frontend obtains an ID token via Google Identity
@@ -460,47 +570,110 @@ def delete_my_avatar(
     return None
 
 
-@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(rate_limit("forgot_password", 10, 3600))],
+)
 def forgot_password(
-    request: ForgotPasswordRequest, 
+    request: ForgotPasswordRequest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session)
 ):
     user = session.exec(select(User).where(User.email == request.email)).first()
 
-    if user:
-        reset_token = create_password_reset_token(email=user.email)
+    if user and _may_send_to("forgot_password", request.email):
+        if user.password is None:
+            # Google-only account: there is no password to reset. Gated on the
+            # hash being absent rather than on auth_provider, because a Google
+            # login that linked to an existing local account keeps its
+            # password and must still be resettable.
+            background_tasks.add_task(
+                send_google_account_notice_email,
+                email_to=user.email,
+            )
+        else:
+            reset_token = create_password_reset_token(
+                email=user.email, password_hash=user.password
+            )
+            background_tasks.add_task(
+                send_password_reset_email,
+                email_to=user.email,
+                token=reset_token
+            )
 
+    return GENERIC_EMAIL_RESPONSE
+
+
+@router.post(
+    "/resend-verification",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(rate_limit("resend_verification", 10, 3600))],
+)
+def resend_verification(
+    request: ResendVerificationRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """
+    Re-send the verification link. Login is blocked until the address is
+    confirmed, so without this a user whose first email was lost, expired or
+    never sent (which is every registration made while SMTP was blocked on
+    Render) has no way back into their own account.
+
+    Answers identically whether the address is unknown, already verified, a
+    Google account, or genuinely re-sent.
+    """
+    user = session.exec(select(User).where(User.email == request.email)).first()
+
+    if (
+        user
+        and not user.is_verified
+        and user.password is not None  # Google accounts are verified on create
+        and _may_send_to("resend_verification", request.email)
+    ):
         background_tasks.add_task(
-            send_password_reset_email, 
-            email_to=user.email, 
-            token=reset_token
+            send_verification_email,
+            user.email,
+            create_email_verification_token(user.email),
         )
-        
-    return {"message": "If that email exists in our system, a reset link has been sent."}
 
-@router.post("/reset-password", status_code=status.HTTP_200_OK)
+    return GENERIC_EMAIL_RESPONSE
+
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(rate_limit("reset_password", 10, 3600))],
+)
 def reset_password(
     request: ResetPasswordRequest,
     session: Session = Depends(get_session)
 ):
-    
-    email = verify_password_reset_token(request.token)
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired password reset token."
-        )
+    invalid = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=INVALID_RESET_MESSAGE,
+    )
+
+    decoded = verify_password_reset_token(request.token)
+    if not decoded:
+        raise invalid
+    email, fingerprint = decoded
 
     user = session.exec(select(User).where(User.email == email)).first()
+    # Same error as a bad token, not a 404: the old 404 "User not found" let
+    # anyone test whether an address was registered.
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found."
-        )
+        raise invalid
+
+    # Single-use enforcement. The fingerprint is bound to the password hash
+    # the token was minted against, so the first successful reset (or any
+    # other password change) invalidates every outstanding link.
+    if not hmac.compare_digest(fingerprint, password_reset_fingerprint(user.password)):
+        raise invalid
 
     user.password = get_password_hash(request.new_password)
     session.add(user)
     session.commit()
-    
+
     return {"message": "Password has been successfully reset."}

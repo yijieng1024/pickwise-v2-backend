@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import jwt
@@ -111,22 +113,62 @@ def get_current_user_detached(token: str = Depends(oauth2_scheme)) -> User:
     with session_scope(expire_on_commit=False) as session:
         return _resolve_user(token, session)
 
-def create_password_reset_token(email: str) -> str:
+def password_reset_fingerprint(password_hash: Optional[str]) -> str:
+    """
+    A short HMAC of the account's CURRENT password hash, embedded in the reset
+    token and re-checked when the token is spent.
+
+    This is what makes a reset link single-use with no table and no migration:
+    a successful reset rewrites `users.password`, bcrypt salts every hash
+    independently (so even re-setting the identical password produces a
+    different digest), and every link issued against the old digest therefore
+    stops verifying. It also expires outstanding links whenever the password
+    changes by any other route.
+
+    HMAC rather than the hash itself, because this value travels in an email
+    and sits in a browser URL bar -- the bcrypt digest must not.
+    """
+    return hmac.new(
+        settings.secret_key.encode(),
+        (password_hash or "").encode(),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+
+
+def create_password_reset_token(email: str, password_hash: Optional[str]) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    to_encode = {"sub": email, "exp": expire, "scope": "password_reset"}
+    to_encode = {
+        "sub": email,
+        "exp": expire,
+        "scope": "password_reset",
+        "fp": password_reset_fingerprint(password_hash),
+    }
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
-def verify_password_reset_token(token: str) -> str | None:
+def verify_password_reset_token(token: str) -> tuple[str, str] | None:
+    """Return `(email, fingerprint)`, or None if the token is unusable.
+
+    The caller still has to compare the fingerprint against the account's
+    current password hash -- this function only proves the token is a
+    well-formed, unexpired, correctly-scoped reset token.
+    """
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         if payload.get("scope") != "password_reset":
             return None
-        return payload.get("sub")
+        email = payload.get("sub")
+        fingerprint = payload.get("fp")
+        # A token minted before `fp` existed cannot be proven single-use, so
+        # it is rejected rather than grandfathered. The blast radius is one
+        # 15-minute window of outstanding links at deploy time.
+        if not email or not fingerprint:
+            return None
+        return email, fingerprint
     except jwt.ExpiredSignatureError:
         return None
     except jwt.InvalidTokenError:
         return None
-    
+
 def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role != "admin":
         raise HTTPException(

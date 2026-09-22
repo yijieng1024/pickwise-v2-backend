@@ -47,7 +47,9 @@ def _filter_variant_images(
         if sizes_in_url and size_token and size_token not in sizes_in_url:
             continue
         filtered.append(url)
-    return filtered
+    # Vendors reuse a photo across sizes (HP ships the 14" file on the 16"
+    # OmniBook 5), so a size filter that drops everything is wrong, not strict.
+    return filtered or [u for u in image_urls or [] if "/meta/" not in u.lower() and "_og." not in u.lower()]
 
 
 def _resolve_category(
