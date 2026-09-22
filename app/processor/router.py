@@ -26,9 +26,11 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/processor", tags=["Processor"])
 
-# Gemma 4 31B free-tier limits (gemma-4-31b-it):
-#  16K TPM  →  the binding limit; the engine's rate limiter paces against it
-#  1500 RPD →  default batch of 100 per run; hard cap at 1500
+# Gemma 4 31B account limits (aistudio.google.com/rate-limit, 2026-09-22):
+#  16K TPM   →  the binding limit; the engine's rate limiter paces against it
+#  30 RPM    →  never reached: TPM allows ~4.5 calls/min at this prompt size
+#  14.4K RPD →  far above _MAX_BATCH_LIMIT, which is a wall-clock choice now
+#               rather than a quota one (1500 records is ~5.5 hours)
 #
 # Derived from the same limiter the engine actually uses rather than restated,
 # so the ETA in the 202 cannot drift away from the pacing it describes. It was

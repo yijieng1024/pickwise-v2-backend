@@ -39,6 +39,7 @@ from app.agent.monitoring_models import AgentRunLog
 # all of that module's tables, so one import per module is enough.
 from app.saved.models import SavedLaptop
 from app.common.job_model import BackgroundJob
+from app.common.app_settings import AppSetting
 from app.laptops.pickscore_general import LaptopPickScore
 from app.users.avatar_model import UserAvatar
 

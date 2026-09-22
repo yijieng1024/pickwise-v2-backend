@@ -542,6 +542,14 @@ def rate_limit_module():
 # regex, a logger and the Gemma rate limiter (plain arithmetic). `settings` is
 # read inside the functions, never at import.
 from app.processor.engine import _filter_variant_images as _filter_images  # noqa: E402
+from app.processor.engine import (  # noqa: E402
+    MODEL_OPTIONS as _model_options,
+    model_chain as _model_chain,
+    resolve_extraction_model as _resolve_model,
+    _invoke_with_fallback as _invoke_fallback,
+    _is_overloaded as _overloaded,
+    _retry_wait_for as _retry_wait,
+)
 
 
 def filter_variant_images(urls, display_size_inch):
@@ -550,3 +558,40 @@ def filter_variant_images(urls, display_size_inch):
     would empty it -- a vendor that ships the 14" photo on the 16" SKU must not
     end up with no images at all."""
     return _filter_images(urls, display_size_inch)
+
+
+# --------------------------------------------------------------------------
+# Transient-failure handling - app/processor/engine.py
+# --------------------------------------------------------------------------
+def is_overloaded(message):
+    """True when the provider said the MODEL is busy ("high demand", 503), as
+    opposed to the account being out of quota."""
+    return _overloaded(message)
+
+
+def retry_wait_for(message):
+    """Seconds to wait before one retry, or None when the error is not
+    transient and the record should be marked failed."""
+    return _retry_wait(message)
+
+
+def model_options():
+    """The selectable extraction models, each with its account rate limits."""
+    return _model_options
+
+
+def resolve_extraction_model(session):
+    """The admin-chosen extraction model, falling back to the code default when
+    unset or no longer allow-listed."""
+    return _resolve_model(session)
+
+
+def model_chain(primary):
+    """The chosen model, then the others as overloaded-model cover."""
+    return _model_chain(primary)
+
+
+def invoke_with_fallback(make_chain, payload, models):
+    """Runs the chain against each model in turn, moving on only for an
+    overloaded model. Any other error raises from the first one."""
+    return _invoke_fallback(make_chain, payload, models)

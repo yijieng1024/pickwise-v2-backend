@@ -28,6 +28,7 @@ from app.taxonomy.category_router import router as category_router
 from app.users.questionnaire_router import router as questionnaire_router
 from app.saved.router import router as saved_router
 from app.common.job_router import router as jobs_router
+from app.common.settings_router import router as app_settings_router
 from app.common.job_service import reset_stale_jobs
 
 setup_logging()
@@ -123,6 +124,7 @@ app.include_router(category_router, prefix=API_PREFIX)
 app.include_router(questionnaire_router, prefix=API_PREFIX)
 app.include_router(saved_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
+app.include_router(app_settings_router, prefix=API_PREFIX)
 
 
 @app.get("/")

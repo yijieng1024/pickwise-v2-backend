@@ -30,9 +30,13 @@ the worker count, the same caveat the agent carries.
 """
 from langchain_core.rate_limiters import InMemoryRateLimiter
 
-# Free-tier ceilings for gemma-4-31b-it.
+# Free-tier ceilings for gemma-4-31b-it, read from this account's dashboard
+# (https://aistudio.google.com/rate-limit, 2026-09-22). RPM was recorded here
+# as 15 — the published figure — while the account actually allows 30; TPM is
+# the limit that binds either way, and at 3.5K tokens per call the arithmetic
+# below lands on ~4.5 calls/min, nowhere near either ceiling.
 GEMMA_TPM = 16_000
-GEMMA_RPM = 15
+GEMMA_RPM = 30
 
 # Rough chars-per-token for English prose and JSON. Only used to turn a
 # character budget into a token estimate; being off by 20% is absorbed by

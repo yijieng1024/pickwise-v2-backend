@@ -2,12 +2,14 @@ from datetime import datetime
 import json
 import re
 import time
+from functools import lru_cache
 from typing import List, Optional, cast
 
 from sqlmodel import Session, select
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from app.common.app_settings import PROCESSOR_MODEL_KEY, get_setting
 from app.common.rate_limit import build_gemma_limiter
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -134,14 +136,9 @@ def process_raw_laptop_data(
 
     brand_name = brand.name if brand else "Unknown"
 
-    llm = ChatGoogleGenerativeAI(
-        model="gemma-4-31b-it",
-        temperature=0,
-        google_api_key=settings.gemini_api_key,
-        rate_limiter=_EXTRACTION_LIMITER,
-    )
-
-    structured_llm = llm.with_structured_output(ExtractedLaptopFamily)
+    # Read before the commit below releases the connection: everything after
+    # that point runs without a transaction.
+    chosen_model = resolve_extraction_model(session)
 
     system_prompt = """
         You are an expert hardware data engineer.
@@ -207,7 +204,16 @@ def process_raw_laptop_data(
         ]
     )
 
-    chain = prompt_template | structured_llm
+    # Built per model rather than once: on an overloaded model
+    # `_invoke_with_fallback` rebuilds the chain against the next one.
+    def make_chain(model: str):
+        llm = ChatGoogleGenerativeAI(
+            model=model,
+            temperature=0,
+            google_api_key=settings.gemini_api_key,
+            rate_limiter=_limiter_for(model, _EXTRACTION_TOKENS_PER_CALL),
+        )
+        return prompt_template | llm.with_structured_output(ExtractedLaptopFamily)
 
     # Category tagging: the model chooses from what's in the DB and may
     # propose new tags. The map includes inactive categories too, so a
@@ -246,7 +252,8 @@ def process_raw_laptop_data(
     try:
         extracted_data = cast(
             ExtractedLaptopFamily,
-            chain.invoke(
+            _invoke_with_fallback(
+                make_chain,
                 {
                     "brand_name": brand_name,
                     "product_name": _product_name,
@@ -254,7 +261,8 @@ def process_raw_laptop_data(
                     "raw_prices": _raw_prices_json,
                     "raw_specs": _raw_specs_json,
                     "available_categories": available_categories,
-                }
+                },
+                model_chain(chosen_model),
             ),
         )
 
@@ -464,8 +472,118 @@ _CATEGORIZE_SYSTEM_PROMPT = """
 # the single-record route, one id at a time.
 PROCESSABLE_STATUSES = ("pending", "failed")
 
+# Two transient failure families, told apart only so the wait matches the
+# cause. Quota needs the minute window to roll over; an overloaded model
+# ("This model is currently experiencing high demand", HTTP 503) usually
+# clears in seconds, and waiting 65 s for it just burns the batch's clock.
+# Anything not listed here is treated as a real failure — the record is marked
+# `failed` and picked up by the next run or /processor/retry-failed.
 _RATE_LIMIT_KEYWORDS = ("429", "quota", "resource exhausted", "rate limit")
+_OVERLOADED_KEYWORDS = ("503", "overloaded", "high demand", "unavailable", "try again later")
 _RETRY_WAIT_S = 65
+_OVERLOADED_WAIT_S = 20
+
+# Extraction model, and who covers for it when Google answers "this model is
+# currently experiencing high demand". Overload is per-model and usually
+# clears in seconds, so a second model is a faster answer than a sleep — and
+# unlike quota, nothing is gained by waiting on the one that is busy.
+#
+# A model is only selectable together with its free-tier budget: the limiter
+# paces against TPM/RPM, so a model picked from a dropdown that did not carry
+# its own numbers would be throttled against another model's budget — too slow
+# at best, a 429 storm at worst. Hence an allow-list, not a free-text setting.
+# The admin UI renders exactly these, and the PUT rejects anything else.
+# Read from this account's dashboard (https://aistudio.google.com/rate-limit,
+# 2026-09-22), not from the docs — Google no longer publishes a free-tier
+# table, and the per-account numbers are what actually bind.
+#
+# RPD IS THE FIGURE THAT DECIDES THIS LIST, not RPM or TPM. Every Gemini
+# *flash* model is capped at 20 requests per day on this account: a 100-record
+# batch would die after 20, so they are deliberately NOT offered — a dropdown
+# entry that cannot finish a normal run is a trap, not a choice. The Gemma
+# pair carries 14,400/day; flash-lite 500.
+#
+# `rpd` is advisory here: the limiter paces TPM/RPM only, and nothing enforces
+# a daily count. It is surfaced so the admin UI can say how large a run the
+# model can actually finish.
+# ponytail: no RPD enforcement — add a counter only if a 500/day model
+# becomes the one doing the daily catalog runs.
+MODEL_OPTIONS: dict[str, dict[str, int]] = {
+    "gemma-4-31b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
+    "gemma-4-26b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
+    "gemini-3.5-flash-lite": {"tpm": 250_000, "rpm": 15, "rpd": 500},
+    "gemini-3.1-flash-lite": {"tpm": 250_000, "rpm": 15, "rpd": 500},
+}
+
+DEFAULT_EXTRACTION_MODEL = "gemma-4-31b-it"
+# Who covers when the chosen model answers "this model is currently
+# experiencing high demand". Its sibling Gemma first: same family, same
+# budget, same prompt behaviour, so a batch that switches mid-run stays
+# consistent. Flash-lite after that — 500/day still finishes most runs, but it
+# is the weakest at structured extraction, and a variant the model gets wrong
+# is worse than a slow one.
+_EXTRACTION_FALLBACKS = ("gemma-4-26b-it", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
+
+
+def resolve_extraction_model(session) -> str:
+    """
+    The admin-chosen extraction model, or the default.
+
+    An unknown value (allow-list shrank since it was set) falls back to the
+    default rather than being sent to the API — the DB row outlives any deploy
+    that removes a model.
+    """
+    chosen = get_setting(session, PROCESSOR_MODEL_KEY)
+    if chosen in MODEL_OPTIONS:
+        return cast(str, chosen)
+    if chosen:
+        logger.warning(
+            "Ignoring unknown processor model %r from app_settings; using %s.",
+            chosen,
+            DEFAULT_EXTRACTION_MODEL,
+        )
+    return DEFAULT_EXTRACTION_MODEL
+
+
+def model_chain(primary: str) -> tuple[str, ...]:
+    """The chosen model first, then the other options as overload cover."""
+    return (primary, *(m for m in _EXTRACTION_FALLBACKS if m != primary))
+
+
+def _is_overloaded(message: str) -> bool:
+    return any(kw in (message or "").lower() for kw in _OVERLOADED_KEYWORDS)
+
+
+def _retry_wait_for(message: str) -> Optional[int]:
+    """Seconds to wait before one retry, or None if the error is not transient."""
+    msg = (message or "").lower()
+    if any(kw in msg for kw in _RATE_LIMIT_KEYWORDS):
+        return _RETRY_WAIT_S
+    if _is_overloaded(msg):
+        return _OVERLOADED_WAIT_S
+    return None
+
+
+def _invoke_with_fallback(make_chain, payload, models: tuple[str, ...]):
+    """
+    Invoke `make_chain(model)` against each model in turn, moving on ONLY when
+    the failure is an overloaded model.
+
+    Every other error — a quota 429, a malformed response, a bad key — raises
+    from the first model. Those are not fixed by asking a different one, and
+    silently re-running a failing extraction across three models would turn one
+    error into three, on the same quota.
+    """
+    for i, model in enumerate(models):
+        try:
+            return make_chain(model).invoke(payload)
+        except Exception as e:
+            if i == len(models) - 1 or not _is_overloaded(str(e)):
+                raise
+            logger.warning(
+                "Model %s is overloaded; retrying extraction on %s.", model, models[i + 1]
+            )
+    raise RuntimeError("no models configured")  # unreachable: models is never empty
 
 # Bound on the scraped spec blob we send. A request-based limiter can only
 # honour a token budget if calls have a known ceiling, and one unbounded record
@@ -483,6 +601,23 @@ _TRUNCATION_NOTE = "\n…[truncated: specs beyond this point were not sent to th
 # the limiter cannot see token counts (see app/common/rate_limit.py).
 _EXTRACTION_TOKENS_PER_CALL = 3_500
 _EXTRACTION_LIMITER = build_gemma_limiter(tokens_per_call=_EXTRACTION_TOKENS_PER_CALL)
+
+
+@lru_cache(maxsize=None)
+def _limiter_for(model: str, tokens_per_call: int):
+    """
+    One limiter per (model, call size), paced against that model's own budget.
+
+    Cached because the bucket IS the state: rebuilding it per call would reset
+    the credit and defeat the pacing entirely. An unknown model gets Gemma's
+    numbers — the tightest of the set, so the error is on the safe side.
+    """
+    limits = MODEL_OPTIONS.get(model, MODEL_OPTIONS[DEFAULT_EXTRACTION_MODEL])
+    return build_gemma_limiter(
+        tokens_per_call=tokens_per_call,
+        tpm_budget=limits["tpm"],
+        rpm_ceiling=limits["rpm"],
+    )
 
 # Categorisation sends a short spec summary plus the category list, so its
 # calls are much smaller and it is the RPM ceiling that binds there.
@@ -551,11 +686,12 @@ def process_pending_laptops(
         res = process_raw_laptop_data(str(record.id), session)
         requests_made += 1
 
-        # On rate-limit error: wait and retry once
+        # On a transient error (quota, or the model being overloaded): wait
+        # and retry once.
         if res.get("status") == "error":
-            error_msg = (res.get("message") or "").lower()
-            if any(kw in error_msg for kw in _RATE_LIMIT_KEYWORDS):
-                time.sleep(_RETRY_WAIT_S)
+            wait_s = _retry_wait_for(res.get("message") or "")
+            if wait_s is not None:
+                time.sleep(wait_s)
                 res = process_raw_laptop_data(str(record.id), session)
                 requests_made += 1
 
@@ -658,13 +794,10 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
         c.name.strip().lower(): c for c in all_categories
     }
 
-    llm = ChatGoogleGenerativeAI(
-        model="gemma-4-31b-it",
-        temperature=0,
-        google_api_key=settings.gemini_api_key,
-        rate_limiter=_CATEGORIZE_LIMITER,
-    )
-    structured_llm = llm.with_structured_output(ExtractedLaptopCategories)
+    # Once per run, not per laptop: a model change mid-run would mean two
+    # models tagging one batch, and the run is minutes long at most.
+    chosen_model = resolve_extraction_model(session)
+
     prompt_template = ChatPromptTemplate.from_messages(
         [
             ("system", _CATEGORIZE_SYSTEM_PROMPT),
@@ -682,7 +815,15 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
             ),
         ]
     )
-    chain = prompt_template | structured_llm
+    # Same overloaded-model fallback as extraction, on its own limiter.
+    def make_chain(model: str):
+        llm = ChatGoogleGenerativeAI(
+            model=model,
+            temperature=0,
+            google_api_key=settings.gemini_api_key,
+            rate_limiter=_limiter_for(model, _CATEGORIZE_TOKENS_PER_CALL),
+        )
+        return prompt_template | llm.with_structured_output(ExtractedLaptopCategories)
 
     tagged = 0
     links_added = 0
@@ -713,11 +854,13 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
             session.commit()
             result = cast(
                 ExtractedLaptopCategories,
-                chain.invoke(
+                _invoke_with_fallback(
+                    make_chain,
                     {
                         "available_categories": available_categories,
                         "laptop_specs": spec_text,
-                    }
+                    },
+                    model_chain(chosen_model),
                 ),
             )
             added = _sync_laptop_categories(
