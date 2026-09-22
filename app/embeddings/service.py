@@ -146,30 +146,53 @@ def generate_all_laptop_embeddings(
     succeeded, failed = 0, 0
     errors = []
 
-    for laptop in laptops:
+    # Build every prompt string BEFORE the first API call, then release the
+    # connection. Two reasons, one bug each:
+    #
+    # Pool: embed_text is a Gemini call plus a 0.3s courtesy sleep, and
+    # upsert_laptop_embedding commits per laptop. Building the text inside the
+    # loop therefore re-opened a transaction on each pass and held the
+    # connection across the API call -- idle for all of it.
+    #
+    # N+1: that commit also expires every `laptop`, so the next iteration's
+    # attribute access silently re-fetched the row one at a time, which is the
+    # very thing the brand_map pre-fetch above exists to avoid.
+    work = [
+        (
+            laptop.id,
+            f"{brand_map.get(laptop.brand_id, '')} {laptop.product_name}".strip(),
+            build_laptop_embedding_text(
+                laptop, brand_map.get(laptop.brand_id, "Unknown")
+            ),
+        )
+        for laptop in laptops
+    ]
+    session.commit()
+
+    emb_cancelled = False
+    for laptop_id, label, text in work:
         try:
-            brand_name = brand_map.get(laptop.brand_id, "Unknown")
-            text = build_laptop_embedding_text(laptop, brand_name)
             vector = embed_text(text)
-            upsert_laptop_embedding(session, laptop.id, vector)
+            upsert_laptop_embedding(session, laptop_id, vector)
             succeeded += 1
             if progress is not None:
                 progress.advance(succeeded=True)
             time.sleep(0.3)  # respect Gemini rate limits
         except Exception as e:
             failed += 1
-            errors.append({"laptop_id": str(laptop.id), "error": str(e)})
+            errors.append({"laptop_id": str(laptop_id), "error": str(e)})
             if progress is not None:
                 # `item` is what the jobs UI shows beside the error, so name the
                 # laptop rather than its uuid.
-                progress.advance(
-                    succeeded=False,
-                    item=f"{brand_map.get(laptop.brand_id, '')} {laptop.product_name}".strip(),
-                    error=str(e),
-                )
+                progress.advance(succeeded=False, item=label, error=str(e))
+
+        if progress is not None and progress.cancel_requested:
+            emb_cancelled = True
+            break
 
     return {
         "total": len(laptops),
+        "cancelled": emb_cancelled,
         "succeeded": succeeded,
         "failed": failed,
         "errors": errors,

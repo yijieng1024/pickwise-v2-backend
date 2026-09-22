@@ -442,3 +442,39 @@ def relaxation_steps() -> list:
     """The ordered relaxation plan: weight first, then budget. Brand is absent
     on purpose — it is never auto-relaxed."""
     return _relaxation._RELAXATION_STEPS
+
+
+# --------------------------------------------------------------------------
+# Background job cancellation - app/common/job_model.py, app/common/job_service.py
+# --------------------------------------------------------------------------
+from app.common.job_model import BackgroundJob, JobRead, JobStatus  # noqa: E402
+from app.common.job_service import JobProgress  # noqa: E402
+
+
+def job_status():
+    """The status vocabulary. CANCELLING is a request; CANCELLED is an outcome."""
+    return JobStatus
+
+
+def make_job(**kwargs) -> BackgroundJob:
+    """A BackgroundJob row, unsaved — nothing here touches a database."""
+    kwargs.setdefault("job_type", "processor.process_pending")
+    return BackgroundJob(**kwargs)
+
+
+def read_job(job: BackgroundJob) -> JobRead:
+    """The polling payload, including the derived progress_percentage."""
+    return JobRead.from_job(job)
+
+
+def progress_seeing_status(status: str) -> JobProgress:
+    """
+    A JobProgress whose last bookkeeping write saw *status* on the row.
+
+    `_status` is set inside `_update`, which needs a database. Setting it
+    directly is what lets the cancel flag be tested without one — the thing
+    under test is how a worker reads it, not how it got there.
+    """
+    progress = JobProgress(uuid.uuid4())
+    progress._status = status
+    return progress

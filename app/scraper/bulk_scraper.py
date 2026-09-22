@@ -70,6 +70,9 @@ class BulkScrapeReport:
     succeeded: int = 0
     failed: int = 0
     skipped: int = 0
+    #: True when the run stopped because the job was cancelled, as opposed to
+    #: running out of targets. The counters above are then a partial tally.
+    cancelled: bool = False
     log_file: Optional[str] = None
     results: List[UrlResult] = field(default_factory=list)
 
@@ -192,9 +195,19 @@ async def _process_target(
             progress.advance(succeeded=True, item=url)
         return
 
+    # Release the pooled connection before the scrape. The `already_scraped`
+    # read above holds a transaction open, and a Session does not return its
+    # connection until that transaction ends -- so without this it sits
+    # idle-in-transaction for every Playwright page load below, for every
+    # target in the run. Materialise the brand fields first: commit expires
+    # loaded ORM objects, so reading `brand.name` in the call itself would
+    # lazy-refresh and re-open the transaction this commit closes.
+    brand_name, brand_pk = brand.name, brand.id
+    session.commit()
+
     # Dispatch to the brand scraper (returns list — one item per variant)
     try:
-        variant_results = await _dispatch_scraper(brand.name, url, brand.id, session)
+        variant_results = await _dispatch_scraper(brand_name, url, brand_pk, session)
     except Exception as exc:
         _update_target(session, target, ScrapeStatus.FAILED)
         report.failed += 1
@@ -222,7 +235,7 @@ async def _process_target(
 
         raw_laptop = RawScrapLaptop(
             source_url=source_url,
-            brand_id=brand.id,
+            brand_id=brand_pk,
             raw_product_name=variant.get("product_name", "Unknown Model"),
             raw_prices=variant.get("raw_prices_list", []),
             image_urls=variant.get("image_urls", []),
@@ -235,7 +248,7 @@ async def _process_target(
 
     # Stamp status based on outcome
     final_status = (
-        _success_status(brand.name) if url_variants_saved > 0 else ScrapeStatus.FAILED
+        _success_status(brand_name) if url_variants_saved > 0 else ScrapeStatus.FAILED
     )
     _update_target(session, target, final_status)
 
@@ -321,6 +334,12 @@ async def run_bulk_scrape(
     # 3. Iterate and scrape
     for target in pending_targets:
         await _process_target(session, target, brand, report, progress)
+        # _process_target advances `progress` for every outcome including
+        # skips, so the flag is fresh here. The current page is always
+        # finished and stamped before stopping.
+        if progress and progress.cancel_requested:
+            report.cancelled = True
+            break
 
     # 4. Write failure log if any URLs failed
     return _finalise(report, run_ts)
@@ -382,5 +401,8 @@ async def run_scrape_for_targets(
         await _process_target(
             session, target, brand_cache[target.brand_id], report, progress
         )
+        if progress and progress.cancel_requested:
+            report.cancelled = True
+            break
 
     return _finalise(report, run_ts)

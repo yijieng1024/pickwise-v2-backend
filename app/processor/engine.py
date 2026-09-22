@@ -220,20 +220,37 @@ def process_raw_laptop_data(
         or "(none defined yet — propose suitable tags)"
     )
 
+    # RELEASE THE POOLED CONNECTION ACROSS THE LLM CALL.
+    #
+    # Everything above is a read, but a read holds a transaction open, and a
+    # Session does not return its connection to the pool until that transaction
+    # ends. chain.invoke below is a Gemini call paced by _EXTRACTION_LIMITER --
+    # seconds to tens of seconds -- and the bulk loop repeats it per record. A
+    # connection sat idle-in-transaction for all of it, which is half of what
+    # exhausts the pool (QueuePool limit of size 10 overflow 20).
+    #
+    # The prompt inputs are materialised into plain locals FIRST. commit()
+    # expires every loaded ORM object, so reading `raw_data.raw_prices` inside
+    # the invoke call below would lazy-refresh and re-open the very transaction
+    # this commit closes -- immediately before the slow call, defeating it.
+    # `category_map` is deliberately not materialised: it is used only after
+    # the call returns, where a refresh costs a short query on a fresh
+    # connection.
+    _product_name = raw_data.raw_product_name
+    _raw_prices_json = json.dumps(raw_data.raw_prices, ensure_ascii=False, indent=2)
+    _raw_specs_json = _bounded_json(raw_data.raw_specs_dump)
+    session.commit()
+
     try:
         extracted_data = cast(
             ExtractedLaptopFamily,
             chain.invoke(
                 {
                     "brand_name": brand_name,
-                    "product_name": raw_data.raw_product_name,
+                    "product_name": _product_name,
                     "current_year": datetime.now().year,
-                    "raw_prices": json.dumps(
-                        raw_data.raw_prices,
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
-                    "raw_specs": _bounded_json(raw_data.raw_specs_dump),
+                    "raw_prices": _raw_prices_json,
+                    "raw_specs": _raw_specs_json,
                     "available_categories": available_categories,
                 }
             ),
@@ -511,6 +528,7 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
     prices_not_extracted: list[str] = []
     requests_made = 0
 
+    cancelled = False
     for i, record in enumerate(pending_records):
         # No sleep here: _EXTRACTION_LIMITER on the LLM paces every call,
         # including the retry below and the single-record route.
@@ -550,6 +568,12 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
                 item=record.raw_product_name or str(record.id),
                 error=None if succeeded else res.get("message"),
             )
+            # Checked straight after advancing: that write is what refreshes
+            # the cancel flag. Stopping here means this record is fully
+            # committed and the next one has not started.
+            if progress.cancel_requested:
+                cancelled = True
+                break
 
     pending_remaining = len(
         session.exec(
@@ -560,7 +584,12 @@ def process_pending_laptops(session: Session, limit: int = 100, progress=None) -
     )
 
     return {
-        "message": f"Bulk processing complete. {len(pending_records)} record(s) attempted.",
+        "message": (
+            f"Cancelled after {len(results_summary)} of {len(pending_records)} record(s)."
+            if cancelled
+            else f"Bulk processing complete. {len(pending_records)} record(s) attempted."
+        ),
+        "cancelled": cancelled,
         "requests_made": requests_made,
         "total_new_variants_saved": total_saved,
         "total_variants_updated": total_updated,
@@ -643,6 +672,7 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
     links_added = 0
     errors: list[dict] = []
 
+    cat_cancelled = False
     # No sleep between iterations: _CATEGORIZE_LIMITER on the LLM paces every
     # call, so the single-laptop path and any retry are covered too.
     for laptop in untagged:
@@ -658,6 +688,13 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
             spec_text = build_laptop_embedding_text(
                 laptop, brand_map.get(laptop.brand_id, "Unknown")
             )
+            # Release the connection across the LLM call. Both prompt inputs
+            # are plain strings by this point; the previous iteration's commit
+            # expired `laptop` and the `category_map` rows, so building them
+            # just re-opened a transaction that would otherwise stay open for
+            # the whole throttled call. `laptop.product_name` below refreshes
+            # on a fresh connection, after the slow work.
+            session.commit()
             result = cast(
                 ExtractedLaptopCategories,
                 chain.invoke(
@@ -688,6 +725,13 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
                     succeeded=False, item=laptop.product_name, error=str(e)
                 )
 
+        # Outside the try: a cancel must stop the run whether the item
+        # succeeded or failed. Checked after advancing, which is the write
+        # that refreshes the flag.
+        if progress and progress.cancel_requested:
+            cat_cancelled = True
+            break
+
     untagged_remaining = len(
         session.exec(
             select(Laptop.id).where(
@@ -697,7 +741,8 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
     )
 
     return {
-        "status": "success",
+        "status": "cancelled" if cat_cancelled else "success",
+        "cancelled": cat_cancelled,
         "attempted": len(untagged),
         "tagged": tagged,
         "links_added": links_added,

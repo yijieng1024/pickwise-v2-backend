@@ -31,15 +31,33 @@ def _utcnow() -> datetime:
 
 
 class JobStatus:
-    """Lifecycle: QUEUED → PROCESSING → COMPLETED | FAILED (both terminal)."""
+    """
+    Lifecycle: QUEUED → PROCESSING → COMPLETED | FAILED | CANCELLED.
+
+    CANCELLING is a REQUEST, not an outcome: the cancel endpoint sets it, and
+    the worker notices between items and stops. It is deliberately not
+    terminal — the job is still running until the worker says otherwise, and
+    reporting it as finished while a scrape is mid-page is how a UI ends up
+    lying about what the server is doing.
+
+    Cancellation is cooperative because jobs run in-process on a worker thread
+    and there is no safe way to kill one mid-item: the alternative to waiting
+    for the current item is a half-written record.
+    """
 
     QUEUED = "queued"
     PROCESSING = "processing"
+    CANCELLING = "cancelling"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
-    TERMINAL = (COMPLETED, FAILED)
-    ALL = (QUEUED, PROCESSING, COMPLETED, FAILED)
+    #: Statuses a worker may still be running under — what the cancel endpoint
+    #: accepts, and what `reset_stale_jobs()` cleans up after a restart.
+    ACTIVE = (QUEUED, PROCESSING, CANCELLING)
+
+    TERMINAL = (COMPLETED, FAILED, CANCELLED)
+    ALL = (QUEUED, PROCESSING, CANCELLING, COMPLETED, FAILED, CANCELLED)
 
 
 class JobType:
@@ -148,7 +166,17 @@ class JobRead(SQLModel):
     def from_job(cls, job: BackgroundJob) -> "JobRead":
         # A finished job always reads 100% — a worker that stopped early (its
         # source queue drained) must not leave the bar stuck at 60%.
-        if job.status in JobStatus.TERMINAL:
+        #
+        # CANCELLED is the exception: it stopped early ON PURPOSE, and the
+        # whole point of the number is to show how far it got. Snapping it to
+        # 100% would claim the remaining items were done.
+        if job.status == JobStatus.CANCELLED:
+            pct = (
+                round(min(job.processed_count / job.total_count, 1.0) * 100, 1)
+                if job.total_count > 0
+                else 0.0
+            )
+        elif job.status in JobStatus.TERMINAL:
             pct = 100.0
         elif job.total_count > 0:
             pct = round(min(job.processed_count / job.total_count, 1.0) * 100, 1)

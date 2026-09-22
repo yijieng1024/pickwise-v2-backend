@@ -111,30 +111,37 @@ async def feed_crawler_queue(
             ),
         )
 
+    # Same as scrape_url below: release the pooled connection before the crawl.
+    # `Depends(get_current_admin)` already opened a transaction on this shared
+    # session, and a brand-wide crawl walks every listing page -- holding a
+    # connection idle-in-transaction for the whole of it.
+    brand_name = brand.name
+    session.commit()
+
     found_urls = []
 
     # 1. Route based on Brand
-    if brand.name.lower() == "apple":
+    if brand_name.lower() == "apple":
         # apple_scraper is now async (see playwright_utils refactor)
         found_urls = await crawl_apple_specs_links(start_url)
     
-    elif brand.name.lower() == "asus":
+    elif brand_name.lower() == "asus":
 
         # Playwright is async, so we await it
         found_urls = await crawl_asus_specs_links(start_url)
 
-    elif brand.name.lower() == "acer":
+    elif brand_name.lower() == "acer":
         # Lists the pages stored in raw_product_htmls — this brand is parsed
         # from uploaded HTML (the store's WAF refuses automated requests)
         found_urls = await crawl_acer_specs_links(start_url, session, brand.id)
 
-    elif brand.name.lower() == "hp":
+    elif brand_name.lower() == "hp":
         # Magento store, live-crawlable — walks the listing's ?p=N pages
         found_urls = await crawl_hp_specs_links(start_url)
 
     else:
         raise HTTPException(
-            status_code=400, detail=f"Currently, {brand.name} brand crawling is not supported."
+            status_code=400, detail=f"Currently, {brand_name} brand crawling is not supported."
         )
 
     if not found_urls:
@@ -155,7 +162,7 @@ async def feed_crawler_queue(
     session.commit()
 
     return {
-        "message": f"Successfully processed {brand.name} crawler queue.",
+        "message": f"Successfully processed {brand_name} crawler queue.",
         "total_found": len(found_urls),
         "added_to_queue": added_count,
     }
@@ -185,29 +192,45 @@ async def scrape_url(
             "status": existing_scrape.processing_status,
         }
 
+    # END THE TRANSACTION BEFORE THE SCRAPE. Everything above is a read, but a
+    # read still opens a transaction, and `Depends(get_current_admin)` has
+    # already opened one on this same session before the body ran (see
+    # app/users/auth.py:101 -- FastAPI shares one session across a request's
+    # dependencies). A Session releases its connection on commit and checks a
+    # fresh one out on the next query, so without this the pooled connection
+    # sits idle-in-transaction for the entire Playwright run below -- minutes
+    # for one request. That is what exhausts the pool (QueuePool limit ... 10
+    # overflow 20), not request volume.
+    #
+    # brand.name is read into a local first: commit expires loaded ORM objects,
+    # so touching `brand.name` afterwards would silently re-open the very
+    # transaction this line closes.
+    brand_name = brand.name
+    session.commit()
+
     # 1. Route based on Brand — ASUS returns list[dict], Apple returns dict (wrapped below)
-    if brand.name.lower() == "apple":
-        raw_result = await scrape_official_website(request.url, brand.name, request.brand_id)  # type: ignore
+    if brand_name.lower() == "apple":
+        raw_result = await scrape_official_website(request.url, brand_name, request.brand_id)  # type: ignore
         variant_results = [raw_result]
 
-    elif brand.name.lower() == "asus":
+    elif brand_name.lower() == "asus":
         # Returns list[dict] — one item per variant found on the page
         variant_results = await scrape_asus_laptop_specs(request.url, request.brand_id)
 
-    elif brand.name.lower() == "acer":
+    elif brand_name.lower() == "acer":
         # Returns list[dict] — always exactly one (simple products). Reads the
         # page from raw_product_htmls, so it must have been uploaded first.
         variant_results = await scrape_acer_laptop_specs(
             request.url, request.brand_id, session
         )
 
-    elif brand.name.lower() == "hp":
+    elif brand_name.lower() == "hp":
         # Returns list[dict] — always exactly one (one SKU per page)
         variant_results = await scrape_hp_laptop_specs(request.url, request.brand_id)
 
     else:
         raise HTTPException(
-            status_code=400, detail=f"Currently, {brand.name} brand scraping is not supported."
+            status_code=400, detail=f"Currently, {brand_name} brand scraping is not supported."
         )
 
     # 3. Check if every variant failed
@@ -215,7 +238,7 @@ async def scrape_url(
 
     # Stamp last_scraped_at and scrape_status regardless of outcome
     outcome_status = (
-        ScrapeStatus.FAILED if all_failed else _success_status(brand.name)
+        ScrapeStatus.FAILED if all_failed else _success_status(brand_name)
     )
     scrape_target = session.exec(
         select(ScrapeTarget).where(ScrapeTarget.url == request.url)
@@ -264,7 +287,7 @@ async def scrape_url(
         saved_ids.append(str(raw_laptop.id))
 
     return {
-        "message": f"Successfully scraped {brand.name} laptop data.",
+        "message": f"Successfully scraped {brand_name} laptop data.",
         "variants_saved": len(saved_ids),
         "laptop_ids": saved_ids,
         "last_scraped_at": datetime.now(timezone.utc).isoformat(),
@@ -445,6 +468,12 @@ async def upload_raw_html(
     Re-uploading a page overwrites the stored HTML and re-queues its target,
     which is how a stale price is refreshed.
     """
+    # `Depends(get_current_admin)` opened a transaction on this session before
+    # the body ran, and the read loop below awaits every uploaded file (up to
+    # MAX_HTML_BYTES each) before the first query. Release the connection
+    # first; _ingest_documents checks a fresh one out when it needs it.
+    session.commit()
+
     documents: list[tuple[str, str, Optional[str]]] = []
     oversized: list[RawHtmlItemResult] = []
 
@@ -639,6 +668,7 @@ def _report_payload(report, total_key: str) -> dict:
         "succeeded": report.succeeded,
         "failed": report.failed,
         "skipped": report.skipped,
+        "cancelled": report.cancelled,
         "log_file": report.log_file,
         "results": [
             {"url": r.url, "status": r.status, "error": r.error}
