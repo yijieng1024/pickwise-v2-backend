@@ -533,3 +533,20 @@ from app.common import http_rate_limit as _http_rate_limit  # noqa: E402
 
 def rate_limit_module():
     return _http_rate_limit
+
+
+# --------------------------------------------------------------------------
+# Variant image filtering - app/processor/engine.py
+# --------------------------------------------------------------------------
+# Safe to import with no configuration: engine.py's module scope builds only a
+# regex, a logger and the Gemma rate limiter (plain arithmetic). `settings` is
+# read inside the functions, never at import.
+from app.processor.engine import _filter_variant_images as _filter_images  # noqa: E402
+
+
+def filter_variant_images(urls, display_size_inch):
+    """Drops gallery photos belonging to a different size of the same model,
+    and social-preview cards. Falls back to the full list when the size filter
+    would empty it -- a vendor that ships the 14" photo on the 16" SKU must not
+    end up with no images at all."""
+    return _filter_images(urls, display_size_inch)

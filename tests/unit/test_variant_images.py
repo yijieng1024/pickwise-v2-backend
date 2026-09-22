@@ -1,4 +1,4 @@
-from app.processor.engine import _filter_variant_images
+from tests.unit._adapters import filter_variant_images as _filter_variant_images
 
 
 def test_keeps_matching_size_and_drops_other_sizes():
