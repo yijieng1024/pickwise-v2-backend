@@ -595,3 +595,12 @@ def invoke_with_fallback(make_chain, payload, models):
     """Runs the chain against each model in turn, moving on only for an
     overloaded model. Any other error raises from the first one."""
     return _invoke_fallback(make_chain, payload, models)
+
+
+# --------------------------------------------------------------------------
+# PickScore scoring cache - app/pickscore/ranges_cache.py, and the session
+# listeners in app/laptops/pickscore_adapter.py that invalidate it
+# --------------------------------------------------------------------------
+from app.pickscore import ranges_cache  # noqa: E402,F401
+from app.benchmark.model import CPUBenchmark  # noqa: E402,F401
+from app.laptops import pickscore_adapter as _pickscore_adapter  # noqa: E402,F401 - registers the listeners

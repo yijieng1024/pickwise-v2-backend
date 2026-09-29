@@ -30,6 +30,7 @@ from app.saved.router import router as saved_router
 from app.common.job_router import router as jobs_router
 from app.common.settings_router import router as app_settings_router
 from app.common.job_service import reset_stale_jobs
+from app.laptops.pickscore_adapter import warm_scoring_cache
 
 setup_logging()
 
@@ -62,6 +63,9 @@ async def lifespan(_app: FastAPI):
     # recovery never runs against it (reset_stale_jobs swallows its errors).
     _validate_configuration()
     _recover_interrupted_jobs()
+    # Background thread: the first PickScore request should not pay for the
+    # ~9 s build (app/pickscore/ranges_cache.py). A failure is logged there.
+    warm_scoring_cache()
     yield
 
 

@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.laptops.brand_model import LaptopBrand
-from app.laptops.pickscore_adapter import laptop_to_scorable, get_laptop_ranges
+from app.laptops.pickscore_adapter import laptop_to_scorable, get_scoring_data
 from app.laptops.pickscore_general import (
     USE_CASE_PRIORITIES,
     LaptopPickScore,
@@ -20,7 +20,6 @@ from app.laptops.pickscore_general import (
 )
 from app.users.auth import get_current_admin, get_current_user
 from app.users.models import LaptopUserPreference
-from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.pickscore.engine import calculate_pick_score
 from app.pickscore.schemas import PickScoreResponse, BatchPickScoreResponse
 
@@ -39,9 +38,7 @@ router = APIRouter(prefix="/laptops", tags=["Pick Score"])
 
 
 def _fetch_shared_data(session: Session, user_id=None):
-    ranges = get_laptop_ranges(session)
-    cpu_benchmarks = [(r.cpu_name, r.cpu_mark) for r in session.exec(select(CPUBenchmark)).all()]
-    gpu_benchmarks = [(r.gpu_name, r.gpu_mark) for r in session.exec(select(GPUBenchmark)).all()]
+    ranges, cpu_benchmarks, gpu_benchmarks = get_scoring_data(session)
     user_pref = None
     if user_id:
         user_pref = session.exec(

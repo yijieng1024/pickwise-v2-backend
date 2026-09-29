@@ -11,7 +11,14 @@ import re, unicodedata
 # its real mark. It also made unrelated tests pass alone and fail together,
 # three times, because each test's small table poisoned the next one's lookups.
 _cache: dict[tuple[str, int], tuple[dict, float]] = {}
-CACHE_TTL = 300
+# The key already holds the whole table, so an entry can never be wrong - the
+# TTL only bounds memory. It was 5 minutes, which re-ran every fuzzy match on
+# the next request after each expiry.
+CACHE_TTL = 6 * 3600
+# Per table (same fingerprint as the key): normalized name -> real name, and
+# name -> mark. Built once per table version instead of once per cache miss,
+# which was ~6,000 _normalize calls for every CPU string not seen yet.
+_indexes: dict[int, tuple[dict[str, str], dict[str, int]]] = {}
 # One threshold per table. The single shared constant was raised 0.6 -> 0.85 in
 # August on GPU evidence (four measured mismatches, ADR-0010). The CPU evidence
 # points elsewhere and was never gathered until 2026-09-15: across 98 distinct
@@ -262,7 +269,8 @@ def resolve_benchmark(
     # same string against the same table resolves differently under 0.85 and
     # 0.90, so leaving it out would recreate the collision fixed one commit ago
     # in a new dimension.
-    cache_key = (key, hash(tuple(benchmarks)), threshold)
+    table_key = hash(tuple(benchmarks))
+    cache_key = (key, table_key, threshold)
     now = time.time()
 
     if cache_key in _cache:
@@ -278,8 +286,10 @@ def resolve_benchmark(
     # WRatio does no preprocessing, so a lowercased key was being matched
     # against mixed-case table names -- the same pair scores 95-100 with
     # consistent casing and 0.64 without. Normalize both sides and map back.
-    by_norm = {_normalize(name): name for name, _ in benchmarks}
-    score_map = {name: score for name, score in benchmarks}
+    if table_key not in _indexes:
+        _indexes[table_key] = ({_normalize(name): name for name, _ in benchmarks},
+                               {name: score for name, score in benchmarks})
+    by_norm, score_map = _indexes[table_key]
 
     match = process.extractOne(key, list(by_norm), scorer=fuzz.WRatio)
 

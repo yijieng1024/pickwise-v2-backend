@@ -1,13 +1,15 @@
-from sqlalchemy import func, select as sa_select
+from sqlalchemy import event, select as sa_select
+from sqlalchemy.orm import Session as OrmSession
 from sqlmodel import Session, select
 
+from app.database import engine
 from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
+from app.pickscore import ranges_cache
 from app.pickscore.schemas import ScorableProduct
-from app.pickscore.ranges_cache import get_cached_ranges, set_cached_ranges
 from app.pickscore.benchmark_service import resolve_benchmark, resolve_gpu_benchmark
 
-_CACHE_KEY = "laptop_ranges"
+Benchmarks = list[tuple[str, int]]
 
 
 def laptop_to_scorable(laptop: Laptop, brand_name: str) -> ScorableProduct:
@@ -48,12 +50,34 @@ def _distribution(values: list[float]) -> dict:
     return {"min": ordered[0], "max": ordered[-1], "values": ordered}
 
 
-def get_laptop_ranges(session: Session, force_refresh: bool = False) -> dict:
+def get_scoring_data(session: Session, force_refresh: bool = False) -> tuple[dict, Benchmarks, Benchmarks]:
+    """
+    (ranges, cpu_benchmarks, gpu_benchmarks) - everything calculate_pick_score
+    needs besides the product and the preference row. Served from
+    ranges_cache; built inline, on `session`, only when no copy exists yet
+    (first request after a start, before the warm-up finishes) or when
+    force_refresh asks for it. The lists are shared: callers must not mutate them.
+    """
     if not force_refresh:
-        cached = get_cached_ranges(_CACHE_KEY)
-        if cached:
+        cached = ranges_cache.get(_build_with_own_session)
+        if cached is not None:
             return cached
+    at_generation = ranges_cache.generation()
+    data = _build(*_read(session))
+    ranges_cache.store(data, at_generation)
+    return data
 
+
+def get_laptop_ranges(session: Session, force_refresh: bool = False) -> dict:
+    return get_scoring_data(session, force_refresh)[0]
+
+
+def warm_scoring_cache() -> None:
+    """Start building the cache in the background (app startup)."""
+    ranges_cache.warm(_build_with_own_session)
+
+
+def _read(session: Session) -> tuple[list, Benchmarks, Benchmarks]:
     # One row per active laptop, and every distribution is built from it, so
     # the min/max can never disagree with the values list they summarize.
     catalog_rows = session.execute(
@@ -63,10 +87,20 @@ def get_laptop_ranges(session: Session, force_refresh: bool = False) -> dict:
             Laptop.processor_model, Laptop.gpu_model,
         ).where(Laptop.status == LaptopStatus.ACTIVE.value)
     ).all()
-
-    # Fetch full benchmark lists once
     cpu_benchmarks = [(r.cpu_name, r.cpu_mark) for r in session.exec(select(CPUBenchmark)).all()]
     gpu_benchmarks = [(r.gpu_name, r.gpu_mark) for r in session.exec(select(GPUBenchmark)).all()]
+    return catalog_rows, cpu_benchmarks, gpu_benchmarks
+
+
+def _build_with_own_session() -> tuple[dict, Benchmarks, Benchmarks]:
+    """The background rebuild. Its connection goes back to the pool before
+    the slow part - that idle connection is what used to be dropped."""
+    with Session(engine) as session:
+        rows = _read(session)
+    return _build(*rows)
+
+
+def _build(catalog_rows: list, cpu_benchmarks: Benchmarks, gpu_benchmarks: Benchmarks) -> tuple[dict, Benchmarks, Benchmarks]:
 
     # Resolve benchmark scores for laptops actually in the catalog so the
     # normalization range reflects laptop-class hardware, not desktop/server
@@ -120,14 +154,14 @@ def get_laptop_ranges(session: Session, force_refresh: bool = False) -> dict:
     # There is no per-laptop distribution to fall back to in that case, so the
     # empty `values` list sends _normalize down its min-max path.
     if not cpu_scores:
-        fallback = session.execute(sa_select(func.min(CPUBenchmark.cpu_mark), func.max(CPUBenchmark.cpu_mark))).one()
-        cpu_range = {"min": float(fallback[0] or 0), "max": float(fallback[1] or 0), "values": []}
+        marks = [m for _, m in cpu_benchmarks]
+        cpu_range = {"min": float(min(marks, default=0)), "max": float(max(marks, default=0)), "values": []}
     else:
         cpu_range = _distribution(cpu_scores)
 
     if not gpu_scores:
-        fallback = session.execute(sa_select(func.min(GPUBenchmark.gpu_mark), func.max(GPUBenchmark.gpu_mark))).one()
-        gpu_range = {"min": float(fallback[0] or 0), "max": float(fallback[1] or 0), "values": []}
+        marks = [m for _, m in gpu_benchmarks]
+        gpu_range = {"min": float(min(marks, default=0)), "max": float(max(marks, default=0)), "values": []}
     else:
         gpu_range = _distribution(gpu_scores)
 
@@ -140,5 +174,32 @@ def get_laptop_ranges(session: Session, force_refresh: bool = False) -> dict:
         "cpu_mark":   cpu_range,
         "gpu_mark":   gpu_range,
     }
-    set_cached_ranges(_CACHE_KEY, ranges)
-    return ranges
+    return ranges, cpu_benchmarks, gpu_benchmarks
+
+
+# Invalidation, in one place rather than at each write site (laptop CRUD, the
+# processor, benchmark CRUD, the benchmark scrapers). A write is noted on the
+# session - ORM flushes and Core DML such as the scrapers' upserts alike - and
+# the cache is invalidated only once it commits: invalidating earlier would let
+# a rebuild read the old rows and be filed as current.
+_SOURCES = (Laptop, CPUBenchmark, GPUBenchmark)
+_WRITTEN = "pickscore_sources_written"
+
+
+@event.listens_for(OrmSession, "after_flush")
+def _note_flushed_writes(session, _flush_context):
+    # new/dirty/deleted still hold the pre-flush state here.
+    if any(isinstance(o, _SOURCES) for o in (*session.new, *session.dirty, *session.deleted)):
+        session.info[_WRITTEN] = True
+
+
+@event.listens_for(OrmSession, "do_orm_execute")
+def _note_dml_writes(state):
+    if (state.is_insert or state.is_update or state.is_delete)             and state.bind_mapper is not None and state.bind_mapper.class_ in _SOURCES:
+        state.session.info[_WRITTEN] = True
+
+
+@event.listens_for(OrmSession, "after_commit")
+def _invalidate_after_commit(session):
+    if session.info.pop(_WRITTEN, False):
+        ranges_cache.invalidate()

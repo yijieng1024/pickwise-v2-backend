@@ -4,11 +4,10 @@ from typing import Optional
 from langchain_core.tools import tool
 from sqlmodel import Session, select
 
-from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.brand_model import LaptopBrand
 from app.purposes import PURPOSES, normalize_purpose
 from app.laptops.family_service import closest_to_budget, deduplicate_by_family
-from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
+from app.laptops.pickscore_adapter import get_scoring_data, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
 from app.users.models import LaptopUserPreference
 from app.rag.evaluation import log_pipeline_result
@@ -64,9 +63,7 @@ def _pick_scores_for(
     the full 8-factor breakdown would bloat the LLM context and overflow the
     eval harness's 3,000-char per-output truncation at top_k=10.
     """
-    ranges = get_laptop_ranges(session)
-    cpu_benchmarks = [(r.cpu_name, r.cpu_mark) for r in session.exec(select(CPUBenchmark)).all()]
-    gpu_benchmarks = [(r.gpu_name, r.gpu_mark) for r in session.exec(select(GPUBenchmark)).all()]
+    ranges, cpu_benchmarks, gpu_benchmarks = get_scoring_data(session)
 
     brand_names: dict[uuid.UUID, str] = {}
     scores: dict[str, dict] = {}

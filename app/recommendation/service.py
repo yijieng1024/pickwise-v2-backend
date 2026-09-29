@@ -7,12 +7,11 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
-from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.config import settings
 from app.embeddings.service import embed_text
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
-from app.laptops.pickscore_adapter import get_laptop_ranges, laptop_to_scorable
+from app.laptops.pickscore_adapter import get_scoring_data, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
 from app.recommendation.schemas import (
     RecommendationResponse,
@@ -117,9 +116,7 @@ def get_recommendations(
         raise HTTPException(status_code=404, detail="No laptops found matching your query.")
 
     # 3. Batch PickScore — fetch shared data once, score every candidate
-    ranges = get_laptop_ranges(session)
-    cpu_benchmarks = [(r.cpu_name, r.cpu_mark) for r in session.exec(select(CPUBenchmark)).all()]
-    gpu_benchmarks = [(r.gpu_name, r.gpu_mark) for r in session.exec(select(GPUBenchmark)).all()]
+    ranges, cpu_benchmarks, gpu_benchmarks = get_scoring_data(session)
 
     scored: list[tuple[Laptop, str, float, object]] = []
     for laptop, brand_name, row_distance in rows:
