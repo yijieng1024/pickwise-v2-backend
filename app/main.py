@@ -72,7 +72,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     title="PickWise v2 API",
-    description="Backend for PickWise v2 — a LangGraph ReAct agent that reasons over laptop search, " \
+    description="Backend for PickWise v2 — a LangChain ReAct agent that reasons over laptop search, " \
     "PickScore ranking, and pricing to deliver conversational recommendations",
     version="2.0",
 )
