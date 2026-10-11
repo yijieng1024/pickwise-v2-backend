@@ -45,6 +45,7 @@ from app.laptops.family_model import (
 from app.laptops.family_service import move_laptops, regroup_unassigned
 from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
+from app.reviews.link_model import ReviewLaptopLink
 from app.users.auth import get_current_admin
 
 logger = get_logger(__name__)
@@ -446,8 +447,28 @@ def delete_family(family_id: uuid.UUID, session: Session = Depends(get_session))
     delete, which 409s on associated laptops): the second half of every merge
     is deleting an emptied family, and a null family_id is a safe state — it
     passes through dedup untouched and reappears in the regroup backlog.
+
+    Review links are the exception, and are refused (409) rather than released:
+    `review_laptop_link.family_id` is NOT NULL, so there is no safe state to
+    release them to, and dropping them would silently discard a human's
+    decision about which product a video covers. Re-point them first.
     """
     family = _get_family(session, family_id)
+
+    links = session.execute(
+        sa_select(func.count(ReviewLaptopLink.id)).where(
+            ReviewLaptopLink.family_id == family_id
+        )
+    ).scalar_one()
+    if links:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot delete family '{family.name}': still referenced by "
+                f"{links} review link{'s' if links > 1 else ''}. Link those "
+                "reviews to another family first, then delete the old links."
+            ),
+        )
 
     members = session.execute(
         sa_select(Laptop).where(Laptop.family_id == family_id)
