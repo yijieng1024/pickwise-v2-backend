@@ -32,3 +32,6 @@ Technical_Spec.md
 
 # Hypothesis example database (tests/unit/test_properties.py)
 .hypothesis/
+
+# Local DB exports taken before data changes -- never committed
+backups/
