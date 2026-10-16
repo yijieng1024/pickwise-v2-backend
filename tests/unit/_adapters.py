@@ -536,6 +536,18 @@ def rate_limit_module():
 
 
 # --------------------------------------------------------------------------
+# LLM token usage - app/common/llm_usage.py
+# --------------------------------------------------------------------------
+# Exposed as a module: the tests replace `log_llm_usage` inside it so no row
+# is written. `engine` is lazy, so importing it needs no configuration.
+from app.common import llm_usage as _llm_usage  # noqa: E402
+
+
+def llm_usage_module():
+    return _llm_usage
+
+
+# --------------------------------------------------------------------------
 # Variant image filtering - app/processor/engine.py
 # --------------------------------------------------------------------------
 # Safe to import with no configuration: engine.py's module scope builds only a

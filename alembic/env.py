@@ -40,6 +40,7 @@ from app.agent.monitoring_models import AgentRunLog
 from app.saved.models import SavedLaptop
 from app.common.job_model import BackgroundJob
 from app.common.app_settings import AppSetting
+from app.common.llm_usage import LLMUsageLog
 from app.laptops.pickscore_general import LaptopPickScore
 from app.users.avatar_model import UserAvatar
 

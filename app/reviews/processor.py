@@ -7,6 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.common.llm_usage import LLMFeature, TokenUsageHandler
 from app.config import settings
 from app.embeddings.service import embed_text
 from app.logger import get_logger
@@ -123,6 +124,7 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
         model=_CHUNK_MODEL,
         temperature=0,
         google_api_key=settings.gemini_api_key,
+        callbacks=[TokenUsageHandler(LLMFeature.REVIEW_CHUNK, _CHUNK_MODEL)],
     )
     structured_llm = llm.with_structured_output(_ChunkAnalysis)
     chain = (

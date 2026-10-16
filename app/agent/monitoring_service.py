@@ -21,6 +21,7 @@ from langchain_core.callbacks import AsyncCallbackHandler
 from sqlmodel import Session
 
 from app.agent.monitoring_models import AgentRunLog
+from app.common.llm_usage import LLMFeature, log_llm_usage, usage_from_response
 from app.database import engine
 from app.logger import get_logger
 
@@ -85,13 +86,10 @@ class MonitoringCallbackHandler(AsyncCallbackHandler):
         entry["error"] = str(error)
 
     async def on_llm_end(self, response: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        for gen_list in response.generations:
-            for gen in gen_list:
-                usage = getattr(getattr(gen, "message", None), "usage_metadata", None)
-                if not usage:
-                    continue
-                self.input_tokens = (self.input_tokens or 0) + (usage.get("input_tokens") or 0)
-                self.output_tokens = (self.output_tokens or 0) + (usage.get("output_tokens") or 0)
+        tokens_in, tokens_out = usage_from_response(response)
+        if tokens_in or tokens_out:
+            self.input_tokens = (self.input_tokens or 0) + tokens_in
+            self.output_tokens = (self.output_tokens or 0) + tokens_out
 
     def finalize_incomplete_calls(self) -> None:
         """Sweeps any tool_start left without a matching end/error — e.g. an
@@ -142,3 +140,14 @@ def log_agent_run(
             session.commit()
     except Exception:
         logger.exception("failed to write agent_run_log (monitoring only, chat unaffected)")
+
+    # The turn's total into the app-wide usage table. Summed per turn here
+    # rather than a TokenUsageHandler on the agent LLM, which would write a
+    # row per ReAct step from inside the streaming loop.
+    if handler is not None and (handler.input_tokens or handler.output_tokens):
+        from app.agent.graph import AGENT_MODEL  # graph imports this module
+
+        log_llm_usage(
+            LLMFeature.AGENT, AGENT_MODEL,
+            handler.input_tokens or 0, handler.output_tokens or 0, user_id,
+        )

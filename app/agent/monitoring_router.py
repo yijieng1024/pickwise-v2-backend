@@ -26,6 +26,8 @@ RUN_FILTERABLE_COLUMNS = {"status": AgentRunLog.status}
 RUN_SORTABLE_COLUMNS = {
     "created_at": AgentRunLog.created_at,
     "latency_ms": AgentRunLog.latency_ms,
+    "input_tokens": AgentRunLog.input_tokens,
+    "output_tokens": AgentRunLog.output_tokens,
 }
 
 # How many recent rows /stats aggregates over. Computed in Python rather than
@@ -56,7 +58,7 @@ def _to_summary(run: AgentRunLog, username: str) -> AgentRunLogSummary:
 def list_agent_runs(
     search: Optional[str] = search_query("Matches the user's message"),
     status_filter: Optional[str] = filter_query("success or error", alias="status"),
-    sort_by: Optional[str] = Query(default=None, description="One of: created_at, latency_ms"),
+    sort_by: Optional[str] = Query(default=None, description="One of: created_at, latency_ms, input_tokens, output_tokens"),
     sort_dir: SortDirection = sort_dir_query(default=SortDirection.desc),
     pagination: PaginationParams = Depends(),
     session: Session = Depends(get_session),
@@ -118,6 +120,12 @@ class AgentMonitoringStats(BaseModel):
     error_count: int
     error_rate_pct: float
     avg_latency_ms: float
+    # Token totals over the same STATS_WINDOW rows. Errored turns usually
+    # carry no usage, so the average is over runs that reported tokens.
+    total_input_tokens: int
+    total_output_tokens: int
+    tokens_today: int
+    avg_tokens_per_run: float
     tool_usage: list[ToolUsage]
 
 
@@ -130,12 +138,19 @@ def get_agent_monitoring_stats(session: Session = Depends(get_session)):
     if not recent:
         return AgentMonitoringStats(
             total_runs=0, runs_today=0, error_count=0,
-            error_rate_pct=0.0, avg_latency_ms=0.0, tool_usage=[],
+            error_rate_pct=0.0, avg_latency_ms=0.0,
+            total_input_tokens=0, total_output_tokens=0, tokens_today=0,
+            avg_tokens_per_run=0.0, tool_usage=[],
         )
 
     today = datetime.now(timezone.utc).date()
     runs_today = sum(1 for r in recent if r.created_at.date() == today)
     error_count = sum(1 for r in recent if r.status == "error")
+
+    def tokens(r: AgentRunLog) -> int:
+        return (r.input_tokens or 0) + (r.output_tokens or 0)
+
+    metered = [tokens(r) for r in recent if r.input_tokens is not None or r.output_tokens is not None]
 
     tool_counter: Counter = Counter()
     for r in recent:
@@ -148,5 +163,9 @@ def get_agent_monitoring_stats(session: Session = Depends(get_session)):
         error_count=error_count,
         error_rate_pct=round(error_count / len(recent) * 100, 1),
         avg_latency_ms=round(statistics.mean(r.latency_ms for r in recent), 1),
+        total_input_tokens=sum(r.input_tokens or 0 for r in recent),
+        total_output_tokens=sum(r.output_tokens or 0 for r in recent),
+        tokens_today=sum(tokens(r) for r in recent if r.created_at.date() == today),
+        avg_tokens_per_run=round(statistics.mean(metered), 1) if metered else 0.0,
         tool_usage=[ToolUsage(name=name, count=count) for name, count in tool_counter.most_common()],
     )

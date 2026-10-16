@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.common.app_settings import PROCESSOR_MODEL_KEY, get_setting
+from app.common.llm_usage import LLMFeature, TokenUsageHandler
 from app.common.rate_limit import build_gemma_limiter
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -212,6 +213,7 @@ def process_raw_laptop_data(
             temperature=0,
             google_api_key=settings.gemini_api_key,
             rate_limiter=_limiter_for(model, _EXTRACTION_TOKENS_PER_CALL),
+            callbacks=[TokenUsageHandler(LLMFeature.PROCESSOR_EXTRACT, model)],
         )
         return prompt_template | llm.with_structured_output(ExtractedLaptopFamily)
 
@@ -822,6 +824,7 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
             temperature=0,
             google_api_key=settings.gemini_api_key,
             rate_limiter=_limiter_for(model, _CATEGORIZE_TOKENS_PER_CALL),
+            callbacks=[TokenUsageHandler(LLMFeature.PROCESSOR_CATEGORIZE, model)],
         )
         return prompt_template | llm.with_structured_output(ExtractedLaptopCategories)
 

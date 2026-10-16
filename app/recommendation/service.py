@@ -7,6 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
+from app.common.llm_usage import LLMFeature, TokenUsageHandler
 from app.config import settings
 from app.embeddings.service import embed_text
 from app.laptops.brand_model import LaptopBrand
@@ -161,6 +162,7 @@ def get_recommendations(
         model="gemini-3.5-flash",
         temperature=0.3,
         google_api_key=settings.gemini_api_key,
+        callbacks=[TokenUsageHandler(LLMFeature.RECOMMENDATION, "gemini-3.5-flash", user_id)],
     )
     structured_llm = llm.with_structured_output(_LLMOutput)
     chain = ChatPromptTemplate.from_messages([
