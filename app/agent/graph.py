@@ -5,7 +5,7 @@ from typing import Optional
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.rate_limiters import BaseRateLimiter, InMemoryRateLimiter
-from langchain_google_genai import ChatGoogleGenerativeAI
+from app.common.llm import ChatGoogleGenerativeAI
 from sqlmodel import Session, select
 
 from app.agent.monitoring_service import MonitoringCallbackHandler
@@ -58,6 +58,9 @@ def build_agent_llm(rate_limiter: Optional[BaseRateLimiter] = None) -> ChatGoogl
         model=AGENT_MODEL,
         temperature=AGENT_TEMPERATURE,
         google_api_key=settings.gemini_api_key,
+        timeout=settings.llm_timeout_s,
+        max_retries=settings.llm_max_retries,
+        total_deadline_s=settings.llm_total_deadline_s,
         rate_limiter=rate_limiter or _AGENT_RATE_LIMITER,
     )
 

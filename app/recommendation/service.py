@@ -3,12 +3,13 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
+from app.common.llm import ChatGoogleGenerativeAI
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
 from app.common.llm_usage import LLMFeature, TokenUsageHandler
 from app.config import settings
+from app.database import end_transaction, held_instances
 from app.embeddings.service import embed_text
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
@@ -88,6 +89,10 @@ def get_recommendations(
     top_k: int,
     candidate_pool_size: int,
 ) -> RecommendationResponse:
+    # The caller owns `session` (the request's): never closed here. See
+    # end_transaction for how the transaction is ended before each slow call.
+    held = held_instances(session)
+
     # 1. Require preference profile
     user_pref = session.exec(
         select(LaptopUserPreference).where(LaptopUserPreference.user_id == user_id)
@@ -97,6 +102,8 @@ def get_recommendations(
             status_code=400,
             detail="Please complete your preference profile before requesting recommendations.",
         )
+    # Before the embedding call (up to embedding_timeout_s x attempts).
+    end_transaction(session, [user_pref], held)
 
     # 2. Hybrid vector search — retrieve candidate pool
     query_vector = embed_text(query)
@@ -112,6 +119,11 @@ def get_recommendations(
         stmt = stmt.where(LaptopBrand.name.ilike(brand))
     stmt = stmt.order_by(distance_col.asc()).limit(candidate_pool_size)
     rows = session.execute(stmt).all()
+    # Before scoring, not after: get_scoring_data's cold path commits too, and
+    # the candidates must already be detached snapshots by then. From here only
+    # get_scoring_data touches the database, and it ends its own transaction,
+    # so the Gemini call below holds no connection.
+    end_transaction(session, [laptop for laptop, _brand, _distance in rows], held)
 
     if not rows:
         raise HTTPException(status_code=404, detail="No laptops found matching your query.")
@@ -162,6 +174,9 @@ def get_recommendations(
         model="gemini-3.5-flash",
         temperature=0.3,
         google_api_key=settings.gemini_api_key,
+        timeout=settings.llm_timeout_s,
+        max_retries=settings.llm_max_retries,
+        total_deadline_s=settings.llm_total_deadline_s,
         callbacks=[TokenUsageHandler(LLMFeature.RECOMMENDATION, "gemini-3.5-flash", user_id)],
     )
     structured_llm = llm.with_structured_output(_LLMOutput)

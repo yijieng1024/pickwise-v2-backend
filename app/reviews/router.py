@@ -12,7 +12,7 @@ from app.common.pagination_service import (
     paginate,
 )
 from app.common.search_service import apply_search, search_query
-from app.database import get_session
+from app.database import end_transaction, get_session, held_instances
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_model import LaptopFamily
 from app.laptops.laptop_models import Laptop, LaptopStatus
@@ -695,6 +695,7 @@ def retry_transcripts(
     """
     terminal = {f.value for f in TERMINAL_FAILURES}
 
+    held = held_instances(session)
     candidates = session.exec(
         select(RawYoutubeReview)
         .where(
@@ -746,6 +747,12 @@ def retry_transcripts(
         .order_by(RawYoutubeReview.created_at, RawYoutubeReview.id)  # type: ignore[arg-type]
         .limit(limit)
     ).all()
+    # End the read transaction before the fetch loop: each fetch is network
+    # I/O plus the guard's delay, and the transaction otherwise stayed open
+    # for the whole run. The candidates become detached snapshots;
+    # session.add() below re-attaches each one, and nothing touches the
+    # database again until the final commit.
+    end_transaction(session, candidates, held)
 
     # The delay and the breaker live in TranscriptFetchGuard, shared with the
     # ingest pipeline — see app/reviews/transcript.py. Two copies of a
@@ -958,6 +965,7 @@ def backfill_descriptions(
     next run; a video with a genuinely empty description is stored as "" and is
     not retried, which is the distinction the nullable column exists to keep.
     """
+    held = held_instances(session)
     candidates = session.exec(
         select(RawYoutubeReview)
         .where(RawYoutubeReview.video_description.is_(None))  # type: ignore[union-attr]
@@ -966,6 +974,9 @@ def backfill_descriptions(
     ).all()
     if not candidates:
         return {"candidates": 0, "filled": 0, "still_missing": 0, "quota_units": 0}
+    # Release the connection across the YouTube call; same pattern as
+    # retry_transcripts.
+    end_transaction(session, candidates, held)
 
     descriptions = fetch_descriptions([r.video_id for r in candidates])
 

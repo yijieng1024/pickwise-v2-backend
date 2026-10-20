@@ -371,9 +371,20 @@ def _judge_api_key() -> str:
 
 async def judge(query: str, rubric: str, result: dict) -> dict:
     from google import genai
+    from google.genai.types import HttpOptions, HttpRetryOptions
+
+    from app.config import settings
 
     await _get_rate_limiter().aacquire()  # shares the quota pool with the agent
-    client = genai.Client(api_key=_judge_api_key())
+    # Same timeout as production chat models; one attempt per call because
+    # judge_with_retry already owns the retry loop (and its backoff).
+    client = genai.Client(
+        api_key=_judge_api_key(),
+        http_options=HttpOptions(
+            timeout=int(settings.llm_timeout_s * 1000),
+            retry_options=HttpRetryOptions(attempts=1),
+        ),
+    )
     # Truncate each output individually, not the head of the joined blob —
     # otherwise evidence in later tool calls is invisible to the judge and
     # grounded responses get falsely flagged as fabrication. 4,500 per output
@@ -391,7 +402,12 @@ async def judge(query: str, rubric: str, result: dict) -> dict:
         response=result["text"][:6000],
         rubric=rubric,
     )
-    resp = await client.aio.models.generate_content(model=JUDGE_MODEL, contents=prompt)
+    # Same total deadline as production chat models (the httpx timeout above is
+    # per read); a timeout is retried by judge_with_retry like any other error.
+    resp = await asyncio.wait_for(
+        client.aio.models.generate_content(model=JUDGE_MODEL, contents=prompt),
+        settings.llm_total_deadline_s,
+    )
     raw = resp.text.strip()
     raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
     try:

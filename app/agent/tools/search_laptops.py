@@ -14,6 +14,7 @@ from app.rag.evaluation import log_pipeline_result
 from app.rag.gating import relevance_gate
 from app.rag.reranker import RankedCandidate, UserConstraints, rerank
 from app.rag.relaxation import needs_relaxation, relax_and_retry
+from app.rag import retrieval as _retrieval
 from app.rag.retrieval import retrieve_candidates
 from app.database import engine
 from app.logger import get_logger
@@ -175,6 +176,12 @@ def _run_search(
         purpose=_normalize_purpose(purpose),
         brand_preferences=[brand.lower()] if brand else [],
     )
+
+    # Embed before the session opens, as hybrid_search does: the embedding
+    # call (up to embedding_timeout_s x attempts) must not run inside a
+    # transaction. retrieve_candidates and every relaxation retry then read
+    # the cached vector.
+    _retrieval.prefetch_query_vector(user_query)
 
     with Session(engine) as session:
         # user_id is bound by make_search_laptops() from the authenticated

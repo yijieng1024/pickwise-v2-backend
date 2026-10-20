@@ -7,7 +7,7 @@ from typing import List, Optional, cast
 
 from sqlmodel import Session, select
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from app.common.llm import ChatGoogleGenerativeAI
 
 from app.common.app_settings import PROCESSOR_MODEL_KEY, get_setting
 from app.common.llm_usage import LLMFeature, TokenUsageHandler
@@ -212,6 +212,9 @@ def process_raw_laptop_data(
             model=model,
             temperature=0,
             google_api_key=settings.gemini_api_key,
+            timeout=settings.llm_timeout_s,
+            max_retries=settings.llm_max_retries,
+            total_deadline_s=settings.llm_total_deadline_s,
             rate_limiter=_limiter_for(model, _EXTRACTION_TOKENS_PER_CALL),
             callbacks=[TokenUsageHandler(LLMFeature.PROCESSOR_EXTRACT, model)],
         )
@@ -823,6 +826,9 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
             model=model,
             temperature=0,
             google_api_key=settings.gemini_api_key,
+            timeout=settings.llm_timeout_s,
+            max_retries=settings.llm_max_retries,
+            total_deadline_s=settings.llm_total_deadline_s,
             rate_limiter=_limiter_for(model, _CATEGORIZE_TOKENS_PER_CALL),
             callbacks=[TokenUsageHandler(LLMFeature.PROCESSOR_CATEGORIZE, model)],
         )

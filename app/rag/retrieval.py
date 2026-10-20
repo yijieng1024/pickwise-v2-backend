@@ -61,16 +61,43 @@ class RetrievalCandidate:
         return round(1 - self.cosine_distance, 4)
 
 
+# Queries whose embedding just failed: query text -> monotonic time of failure.
+# Callers embed BEFORE opening a session (prefetch_query_vector) so the call
+# never runs inside a transaction; without this memo, a failed prefetch would
+# be retried by retrieve_candidates -- inside the transaction, once per
+# relaxation step -- which during an embedding outage is exactly the
+# connection-holding this ordering exists to prevent.
+_FAILED_QUERIES: dict[str, float] = {}
+_FAILURE_TTL_SECONDS = 60
+
+
 def _get_query_vector(query: str) -> list[float]:
     """Return cached vector if fresh, otherwise embed and cache."""
     now = time.monotonic()
     cached = _QUERY_CACHE.get(query)
     if cached and (now - cached[1]) < _CACHE_TTL_SECONDS:
         return cached[0]
+    failed_at = _FAILED_QUERIES.get(query)
+    if failed_at is not None and (now - failed_at) < _FAILURE_TTL_SECONDS:
+        raise RuntimeError("embedding failed for this query moments ago; not retrying")
 
-    vector = embed_text(query)
+    try:
+        vector = embed_text(query)
+    except Exception:
+        _FAILED_QUERIES[query] = now
+        raise
     _QUERY_CACHE[query] = (vector, now)
     return vector
+
+
+def prefetch_query_vector(query: str) -> None:
+    """Embed `query` into the cache now, outside any transaction. Never
+    raises: a failure is memoised, and retrieve_candidates then takes the
+    relational fallback immediately instead of re-calling the API."""
+    try:
+        _get_query_vector(query)
+    except Exception:
+        pass
 
 
 def retrieve_candidates(

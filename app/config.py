@@ -32,6 +32,23 @@ class Settings(BaseSettings):
     # Gemini API
     gemini_api_key: str
 
+    # Timeouts and attempts for every Gemini call. The library defaults are
+    # timeout=None and max_retries=6: a stalled call never fails, it waits, and
+    # whatever the caller holds (a DB connection, a request slot) waits with
+    # it. A fallback model can only fire if the primary is allowed to fail.
+    #
+    # llm_timeout_s reaches httpx as a per-READ limit, not a total, so
+    # llm_total_deadline_s is the real bound: wall-clock for the whole call
+    # across attempts, or until the first chunk for a stream (app/common/llm.py).
+    # max_retries is the TOTAL attempt count in langchain-google-genai /
+    # google-genai (HttpRetryOptions.attempts): 1 means one attempt on the same
+    # model -- the backup model, not a second try, is the retry (Phase 2).
+    llm_timeout_s: float = 60.0
+    llm_max_retries: int = 1
+    llm_total_deadline_s: float = 60.0
+    embedding_timeout_s: float = 15.0
+    embedding_max_retries: int = 2
+
     # Google Sign-In (OAuth web client ID) — optional; POST /auth/google
     # Google ID tokens sent by the frontend.
     google_oauth_client_id: Optional[str] = None

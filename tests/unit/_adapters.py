@@ -616,3 +616,20 @@ def invoke_with_fallback(make_chain, payload, models):
 from app.pickscore import ranges_cache  # noqa: E402,F401
 from app.benchmark.model import CPUBenchmark  # noqa: E402,F401
 from app.laptops import pickscore_adapter as _pickscore_adapter  # noqa: E402,F401 - registers the listeners
+
+
+# --------------------------------------------------------------------------
+# Slow-call sites: no transaction may be open across an LLM / embedding /
+# YouTube / HTTP call. Exposed as modules because the tests replace the slow
+# call inside each one with a probe that checks the connection pool.
+# --------------------------------------------------------------------------
+from app.recommendation import service as recommendation_service  # noqa: E402,F401
+from app.reviews import processor as review_processor  # noqa: E402,F401
+from app.reviews import service as review_service  # noqa: E402,F401
+from app.reviews import router as review_router  # noqa: E402,F401
+from app.reviews.transcript import TranscriptResult  # noqa: E402,F401
+from app.users import router as users_router  # noqa: E402,F401
+from app.agent import graph as agent_graph  # noqa: E402,F401
+from app.embeddings import service as embeddings_service  # noqa: E402,F401
+from app.common import llm as llm_module  # noqa: E402,F401 - the total-deadline chat model
+from app.config import Settings  # noqa: E402,F401 - class only; reading defaults builds nothing

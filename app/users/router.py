@@ -300,6 +300,13 @@ def _import_google_avatar(session: Session, user: User, picture_url: Optional[st
     try:
         if session.exec(select(UserAvatar).where(UserAvatar.user_id == user.id)).first():
             return
+        # End the transaction (the caller's refresh(user) plus the lookup
+        # above) before the HTTP fetch. commit(), not close(): the session and
+        # `user` are the caller's. The lookup returned no row, so nothing of
+        # ours needs detaching; user.id is read first so the commit's expiry
+        # does not reload `user` here.
+        user_id = user.id
+        session.commit()
         # Google serves 96px by default; ask for 256px for retina displays
         resp = requests.get(picture_url.replace("=s96-c", "=s256-c"), timeout=5)
         resp.raise_for_status()
@@ -309,7 +316,7 @@ def _import_google_avatar(session: Session, user: User, picture_url: Optional[st
         content_type = _sniff_image_type(data)
         if not content_type:
             return
-        session.add(UserAvatar(user_id=user.id, content_type=content_type, data=data))
+        session.add(UserAvatar(user_id=user_id, content_type=content_type, data=data))
         session.commit()
     except Exception:
         session.rollback()  # avatar import is cosmetic — never block login

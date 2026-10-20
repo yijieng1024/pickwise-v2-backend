@@ -120,6 +120,37 @@ def get_session():
         yield session
 
 
+def held_instances(session: Session) -> set[int]:
+    """Identities of the ORM instances `session` already holds. Take it BEFORE
+    loading, then pass it to end_transaction."""
+    return {id(obj) for obj in session.identity_map.values()}
+
+
+def end_transaction(session: Session, loaded, held: set[int]) -> None:
+    """
+    End `session`'s transaction before slow non-database work (an LLM,
+    embedding, YouTube or HTTP call) on a session the CALLER owns.
+
+    Not close(): that would detach the caller's objects too. Each row in
+    `loaded` that the caller did not already hold is expunged, so it stays
+    readable as a detached snapshot (commit() would expire it, and the next
+    read would reopen a transaction across the slow call); then commit()
+    returns the connection to the pool. The caller's own objects stay attached
+    and usable, merely expired as after any commit.
+
+    A row the caller had ALREADY loaded comes back from a query as the caller's
+    instance and is left attached; reading it after this commit reloads it and
+    reopens a transaction. Correct, but it costs pool time -- so callers should
+    not pre-load rows they then hand to slow code.
+
+    Re-attach an expunged row with session.add() to write it back.
+    """
+    for obj in loaded:
+        if id(obj) not in held:
+            session.expunge(obj)
+    session.commit()
+
+
 @contextmanager
 def session_scope(*, expire_on_commit: bool = True) -> Iterator[Session]:
     """

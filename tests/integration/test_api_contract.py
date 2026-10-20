@@ -307,7 +307,10 @@ def test_a_withheld_candidate_does_not_break_recommendations(
 
     monkeypatch.setattr(service, "embed_text", lambda _q: near)
     monkeypatch.setattr(service, "ChatGoogleGenerativeAI", _StubLLM)
-    monkeypatch.setattr(service, "settings", SimpleNamespace(gemini_api_key="stub-never-sent"))
+    monkeypatch.setattr(service, "settings", SimpleNamespace(
+        gemini_api_key="stub-never-sent", llm_timeout_s=60.0, llm_max_retries=1,
+        llm_total_deadline_s=60.0,
+    ))
 
     r = api_client.post("/api/v2/recommendations/laptops", json={"query": "gaming laptop", "top_k": 3})
     assert r.status_code == 200, r.text

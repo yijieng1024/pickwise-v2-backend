@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
+from google import genai
+from google.genai.types import HttpOptions, HttpRetryOptions
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from sqlmodel import Session, select
 
@@ -23,11 +25,23 @@ from app.laptops.brand_model import LaptopBrand
 # after any model change, POST /embeddings/generate-all must be re-run (and
 # review chunks re-processed) or similarity scores are garbage.
 def _build_embedder() -> GoogleGenerativeAIEmbeddings:
-    return GoogleGenerativeAIEmbeddings(
+    embedder = GoogleGenerativeAIEmbeddings(
         model="models/gemini-embedding-2",
         google_api_key=settings.gemini_api_key,
         output_dimensionality=768,
     )
+    # The wrapper has no timeout/retry field (its `request_options` is declared
+    # but never read, langchain-google-genai 4.2.5), and google-genai passes
+    # timeout=None to httpx per request, so an unset timeout means none at all.
+    # Swap in a client that carries both. HttpOptions.timeout is milliseconds.
+    embedder.client = genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options=HttpOptions(
+            timeout=int(settings.embedding_timeout_s * 1000),
+            retry_options=HttpRetryOptions(attempts=settings.embedding_max_retries),
+        ),
+    )
+    return embedder
 
 
 # Lazy: constructing this at module scope read settings.gemini_api_key at
@@ -214,6 +228,9 @@ def generate_single_laptop_embedding(session: Session, laptop_id: UUID) -> dict:
 
     try:
         text = build_laptop_embedding_text(laptop, brand_name)
+        # End the read transaction before the embedding call (up to
+        # embedding_timeout_s x attempts); upsert opens a fresh one after.
+        session.commit()
         vector = embed_text(text)
         upsert_laptop_embedding(session, laptop.id, vector)
         return {"status": "success", "laptop_id": str(laptop_id), "text_preview": text[:120]}

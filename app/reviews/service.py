@@ -200,6 +200,9 @@ def ingest_bulk(
                 totals[k] += counts.get(k, 0)
             results.append({"family": key, "queried_laptop_id": str(laptop.id), **counts})
         except Exception as e:
+            # A failure mid-family can leave a transaction open (or aborted);
+            # end it so it is not held through the next family's YouTube calls.
+            session.rollback()
             logger.error("Bulk ingest failed for family '%s': %s", key, e)
             results.append({"family": key, "queried_laptop_id": str(laptop.id), "error": str(e)})
 
@@ -291,8 +294,12 @@ def ingest_for_laptop(
     Returns a summary dict with counts for each outcome.
     Chunking/embedding is a separate step — call process_raw_review() per matched review.
     """
+    # Column rows, not ORM instances, for everything read before the YouTube
+    # calls: a Row is a plain tuple the commit below cannot expire, so there is
+    # nothing to detach and the caller's session (ingest_bulk's, or the
+    # request's) is left exactly as it was apart from the commit.
     laptop_row = session.execute(
-        sa_select(Laptop, LaptopBrand.name).join(
+        sa_select(Laptop.product_name, LaptopBrand.name).join(
             LaptopBrand, LaptopBrand.id == Laptop.brand_id
         ).where(Laptop.id == laptop_id)
     ).first()
@@ -300,13 +307,15 @@ def ingest_for_laptop(
     if not laptop_row:
         raise ValueError(f"Laptop {laptop_id} not found.")
 
-    laptop, brand_name = laptop_row
+    product_name, brand_name = laptop_row
     # Callers that run several laptops share one guard so the breaker spans the
     # whole run; a standalone call gets its own.
     if fetch_transcripts and guard is None:
         guard = TranscriptFetchGuard()
-    channels = session.exec(
-        select(YoutubeChannel).where(YoutubeChannel.active == True)  # noqa: E712
+    channels = session.execute(
+        sa_select(
+            YoutubeChannel.channel_id, YoutubeChannel.channel_name, YoutubeChannel.active
+        ).where(YoutubeChannel.active == True)  # noqa: E712
     ).all()
 
     counts = {
@@ -320,9 +329,14 @@ def ingest_for_laptop(
     if not channels:
         return counts
 
-    videos = discover_videos(brand_name, laptop.product_name, channels)
+    # End the read transaction before the YouTube calls (one search per
+    # channel, then every transcript fetch). discover_videos reads only
+    # channel_id / channel_name / active, which the column rows carry.
+    session.commit()
+
+    videos = discover_videos(brand_name, product_name, channels)
     counts["discovered"] = len(videos)
-    logger.info("Discovered %d videos for laptop %s", len(videos), laptop.product_name)
+    logger.info("Discovered %d videos for laptop %s", len(videos), product_name)
 
     # Guards against a duplicate video_id inside one discovery batch: the
     # `existing` lookup below cannot see rows added but not yet committed in
@@ -368,6 +382,11 @@ def ingest_for_laptop(
             attempts = 0
             counts["transcript_deferred"] += 1
         else:
+            # Commit before the fetch: it ends the transaction the lookups
+            # above opened (the fetch is network I/O plus the guard's delay)
+            # and persists the previous video's row, so a later failure no
+            # longer loses the whole batch.
+            session.commit()
             result = guard.fetch(video_id)  # type: ignore[union-attr]
             attempts = 1
             if result.ok:
@@ -429,5 +448,5 @@ def ingest_for_laptop(
             break
 
     session.commit()
-    logger.info("Ingest complete for laptop %s: %s", laptop.product_name, counts)
+    logger.info("Ingest complete for laptop %s: %s", product_name, counts)
     return counts

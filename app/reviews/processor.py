@@ -2,7 +2,7 @@ import time
 import uuid
 from typing import Literal
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from app.common.llm import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -124,6 +124,9 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
         model=_CHUNK_MODEL,
         temperature=0,
         google_api_key=settings.gemini_api_key,
+        timeout=settings.llm_timeout_s,
+        max_retries=settings.llm_max_retries,
+        total_deadline_s=settings.llm_total_deadline_s,
         callbacks=[TokenUsageHandler(LLMFeature.REVIEW_CHUNK, _CHUNK_MODEL)],
     )
     structured_llm = llm.with_structured_output(_ChunkAnalysis)
@@ -150,6 +153,10 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
     # chunk — and would raise outright if the row were gone.
     laptop_id = raw.matched_laptop_id
     video_id = raw.video_id
+    # End the read transaction before the first Gemini + embedding call. The
+    # per-chunk commit below only closes transactions from chunk 1 on; the
+    # reads above otherwise held the connection through chunk 0's LLM call.
+    session.commit()
 
     saved = 0
     failures: list[dict] = []

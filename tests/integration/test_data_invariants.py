@@ -14,6 +14,7 @@ not a column at all, it is the output of a three-path resolution.
 """
 
 import pytest
+from sqlalchemy import update
 from sqlmodel import select
 
 from app.laptops.family_model import LaptopFamily
@@ -41,7 +42,14 @@ def test_an_active_laptop_with_no_price_is_a_violation(session, brand):
     laptops came to be unpriced rows (ADR-0009). An unpriced row belongs in
     `inactive`, the work queue, not in `active`.
     """
-    session.add(make_laptop(brand.id, price_rm=0.0, status="active"))
+    # The ORM can no longer produce this state: Laptop's _deactivate_unpriced
+    # mapper event demotes an unpriced active row to inactive on every flush.
+    # A Core UPDATE bypasses mapper events, which is how a script or
+    # hand-written SQL would still create one -- the case this check exists for.
+    laptop = make_laptop(brand.id, price_rm=0.0, status="inactive")
+    session.add(laptop)
+    session.commit()
+    session.execute(update(Laptop).where(Laptop.id == laptop.id).values(status="active"))
     session.commit()
     assert len(_unpriced_active(session)) == 1
 

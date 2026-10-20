@@ -36,6 +36,25 @@ from sqlmodel import Session, SQLModel, create_engine
 
 load_dotenv(".env")
 
+# NEVER LET THE APP BUILD AN ENGINE FROM .env's DATABASE_URL, WHICH IS PRODUCTION.
+#
+# load_dotenv above copies every .env value into os.environ, so any Settings()
+# built in this process from the environment -- outside the app_settings
+# fixture's window, e.g. by the PickScore cache's daemon rebuild thread after
+# that fixture has torn down -- would get the production URL. Verified by
+# running, 2026-10-21: Settings().database_url resolved to the production ref
+# here. So DATABASE_URL is overwritten BEFORE any app module is imported (the
+# app's own load_dotenv() calls never override an existing variable, and
+# pydantic-settings ranks the environment above the .env file):
+#   - TEST_DATABASE_URL set: DATABASE_URL becomes it (checked against the
+#     production ref below, at import, so a bad setup fails collection loudly);
+#   - unset (testcontainers path): an unresolvable sentinel until the container
+#     URL is known (see database_url).
+# The original value is kept only for assert_not_production's identity check.
+_DOTENV_DATABASE_URL = os.environ.get("DATABASE_URL")
+_UNRESOLVABLE_URL = "postgresql://refused:refused@pickwise-tests-no-database.invalid:5432/none"
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or _UNRESOLVABLE_URL
+
 # Importing any model module registers every table on SQLModel.metadata via the
 # bottom-of-module deferred imports; alembic/env.py relies on the same thing.
 from app.laptops.laptop_models import Laptop, LaptopStatus  # noqa: F401
@@ -118,11 +137,17 @@ def assert_not_production(url: str) -> None:
             "every table. Refusing to start."
         )
 
-    production_url = os.environ.get("DATABASE_URL")
+    production_url = _DOTENV_DATABASE_URL
     if production_url and url.strip() == production_url.strip():
         raise RuntimeError(
             "TEST_DATABASE_URL is byte-identical to DATABASE_URL. Refusing to start."
         )
+
+
+# At import, not first in a fixture: by the time a fixture runs, collection has
+# imported the whole app with DATABASE_URL already pointing here.
+if os.environ.get("TEST_DATABASE_URL"):
+    assert_not_production(os.environ["TEST_DATABASE_URL"])
 
 
 @pytest.fixture(scope="session")
@@ -154,6 +179,7 @@ def database_url():
         pytest.skip(f"{_SKIP_REASON}\n\nUnderlying error: {exc}", allow_module_level=True)
 
     url = container.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
+    os.environ["DATABASE_URL"] = url  # replaces the unresolvable sentinel
     try:
         yield url
     finally:
@@ -193,6 +219,27 @@ def app_settings(database_url):
         yield proxy
     finally:
         object.__setattr__(proxy, "_real", None)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_scoring_cache_thread():
+    """
+    No PickScore cache, and above all no rebuild thread, in this tier.
+
+    A stale cache copy starts a daemon thread that opens Session(engine) on the
+    APP's engine -- not the test connection -- so it read outside every test's
+    rollback transaction and, by building that engine, tripped _app_client's
+    "engine was resolved" guard for every later API test (30 errors). It would
+    also hand one test the scoring data of another test's rolled-back catalog.
+    With get() always empty, every caller takes the inline build on the
+    session it was given, which is the test's own.
+    """
+    from app.pickscore import ranges_cache
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ranges_cache, "get", lambda build: None)
+        mp.setattr(ranges_cache, "warm", lambda build: None)
+        yield
 
 
 @pytest.fixture(scope="session")

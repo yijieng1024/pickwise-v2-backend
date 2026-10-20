@@ -63,7 +63,16 @@ def get_scoring_data(session: Session, force_refresh: bool = False) -> tuple[dic
         if cached is not None:
             return cached
     at_generation = ranges_cache.generation()
-    data = _build(*_read(session))
+    rows = _read(session)
+    # End the transaction before the build: it is seconds of fuzzy matching
+    # (far more on Render) with no database use, and a session only returns
+    # its connection when its transaction ends. Skipped if the caller has
+    # unflushed writes -- committing someone else's half-done unit of work is
+    # worse than holding the connection. Side effect on this cold path only:
+    # the caller's loaded rows are expired and reload on next access.
+    if not (session.new or session.dirty or session.deleted):
+        session.commit()
+    data = _build(*rows)
     ranges_cache.store(data, at_generation)
     return data
 

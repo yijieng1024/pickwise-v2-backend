@@ -70,7 +70,10 @@ def test_reprocessing_without_a_price_keeps_the_live_price_and_says_so(
             return RunnableLambda(lambda _: extracted)
 
     monkeypatch.setattr(processor, "ChatGoogleGenerativeAI", _StubLLM)
-    monkeypatch.setattr(processor, "settings", SimpleNamespace(gemini_api_key="stub-never-sent"))
+    monkeypatch.setattr(processor, "settings", SimpleNamespace(
+        gemini_api_key="stub-never-sent", llm_timeout_s=60.0, llm_max_retries=1,
+        llm_total_deadline_s=60.0,
+    ))
 
     result = processor.process_raw_laptop_data(str(raw.id), session)
     assert result["status"] == "success", result
@@ -208,7 +211,10 @@ def test_reprocessing_without_a_price_keeps_the_live_price_and_says_so(
             return RunnableLambda(lambda _: extracted)
 
     monkeypatch.setattr(processor, "ChatGoogleGenerativeAI", _StubLLM)
-    monkeypatch.setattr(processor, "settings", SimpleNamespace(gemini_api_key="stub-never-sent"))
+    monkeypatch.setattr(processor, "settings", SimpleNamespace(
+        gemini_api_key="stub-never-sent", llm_timeout_s=60.0, llm_max_retries=1,
+        llm_total_deadline_s=60.0,
+    ))
 
     result = processor.process_raw_laptop_data(str(raw.id), session)
     assert result["status"] == "success", result
