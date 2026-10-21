@@ -7,14 +7,13 @@ from typing import List, Optional, cast
 
 from sqlmodel import Session, select
 
-from app.common.llm import ChatGoogleGenerativeAI
-
-from app.common.app_settings import PROCESSOR_MODEL_KEY, get_setting
-from app.common.llm_usage import LLMFeature, TokenUsageHandler
+from app.common import llm_config
+from app.common.llm import build_llm
+from app.common.llm_config import MODEL_OPTIONS
+from app.common.llm_usage import LLMFeature
 from app.common.rate_limit import build_gemma_limiter
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.config import settings
 from app.logger import get_logger
 from app.laptops.family_service import resolve_family_id
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
@@ -137,9 +136,8 @@ def process_raw_laptop_data(
 
     brand_name = brand.name if brand else "Unknown"
 
-    # Read before the commit below releases the connection: everything after
-    # that point runs without a transaction.
-    chosen_model = resolve_extraction_model(session)
+    # Cached, and on a miss read on its own short session -- not this one.
+    chosen_models = resolve_extraction_models()
 
     system_prompt = """
         You are an expert hardware data engineer.
@@ -205,20 +203,9 @@ def process_raw_laptop_data(
         ]
     )
 
-    # Built per model rather than once: on an overloaded model
-    # `_invoke_with_fallback` rebuilds the chain against the next one.
-    def make_chain(model: str):
-        llm = ChatGoogleGenerativeAI(
-            model=model,
-            temperature=0,
-            google_api_key=settings.gemini_api_key,
-            timeout=settings.llm_timeout_s,
-            max_retries=settings.llm_max_retries,
-            total_deadline_s=settings.llm_total_deadline_s,
-            rate_limiter=_limiter_for(model, _EXTRACTION_TOKENS_PER_CALL),
-            callbacks=[TokenUsageHandler(LLMFeature.PROCESSOR_EXTRACT, model)],
-        )
-        return prompt_template | llm.with_structured_output(ExtractedLaptopFamily)
+    chain = prompt_template | _build_processor_llm(
+        chosen_models, LLMFeature.PROCESSOR_EXTRACT, _EXTRACTION_TOKENS_PER_CALL, ExtractedLaptopFamily,
+    )
 
     # Category tagging: the model chooses from what's in the DB and may
     # propose new tags. The map includes inactive categories too, so a
@@ -257,8 +244,7 @@ def process_raw_laptop_data(
     try:
         extracted_data = cast(
             ExtractedLaptopFamily,
-            _invoke_with_fallback(
-                make_chain,
+            chain.invoke(
                 {
                     "brand_name": brand_name,
                     "product_name": _product_name,
@@ -266,8 +252,7 @@ def process_raw_laptop_data(
                     "raw_prices": _raw_prices_json,
                     "raw_specs": _raw_specs_json,
                     "available_categories": available_categories,
-                },
-                model_chain(chosen_model),
+                }
             ),
         )
 
@@ -488,71 +473,29 @@ _OVERLOADED_KEYWORDS = ("503", "overloaded", "high demand", "unavailable", "try 
 _RETRY_WAIT_S = 65
 _OVERLOADED_WAIT_S = 20
 
-# Extraction model, and who covers for it when Google answers "this model is
-# currently experiencing high demand". Overload is per-model and usually
-# clears in seconds, so a second model is a faster answer than a sleep — and
-# unlike quota, nothing is gained by waiting on the one that is busy.
-#
-# A model is only selectable together with its free-tier budget: the limiter
-# paces against TPM/RPM, so a model picked from a dropdown that did not carry
-# its own numbers would be throttled against another model's budget — too slow
-# at best, a 429 storm at worst. Hence an allow-list, not a free-text setting.
-# The admin UI renders exactly these, and the PUT rejects anything else.
-# Read from this account's dashboard (https://aistudio.google.com/rate-limit,
-# 2026-09-22), not from the docs — Google no longer publishes a free-tier
-# table, and the per-account numbers are what actually bind.
-#
-# RPD IS THE FIGURE THAT DECIDES THIS LIST, not RPM or TPM. Every Gemini
-# *flash* model is capped at 20 requests per day on this account: a 100-record
-# batch would die after 20, so they are deliberately NOT offered — a dropdown
-# entry that cannot finish a normal run is a trap, not a choice. The Gemma
-# pair carries 14,400/day; flash-lite 500.
-#
-# `rpd` is advisory here: the limiter paces TPM/RPM only, and nothing enforces
-# a daily count. It is surfaced so the admin UI can say how large a run the
-# model can actually finish.
-# ponytail: no RPD enforcement — add a counter only if a 500/day model
-# becomes the one doing the daily catalog runs.
-MODEL_OPTIONS: dict[str, dict[str, int]] = {
-    "gemma-4-31b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
-    "gemma-4-26b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
-    "gemini-3.5-flash-lite": {"tpm": 250_000, "rpm": 15, "rpd": 500},
-    "gemini-3.1-flash-lite": {"tpm": 250_000, "rpm": 15, "rpd": 500},
-}
-
+# The processor is the `processor` use in app/common/llm_config.py: primary
+# (`processor.model`, the key this module always used) + ordered backups
+# (default: the pre-Phase-2 chain -- 26b, then the two flash-lites), switchable by
+# an admin, restricted to MODEL_OPTIONS because the limiter needs each model's
+# budget. Fallback is the shared with_fallbacks path in app/common/llm.py --
+# this module used to carry its own overload-only `_invoke_with_fallback`.
 DEFAULT_EXTRACTION_MODEL = "gemma-4-31b-it"
-# Who covers when the chosen model answers "this model is currently
-# experiencing high demand". Its sibling Gemma first: same family, same
-# budget, same prompt behaviour, so a batch that switches mid-run stays
-# consistent. Flash-lite after that — 500/day still finishes most runs, but it
-# is the weakest at structured extraction, and a variant the model gets wrong
-# is worse than a slow one.
-_EXTRACTION_FALLBACKS = ("gemma-4-26b-it", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
 
 
-def resolve_extraction_model(session) -> str:
-    """
-    The admin-chosen extraction model, or the default.
-
-    An unknown value (allow-list shrank since it was set) falls back to the
-    default rather than being sent to the API — the DB row outlives any deploy
-    that removes a model.
-    """
-    chosen = get_setting(session, PROCESSOR_MODEL_KEY)
-    if chosen in MODEL_OPTIONS:
-        return cast(str, chosen)
-    if chosen:
-        logger.warning(
-            "Ignoring unknown processor model %r from app_settings; using %s.",
-            chosen,
-            DEFAULT_EXTRACTION_MODEL,
-        )
-    return DEFAULT_EXTRACTION_MODEL
+def resolve_extraction_models() -> tuple[str, tuple[str, ...]]:
+    """(primary, backups) specs. Extraction calls this per record, so an admin
+    switch applies from the next record; categorisation once per run."""
+    return llm_config.resolve_models(llm_config.PROCESSOR)
 
 
-def model_chain(primary: str) -> tuple[str, ...]:
-    """The chosen model first, then the other options as overload cover."""
-    return (primary, *(m for m in _EXTRACTION_FALLBACKS if m != primary))
+def _build_processor_llm(models: tuple[str, tuple[str, ...]], feature: str, tokens_per_call: int, schema):
+    return build_llm(
+        llm_config.PROCESSOR,
+        temperature=0,
+        feature=feature,
+        models=models,
+        rate_limiter_for=lambda spec: _limiter_for(llm_config.model_id(spec), tokens_per_call),
+    ).with_structured_output(schema)
 
 
 def _is_overloaded(message: str) -> bool:
@@ -568,27 +511,6 @@ def _retry_wait_for(message: str) -> Optional[int]:
         return _OVERLOADED_WAIT_S
     return None
 
-
-def _invoke_with_fallback(make_chain, payload, models: tuple[str, ...]):
-    """
-    Invoke `make_chain(model)` against each model in turn, moving on ONLY when
-    the failure is an overloaded model.
-
-    Every other error — a quota 429, a malformed response, a bad key — raises
-    from the first model. Those are not fixed by asking a different one, and
-    silently re-running a failing extraction across three models would turn one
-    error into three, on the same quota.
-    """
-    for i, model in enumerate(models):
-        try:
-            return make_chain(model).invoke(payload)
-        except Exception as e:
-            if i == len(models) - 1 or not _is_overloaded(str(e)):
-                raise
-            logger.warning(
-                "Model %s is overloaded; retrying extraction on %s.", model, models[i + 1]
-            )
-    raise RuntimeError("no models configured")  # unreachable: models is never empty
 
 # Bound on the scraped spec blob we send. A request-based limiter can only
 # honour a token budget if calls have a known ceiling, and one unbounded record
@@ -801,7 +723,7 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
 
     # Once per run, not per laptop: a model change mid-run would mean two
     # models tagging one batch, and the run is minutes long at most.
-    chosen_model = resolve_extraction_model(session)
+    chosen_models = resolve_extraction_models()
 
     prompt_template = ChatPromptTemplate.from_messages(
         [
@@ -820,19 +742,11 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
             ),
         ]
     )
-    # Same overloaded-model fallback as extraction, on its own limiter.
-    def make_chain(model: str):
-        llm = ChatGoogleGenerativeAI(
-            model=model,
-            temperature=0,
-            google_api_key=settings.gemini_api_key,
-            timeout=settings.llm_timeout_s,
-            max_retries=settings.llm_max_retries,
-            total_deadline_s=settings.llm_total_deadline_s,
-            rate_limiter=_limiter_for(model, _CATEGORIZE_TOKENS_PER_CALL),
-            callbacks=[TokenUsageHandler(LLMFeature.PROCESSOR_CATEGORIZE, model)],
-        )
-        return prompt_template | llm.with_structured_output(ExtractedLaptopCategories)
+    # Same chain as extraction, on its own (smaller-call) limiters.
+    chain = prompt_template | _build_processor_llm(
+        chosen_models, LLMFeature.PROCESSOR_CATEGORIZE, _CATEGORIZE_TOKENS_PER_CALL,
+        ExtractedLaptopCategories,
+    )
 
     tagged = 0
     links_added = 0
@@ -863,13 +777,11 @@ def categorize_untagged_laptops(session: Session, limit: int = 100, progress=Non
             session.commit()
             result = cast(
                 ExtractedLaptopCategories,
-                _invoke_with_fallback(
-                    make_chain,
+                chain.invoke(
                     {
                         "available_categories": available_categories,
                         "laptop_specs": spec_text,
-                    },
-                    model_chain(chosen_model),
+                    }
                 ),
             )
             added = _sync_laptop_categories(

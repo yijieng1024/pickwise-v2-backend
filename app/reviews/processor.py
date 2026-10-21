@@ -2,13 +2,13 @@ import time
 import uuid
 from typing import Literal
 
-from app.common.llm import ChatGoogleGenerativeAI
+from app.common import llm_config
+from app.common.llm import build_llm
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.common.llm_usage import LLMFeature, TokenUsageHandler
-from app.config import settings
+from app.common.llm_usage import LLMFeature
 from app.embeddings.service import embed_text
 from app.logger import get_logger
 from app.reviews.models import LaptopReviewChunk, RawYoutubeReview, ReviewStatus
@@ -18,9 +18,6 @@ logger = get_logger(__name__)
 _CHUNK_DURATION_SECONDS = 45
 _INTER_REQUEST_DELAY = 4  # seconds between Gemini calls
 
-# Same model as the agent (app/agent/graph.py AGENT_MODEL) — kept as a local
-# constant so the review pipeline doesn't import the agent stack.
-_CHUNK_MODEL = "gemma-4-31b-it"
 
 
 class _ChunkAnalysis(BaseModel):
@@ -120,15 +117,10 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
     if not chunks:
         return {"chunks_total": 0, "chunks_saved": 0, "chunks_failed": 0, "failures": []}
 
-    llm = ChatGoogleGenerativeAI(
-        model=_CHUNK_MODEL,
-        temperature=0,
-        google_api_key=settings.gemini_api_key,
-        timeout=settings.llm_timeout_s,
-        max_retries=settings.llm_max_retries,
-        total_deadline_s=settings.llm_total_deadline_s,
-        callbacks=[TokenUsageHandler(LLMFeature.REVIEW_CHUNK, _CHUNK_MODEL)],
-    )
+    # The `review_processor` use: configured primary, then each backup in order, on 429 / timeout
+    # / 5xx. Resolved once per review, so one review is not split across a
+    # mid-run settings change (a fallback can still answer single chunks).
+    llm = build_llm(llm_config.REVIEW_PROCESSOR, temperature=0, feature=LLMFeature.REVIEW_CHUNK)
     structured_llm = llm.with_structured_output(_ChunkAnalysis)
     chain = (
         ChatPromptTemplate.from_messages(

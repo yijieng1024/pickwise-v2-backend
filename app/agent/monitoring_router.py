@@ -48,6 +48,9 @@ def _to_summary(run: AgentRunLog, username: str) -> AgentRunLogSummary:
         latency_ms=run.latency_ms,
         input_tokens=run.input_tokens,
         output_tokens=run.output_tokens,
+        model=run.model,
+        model_position=run.model_position,
+        fallback_triggered=run.fallback_triggered,
         tool_names=[t.get("name", "unknown") for t in run.tool_calls],
         tool_call_count=len(run.tool_calls),
         created_at=run.created_at,
@@ -104,6 +107,9 @@ def get_agent_run(run_id: UUID, session: Session = Depends(get_session)):
         latency_ms=run.latency_ms,
         input_tokens=run.input_tokens,
         output_tokens=run.output_tokens,
+        model=run.model,
+        model_position=run.model_position,
+        fallback_triggered=run.fallback_triggered,
         tool_calls=run.tool_calls,
         created_at=run.created_at,
     )
@@ -126,6 +132,8 @@ class AgentMonitoringStats(BaseModel):
     total_output_tokens: int
     tokens_today: int
     avg_tokens_per_run: float
+    # Turns in the window where a backup model answered at least one step.
+    fallback_count: int = 0
     tool_usage: list[ToolUsage]
 
 
@@ -167,5 +175,6 @@ def get_agent_monitoring_stats(session: Session = Depends(get_session)):
         total_output_tokens=sum(r.output_tokens or 0 for r in recent),
         tokens_today=sum(tokens(r) for r in recent if r.created_at.date() == today),
         avg_tokens_per_run=round(statistics.mean(metered), 1) if metered else 0.0,
+        fallback_count=sum(1 for r in recent if r.fallback_triggered),
         tool_usage=[ToolUsage(name=name, count=count) for name, count in tool_counter.most_common()],
     )

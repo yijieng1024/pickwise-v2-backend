@@ -35,6 +35,14 @@ class AgentRunLog(SQLModel, table=True):
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
 
+    # The model that wrote the reply (last completed LLM call of the turn), its
+    # position in the chain (0 = primary, 1..n = backup index), and whether
+    # any step ran on a backup. NULL model/position = no LLM call completed
+    # (the turn errored first), or a row from before the columns.
+    model: Optional[str] = Field(default=None, max_length=100)
+    model_position: Optional[int] = None
+    fallback_triggered: bool = Field(default=False, sa_column_kwargs={"server_default": "false"})
+
     # Each entry: {name, args_preview, output_preview, duration_ms, error}
     # NOT NULL: default_factory always supplies a list, and the live column is
     # NOT NULL — leaving it nullable here made `alembic check` propose a
@@ -59,6 +67,10 @@ class AgentRunLogSummary(SQLModel):
     latency_ms: int
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
+    model: Optional[str] = None
+    # 0 = primary answered, 1..n = that backup (null: no LLM call completed)
+    model_position: Optional[int] = None
+    fallback_triggered: bool = False
     tool_names: List[str]
     tool_call_count: int
     created_at: datetime
@@ -78,5 +90,9 @@ class AgentRunLogDetail(SQLModel):
     latency_ms: int
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
+    model: Optional[str] = None
+    # 0 = primary answered, 1..n = that backup (null: no LLM call completed)
+    model_position: Optional[int] = None
+    fallback_triggered: bool = False
     tool_calls: List[Dict[str, Any]]
     created_at: datetime

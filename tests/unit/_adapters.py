@@ -556,9 +556,6 @@ def llm_usage_module():
 from app.processor.engine import _filter_variant_images as _filter_images  # noqa: E402
 from app.processor.engine import (  # noqa: E402
     MODEL_OPTIONS as _model_options,
-    model_chain as _model_chain,
-    resolve_extraction_model as _resolve_model,
-    _invoke_with_fallback as _invoke_fallback,
     _is_overloaded as _overloaded,
     _retry_wait_for as _retry_wait,
 )
@@ -592,23 +589,6 @@ def model_options():
     return _model_options
 
 
-def resolve_extraction_model(session):
-    """The admin-chosen extraction model, falling back to the code default when
-    unset or no longer allow-listed."""
-    return _resolve_model(session)
-
-
-def model_chain(primary):
-    """The chosen model, then the others as overloaded-model cover."""
-    return _model_chain(primary)
-
-
-def invoke_with_fallback(make_chain, payload, models):
-    """Runs the chain against each model in turn, moving on only for an
-    overloaded model. Any other error raises from the first one."""
-    return _invoke_fallback(make_chain, payload, models)
-
-
 # --------------------------------------------------------------------------
 # PickScore scoring cache - app/pickscore/ranges_cache.py, and the session
 # listeners in app/laptops/pickscore_adapter.py that invalidate it
@@ -632,4 +612,8 @@ from app.users import router as users_router  # noqa: E402,F401
 from app.agent import graph as agent_graph  # noqa: E402,F401
 from app.embeddings import service as embeddings_service  # noqa: E402,F401
 from app.common import llm as llm_module  # noqa: E402,F401 - the total-deadline chat model
+from app.common import llm_config  # noqa: E402,F401 - model per use: app_settings + env defaults
+from app.common import app_settings as app_settings_module  # noqa: E402,F401
+from app.agent import monitoring_service  # noqa: E402,F401
+run_eval = _run_eval  # the eval harness module (judge must never fall back)
 from app.config import Settings  # noqa: E402,F401 - class only; reading defaults builds nothing

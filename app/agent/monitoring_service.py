@@ -21,6 +21,7 @@ from langchain_core.callbacks import AsyncCallbackHandler
 from sqlmodel import Session
 
 from app.agent.monitoring_models import AgentRunLog
+from app.common.llm import position_from_tags
 from app.common.llm_usage import LLMFeature, log_llm_usage, usage_from_response
 from app.database import engine
 from app.logger import get_logger
@@ -49,6 +50,31 @@ class MonitoringCallbackHandler(AsyncCallbackHandler):
         self._open: Dict[str, tuple] = {}  # run_id -> (entry dict, monotonic start)
         self.input_tokens: Optional[int] = None
         self.output_tokens: Optional[int] = None
+        # Which model answered: the model of the turn's LAST completed LLM
+        # call (the one that wrote the reply) and its chain position (0 =
+        # primary, 1..n = backup index). `fallback_triggered` is set when any
+        # step of the turn ran on a backup.
+        self.model: Optional[str] = None
+        self.model_position: Optional[int] = None
+        self.fallback_triggered = False
+        self._llm_runs: Dict[str, tuple] = {}  # run_id -> (model, position)
+        # (model, position) -> [input, output], one llm_usage_logs row each
+        self.usage_by_model: Dict[tuple, List[int]] = {}
+
+    async def on_chat_model_start(
+        self,
+        serialized: dict,
+        messages: Any,
+        *,
+        run_id: UUID,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[dict] = None,
+        **kwargs: Any,
+    ) -> None:
+        position = position_from_tags(tags)
+        if position:
+            self.fallback_triggered = True
+        self._llm_runs[str(run_id)] = ((metadata or {}).get("ls_model_name") or "unknown", position)
 
     async def on_tool_start(
         self,
@@ -86,10 +112,18 @@ class MonitoringCallbackHandler(AsyncCallbackHandler):
         entry["error"] = str(error)
 
     async def on_llm_end(self, response: Any, *, run_id: UUID, **kwargs: Any) -> None:
+        model, position = self._llm_runs.pop(str(run_id), ("unknown", 0))
+        self.model, self.model_position = model, position
         tokens_in, tokens_out = usage_from_response(response)
         if tokens_in or tokens_out:
             self.input_tokens = (self.input_tokens or 0) + tokens_in
             self.output_tokens = (self.output_tokens or 0) + tokens_out
+            totals = self.usage_by_model.setdefault((model, position), [0, 0])
+            totals[0] += tokens_in
+            totals[1] += tokens_out
+
+    async def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
+        self._llm_runs.pop(str(run_id), None)
 
     def finalize_incomplete_calls(self) -> None:
         """Sweeps any tool_start left without a matching end/error — e.g. an
@@ -135,19 +169,19 @@ def log_agent_run(
                     input_tokens=handler.input_tokens if handler else None,
                     output_tokens=handler.output_tokens if handler else None,
                     tool_calls=handler.tool_calls if handler else [],
+                    model=handler.model if handler else None,
+                    model_position=handler.model_position if handler else None,
+                    fallback_triggered=handler.fallback_triggered if handler else False,
                 )
             )
             session.commit()
     except Exception:
         logger.exception("failed to write agent_run_log (monitoring only, chat unaffected)")
 
-    # The turn's total into the app-wide usage table. Summed per turn here
-    # rather than a TokenUsageHandler on the agent LLM, which would write a
-    # row per ReAct step from inside the streaming loop.
-    if handler is not None and (handler.input_tokens or handler.output_tokens):
-        from app.agent.graph import AGENT_MODEL  # graph imports this module
-
-        log_llm_usage(
-            LLMFeature.AGENT, AGENT_MODEL,
-            handler.input_tokens or 0, handler.output_tokens or 0, user_id,
-        )
+    # The turn's totals into the app-wide usage table, one row per model that
+    # answered a step. Summed per turn here rather than a TokenUsageHandler on
+    # the agent LLM, which would write a row per ReAct step from inside the
+    # streaming loop.
+    if handler is not None:
+        for (model, position), (tokens_in, tokens_out) in handler.usage_by_model.items():
+            log_llm_usage(LLMFeature.AGENT, model, tokens_in, tokens_out, user_id, position)

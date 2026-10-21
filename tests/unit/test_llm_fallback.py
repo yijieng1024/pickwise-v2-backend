@@ -1,0 +1,618 @@
+"""
+Phase 2: primary -> ordered backups fallback, admin model switching, models.list.
+
+The fallback tests run the REAL model class (app/common/llm.py) against a fake
+Gemini server on loopback, so the errors are the ones google-genai and
+langchain-google-genai actually raise for a 429 / 500 / 400 -- a stub raising
+a hand-made exception would test the classifier against an error shape that
+may not exist. Loopback only; no network, no key.
+"""
+
+import asyncio
+import functools
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
+
+import pytest
+
+from ._adapters import agent_graph, embeddings_service, llm_module, llm_config, app_settings_module
+
+_P, _B = "google_genai:primary-model", "google_genai:backup-model"
+_B2 = "google_genai:second-backup"
+
+
+class _FakeGemini:
+    """generateContent / streamGenerateContent per model, by behaviour:
+    ok | 429 | 500 | 400 | hang | midstream_500. Records every request."""
+
+    def __init__(self):
+        self.behaviour: dict[str, str] = {}
+        self.calls: list[tuple[str, str, dict]] = []  # (model, method, body)
+        self.list_pages: list[dict] = []
+
+    def reply(self, model):
+        return {
+            "candidates": [{"content": {"parts": [{"text": f"answer from {model}"}], "role": "model"},
+                            "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 3, "totalTokenCount": 10},
+        }
+
+    def handler(self):
+        fake = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _json(self, code, payload):
+                data = json.dumps(payload).encode()
+                self.send_response(code)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):  # models.list
+                page = 0
+                if "pageToken=" in self.path:
+                    page = int(self.path.split("pageToken=")[1].split("&")[0])
+                fake.calls.append(("-", "models.list", {"page": page}))
+                self._json(200, fake.list_pages[page])
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))) or b"{}")
+                model = self.path.split("/models/")[1].split(":")[0]
+                method = self.path.split(":")[1].split("?")[0]
+                fake.calls.append((model, method, body))
+                b = fake.behaviour[model]
+                if b == "hang":
+                    time.sleep(5)
+                    return
+                if b in ("429", "500", "400"):
+                    status = {"429": "RESOURCE_EXHAUSTED", "500": "INTERNAL", "400": "INVALID_ARGUMENT"}[b]
+                    self._json(int(b), {"error": {"code": int(b), "message": "fake", "status": status}})
+                    return
+                if method == "generateContent":
+                    self._json(200, fake.reply(model))
+                    return
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+                self.end_headers()
+                first = fake.reply(model)
+                first["candidates"][0]["content"]["parts"][0]["text"] = "first "
+                self.wfile.write(f"data: {json.dumps(first)}\r\n\r\n".encode())
+                self.wfile.flush()
+                if b == "midstream_500":
+                    err = {"error": {"code": 500, "message": "died mid-stream", "status": "INTERNAL"}}
+                    self.wfile.write(f"data: {json.dumps(err)}\r\n\r\n".encode())
+                    return
+                self.wfile.write(f"data: {json.dumps(fake.reply(model))}\r\n\r\n".encode())
+
+        return H
+
+    def models(self):
+        return [c[0] for c in self.calls]
+
+
+@pytest.fixture
+def gemini(monkeypatch):
+    fake = _FakeGemini()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), fake.handler())
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_port}"
+    monkeypatch.setattr(llm_module, "settings", SimpleNamespace(
+        gemini_api_key="test-key", llm_timeout_s=30.0, llm_max_retries=1, llm_total_deadline_s=1.0,
+    ))
+    monkeypatch.setattr(
+        llm_module, "ChatGoogleGenerativeAI",
+        functools.partial(llm_module.ChatGoogleGenerativeAI, base_url=url),
+    )
+    fake.url = url
+    yield fake
+    srv.shutdown()
+    srv.server_close()
+
+
+def _llm(backups=(_B,), **kw):
+    return llm_module.build_llm("agent", temperature=0, models=(_P, backups), **kw)
+
+
+def _stream(llm):
+    async def go():
+        return [c.content async for c in llm.astream("hi")]
+    return asyncio.run(go())
+
+
+# --------------------------------------------------------------------------
+# Automatic fallback
+# --------------------------------------------------------------------------
+def test_a_429_goes_straight_to_the_backup(gemini):
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "ok"})
+
+    started = time.monotonic()
+    reply = _llm().invoke("hi")
+
+    assert reply.content == "answer from backup-model"
+    # One attempt on the primary -- no retry, no backoff before switching.
+    assert gemini.models() == ["primary-model", "backup-model"]
+    assert time.monotonic() - started < 1.0
+
+
+def test_a_primary_past_its_deadline_falls_back(gemini):
+    gemini.behaviour.update({"primary-model": "hang", "backup-model": "ok"})
+
+    started = time.monotonic()
+    reply = asyncio.run(_llm().ainvoke("hi"))
+
+    assert reply.content == "answer from backup-model"
+    assert time.monotonic() - started < 4  # deadline is 1 s; the hang is 5 s
+
+
+def test_a_server_error_falls_back(gemini):
+    gemini.behaviour.update({"primary-model": "500", "backup-model": "ok"})
+    assert _llm().invoke("hi").content == "answer from backup-model"
+
+
+def test_a_bad_request_does_not_fall_back(gemini):
+    # A 400 would fail on any model; asking the backup only spends its quota.
+    gemini.behaviour.update({"primary-model": "400", "backup-model": "ok"})
+    with pytest.raises(Exception) as exc:
+        _llm().invoke("hi")
+    assert not isinstance(exc.value, llm_module.LLMUnavailable)
+    assert gemini.models() == ["primary-model"]
+
+
+def test_a_stream_falls_back_before_its_first_chunk(gemini):
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "ok"})
+    chunks = _stream(_llm())
+    assert "".join(chunks).startswith("first answer from backup-model")
+    assert gemini.models() == ["primary-model", "backup-model"]
+
+
+def test_no_model_switch_once_a_stream_has_started(gemini):
+    # The primary's mid-stream error is a 500 -- fallback-eligible on its own
+    # -- and the backup is healthy. It must still not be asked.
+    gemini.behaviour.update({"primary-model": "midstream_500", "backup-model": "ok"})
+    seen = []
+
+    async def go():
+        async for c in _llm().astream("hi"):
+            seen.append(c.content)
+
+    with pytest.raises(llm_module.LLMStreamInterrupted):
+        asyncio.run(go())
+    assert seen == ["first "]
+    assert gemini.models() == ["primary-model"]
+
+
+def test_both_models_failing_raises_the_backups_error(gemini):
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "429"})
+    with pytest.raises(llm_module.LLMUnavailable):
+        _llm().invoke("hi")
+    assert gemini.models() == ["primary-model", "backup-model"]
+
+
+def test_structured_output_is_bound_on_both_models(gemini):
+    from pydantic import BaseModel
+
+    class Out(BaseModel):
+        answer: str
+
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "ok"})
+    gemini.reply = lambda model: {
+        "candidates": [{"content": {"parts": [{"text": json.dumps({"answer": model})}], "role": "model"},
+                        "finishReason": "STOP"}],
+    }
+    out = _llm().with_structured_output(Out).invoke("hi")
+    assert out.answer == "backup-model"
+
+
+# --------------------------------------------------------------------------
+# A chain of three: primary -> backup -> second-backup, tried in order
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("failure", ["429", "500", "hang"])
+def test_a_chain_falls_through_in_order(gemini, failure):
+    gemini.behaviour.update({"primary-model": failure, "backup-model": failure, "second-backup": "ok"})
+
+    reply = asyncio.run(_llm(backups=(_B, _B2)).ainvoke("hi"))
+
+    assert reply.content == "answer from second-backup"
+    assert gemini.models() == ["primary-model", "backup-model", "second-backup"]
+
+
+def test_a_chain_stops_at_the_first_healthy_model(gemini):
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "ok", "second-backup": "ok"})
+    assert _llm(backups=(_B, _B2)).invoke("hi").content == "answer from backup-model"
+    assert gemini.models() == ["primary-model", "backup-model"]
+
+
+def test_a_bad_request_mid_chain_stops_the_chain(gemini):
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "400", "second-backup": "ok"})
+    with pytest.raises(Exception) as exc:
+        _llm(backups=(_B, _B2)).invoke("hi")
+    assert not isinstance(exc.value, llm_module.LLMUnavailable)
+    assert gemini.models() == ["primary-model", "backup-model"]
+
+
+def test_no_switch_after_a_backups_first_chunk(gemini):
+    # The first backup starts streaming, then dies: the second is never asked.
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "midstream_500", "second-backup": "ok"})
+    seen = []
+
+    async def go():
+        async for c in _llm(backups=(_B, _B2)).astream("hi"):
+            seen.append(c.content)
+
+    with pytest.raises(llm_module.LLMStreamInterrupted):
+        asyncio.run(go())
+    assert seen == ["first "]
+    assert gemini.models() == ["primary-model", "backup-model"]
+
+
+def test_usage_log_records_the_position_that_answered(gemini, monkeypatch):
+    from ._adapters import llm_usage_module
+
+    rows = []
+    monkeypatch.setattr(llm_usage_module(), "log_llm_usage", lambda *a: rows.append(a))
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "500", "second-backup": "ok"})
+
+    _llm(backups=(_B, _B2), feature="processor_extract").invoke("hi")
+
+    assert rows == [("processor_extract", "second-backup", 7, 3, None, 2)]
+
+
+# --------------------------------------------------------------------------
+# Agent: tools on both models, SSE through astream_events, observability
+# --------------------------------------------------------------------------
+def _agent_events(gemini, monkeypatch, handler=None):
+    from langchain.agents import create_agent
+    from langchain_core.tools import tool
+
+    @tool
+    def lookup(q: str) -> str:
+        """Look something up."""
+        return q
+
+    monkeypatch.setattr(agent_graph.llm_config, "resolve_models", lambda use: (_P, (_B,)))
+    agent_graph._agent_rate_limiter.cache_clear()  # fresh per-model buckets, as in a new process
+    agent = create_agent(agent_graph.build_agent_llm(), [lookup])
+    tokens = []
+
+    async def go():
+        config = {"callbacks": [handler]} if handler else None
+        async for e in agent.astream_events({"messages": [("user", "hi")]}, version="v2", config=config):
+            if e["event"] == "on_chat_model_stream":
+                tokens.append(e["data"]["chunk"].content)
+
+    asyncio.run(go())
+    return tokens
+
+
+def test_agent_streams_the_backups_answer_with_tools_bound_on_both(gemini, monkeypatch):
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "ok"})
+
+    started = time.monotonic()
+    tokens = _agent_events(gemini, monkeypatch)
+
+    # The backup's rate limiter starts full: its first call in a process does
+    # not wait out the 5 s refill (InMemoryRateLimiter starts empty).
+    assert time.monotonic() - started < 2
+    assert "".join(tokens).startswith("first answer from backup-model")
+    assert gemini.models() == ["primary-model", "backup-model"]
+    for _model, _method, body in gemini.calls:
+        names = [f["name"] for t in body.get("tools", []) for f in t.get("functionDeclarations", [])]
+        assert names == ["lookup"], f"tools missing on {_model}"
+
+
+def test_agent_stream_never_switches_after_its_first_token(gemini, monkeypatch):
+    gemini.behaviour.update({"primary-model": "midstream_500", "backup-model": "ok"})
+    with pytest.raises(llm_module.LLMStreamInterrupted):
+        _agent_events(gemini, monkeypatch)
+    assert gemini.models() == ["primary-model"]
+
+
+def test_agent_run_log_records_the_answering_model_and_the_fallback(gemini, monkeypatch):
+    from ._adapters import monitoring_service
+
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "ok"})
+    handler = monitoring_service.MonitoringCallbackHandler()
+
+    _agent_events(gemini, monkeypatch, handler)
+
+    assert (handler.model, handler.model_position) == ("backup-model", 1)
+    assert handler.fallback_triggered is True
+    assert handler.usage_by_model == {("backup-model", 1): [7, 3]}
+
+
+def test_agent_run_log_without_fallback(gemini, monkeypatch):
+    from ._adapters import monitoring_service
+
+    gemini.behaviour.update({"primary-model": "ok", "backup-model": "ok"})
+    handler = monitoring_service.MonitoringCallbackHandler()
+
+    _agent_events(gemini, monkeypatch, handler)
+
+    assert (handler.model, handler.model_position, handler.fallback_triggered) == ("primary-model", 0, False)
+
+
+def test_usage_log_names_the_backup_when_it_answered(gemini, monkeypatch):
+    from ._adapters import llm_usage_module
+
+    rows = []
+    monkeypatch.setattr(llm_usage_module(), "log_llm_usage", lambda *a: rows.append(a))
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "ok"})
+
+    _llm(feature="recommendation").invoke("hi")
+
+    assert rows == [("recommendation", "backup-model", 7, 3, None, 1)]
+
+
+# --------------------------------------------------------------------------
+# Where fallback must NOT apply
+# --------------------------------------------------------------------------
+def test_eval_pins_one_agent_model_with_no_fallback():
+    llm = agent_graph.build_agent_llm(model=_P)
+    assert isinstance(llm, llm_module.ChatGoogleGenerativeAI)  # not RunnableWithFallbacks
+    assert llm.model == "primary-model"
+
+
+def test_the_eval_judge_has_no_fallback():
+    import inspect
+
+    from ._adapters import run_eval
+
+    src = inspect.getsource(run_eval.judge)
+    assert "model=JUDGE_MODEL" in src
+    for marker in ("build_llm", "with_fallbacks", "resolve_models", "build_agent_llm"):
+        assert marker not in src, f"judge must stay on one fixed model ({marker})"
+    assert run_eval.JUDGE_MODEL == "gemma-4-31b-it"
+
+
+def test_embeddings_have_no_fallback():
+    import inspect
+
+    src = inspect.getsource(embeddings_service)
+    for marker in ("build_llm", "with_fallbacks", "llm_config"):
+        assert marker not in src, f"embeddings must stay on one model ({marker})"
+
+
+def test_no_backups_means_no_fallback():
+    for backups in ((), (_P,)):  # a backup equal to the primary is skipped
+        llm = llm_module.build_llm("agent", temperature=0, models=(_P, backups))
+        assert isinstance(llm, llm_module.ChatGoogleGenerativeAI)
+
+
+# --------------------------------------------------------------------------
+# Admin switching: app_settings rows, env defaults, validation, cache
+# --------------------------------------------------------------------------
+_ENV = SimpleNamespace(**{
+    f"llm_{use}_{slot}": f"google_genai:env-{use}-{slot.replace('_', '-')}"
+    for use in ("agent", "recommendation", "review_processor", "processor")
+    for slot in ("model", "backup_models")
+})
+_ENV.llm_agent_backup_models = "google_genai:env-agent-b1,google_genai:env-agent-b2"
+_ENV.llm_processor_model = "google_genai:gemma-4-31b-it"
+_ENV.llm_processor_backup_models = "google_genai:gemma-4-26b-it,google_genai:gemini-3.5-flash-lite"
+_AGENT_ENV_BACKUPS = ("google_genai:env-agent-b1", "google_genai:env-agent-b2")
+
+
+@pytest.fixture
+def settings_db(monkeypatch, tmp_path):
+    """llm_config on a real (SQLite) app_settings table."""
+    from sqlmodel import Session, SQLModel, create_engine
+
+    engine = create_engine(f"sqlite:///{tmp_path / 's.db'}")
+    SQLModel.metadata.create_all(engine, tables=[app_settings_module.AppSetting.__table__])
+    monkeypatch.setattr(llm_config, "engine", engine)
+    monkeypatch.setattr(llm_config, "settings", _ENV)
+    monkeypatch.setattr(llm_config, "_cache", {})
+    with Session(engine) as session:
+        yield session
+
+
+def test_env_defaults_apply_when_no_row_exists(settings_db):
+    r = llm_config.resolve("agent")
+    assert (r.primary.value, r.primary.source) == ("google_genai:env-agent-model", "env")
+    assert (r.backups.values, r.backups.source) == (_AGENT_ENV_BACKUPS, "env")
+
+
+def test_a_settings_change_takes_effect_without_a_restart(settings_db):
+    assert llm_config.resolve_models("agent")[0] == "google_genai:env-agent-model"  # now cached
+
+    app_settings_module.set_setting(settings_db, "agent.model", "google_genai:gemma-4-26b-it")
+    assert llm_config.resolve_models("agent")[0] == "google_genai:gemma-4-26b-it"
+    assert agent_graph.build_agent_llm().runnable.model == "gemma-4-26b-it"
+
+    app_settings_module.delete_setting(settings_db, "agent.model")
+    assert llm_config.resolve_models("agent")[0] == "google_genai:env-agent-model"
+
+    app_settings_module.set_setting(settings_db, "agent.backup_models", '["google_genai:x-1"]')
+    assert llm_config.resolve_models("agent")[1] == ("google_genai:x-1",)
+    app_settings_module.set_setting(settings_db, "agent.backup_models", "[]")
+    assert llm_config.resolve_models("agent")[1] == ()  # stored "no fallback"
+
+
+def test_an_invalid_row_falls_back_to_the_env_default_and_says_why(settings_db):
+    # One bad entry rejects the whole list, not just that entry.
+    stored = '["google_genai:fine-model", "openai:gpt-5"]'
+    settings_db.add(app_settings_module.AppSetting(key="agent.backup_models", value=stored))
+    settings_db.add(app_settings_module.AppSetting(key="recommendation.model", value="Bad Model!"))
+    settings_db.commit()
+
+    agent = llm_config.resolve("agent")
+    assert agent.backups.values == _AGENT_ENV_BACKUPS
+    assert (agent.backups.source, agent.backups.stored) == ("env", stored)
+    assert "backups[1]" in agent.backups.error and "Unsupported provider" in agent.backups.error
+    rec = llm_config.resolve("recommendation")
+    assert rec.primary.value == "google_genai:env-recommendation-model"
+    assert "Malformed" in rec.primary.error
+
+
+def test_a_db_failure_serves_env_defaults(settings_db, monkeypatch):
+    def broken(use):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(llm_config, "_read_rows", broken)
+    assert llm_config.resolve_models("agent") == ("google_genai:env-agent-model", _AGENT_ENV_BACKUPS)
+
+
+def test_the_legacy_processor_row_is_read_as_is(settings_db):
+    # processor.model predates this: bare model names, no provider prefix.
+    app_settings_module.set_setting(settings_db, "processor.model", "gemma-4-26b-it")
+    assert llm_config.resolve_models("processor")[0] == "google_genai:gemma-4-26b-it"
+
+
+def test_processor_models_need_a_rate_limit_budget(settings_db):
+    app_settings_module.set_setting(settings_db, "processor.model", "gemini-3.5-flash")
+    r = llm_config.resolve("processor")
+    assert r.primary.value == "google_genai:gemma-4-31b-it"
+    assert "budget" in r.primary.error
+
+
+@pytest.mark.parametrize("stored, error", [
+    ('["google_genai:a-1", "google_genai:a-2", "google_genai:a-3"]', "at most 2 backups"),
+    ('["google_genai:a-1", "a-1"]', "listed twice"),
+    ('["google_genai:env-agent-model"]', "is the primary"),
+    ('"google_genai:a-1"', "JSON array"),
+    ("google_genai:a-1,google_genai:a-2", "not JSON"),
+])
+def test_invalid_stored_backup_lists_fall_back_to_env(settings_db, stored, error):
+    app_settings_module.set_setting(settings_db, "agent.backup_models", stored)
+    b = llm_config.resolve("agent").backups
+    assert (b.values, b.source) == (_AGENT_ENV_BACKUPS, "env")
+    assert error in b.error
+
+
+def test_user_facing_uses_cap_backups_at_two_and_background_uses_do_not():
+    many = [f"google_genai:m-{i}" for i in range(6)]
+    assert len(llm_config.validate_backups("review_processor", many, "google_genai:p")) == 6
+    for use in ("agent", "recommendation"):
+        assert len(llm_config.validate_backups(use, many[:2], "google_genai:p")) == 2
+        with pytest.raises(ValueError, match="at most 2"):
+            llm_config.validate_backups(use, many[:3], "google_genai:p")
+
+
+def test_processor_backups_each_need_a_budget():
+    with pytest.raises(ValueError, match="backups\\[1\\].*budget"):
+        llm_config.validate_backups(
+            "processor", ["gemma-4-26b-it", "gemini-3.5-flash"], "google_genai:gemma-4-31b-it",
+        )
+
+
+def test_an_admin_primary_found_in_the_env_list_is_skipped(settings_db):
+    # Env lists are checked against the env primary only; an admin primary
+    # that happens to be in the env list is dropped from the chain.
+    app_settings_module.set_setting(settings_db, "processor.model", "gemma-4-26b-it")
+    assert llm_config.resolve_models("processor") == (
+        "google_genai:gemma-4-26b-it", ("google_genai:gemini-3.5-flash-lite",),
+    )
+
+
+def test_env_backup_lists_are_validated_at_startup(monkeypatch):
+    from ._adapters import Settings
+
+    for key in ("DATABASE_URL", "SECRET_KEY", "BREVO_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.setenv(key, "x")
+    monkeypatch.setenv("LLM_AGENT_BACKUP_MODELS", "a-1, a-2 ,a-3")
+    with pytest.raises(Exception, match="at most 2 backups"):
+        Settings(_env_file=None)
+    monkeypatch.setenv("LLM_AGENT_BACKUP_MODELS", "a-1, a-2")
+    assert Settings(_env_file=None).llm_agent_backup_models == "google_genai:a-1,google_genai:a-2"
+    monkeypatch.setenv("LLM_AGENT_BACKUP_MODELS", "")
+    assert Settings(_env_file=None).llm_agent_backup_models == ""
+    monkeypatch.setenv("LLM_RECOMMENDATION_BACKUP_MODELS", "a-1,a-2,a-3")
+    with pytest.raises(Exception, match="at most 2 backups"):
+        Settings(_env_file=None)
+
+
+def test_the_default_env_chains_pass_validation(monkeypatch):
+    # Every shipped default, including recommendation's, under the new caps.
+    from ._adapters import Settings
+
+    for key in ("DATABASE_URL", "SECRET_KEY", "BREVO_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.setenv(key, "x")
+    for name in Settings.model_fields:
+        if name.startswith("llm_") and name.endswith(("_model", "_backup_models")):
+            monkeypatch.delenv(name.upper(), raising=False)
+    s = Settings(_env_file=None)
+    assert s.llm_recommendation_backup_models == "google_genai:gemma-4-31b-it"
+
+
+def test_the_processor_default_chain_is_the_pre_phase_2_one():
+    from ._adapters import Settings
+
+    fields = Settings.model_fields
+    assert fields["llm_processor_model"].default == "google_genai:gemma-4-31b-it"
+    assert llm_config.split_env_list(fields["llm_processor_backup_models"].default) == [
+        "google_genai:gemma-4-26b-it", "google_genai:gemini-3.5-flash-lite", "google_genai:gemini-3.1-flash-lite",
+    ]
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("gemma-4-31b-it", "google_genai:gemma-4-31b-it"),
+    ("google_genai:gemini-3.5-flash", "google_genai:gemini-3.5-flash"),
+    ("google_genai:models/gemini-3.5-flash", "google_genai:gemini-3.5-flash"),
+    (" google_genai : gemma-4-26b-it ", "google_genai:gemma-4-26b-it"),
+])
+def test_valid_specs_normalize(value, expected):
+    assert llm_config.validate_spec("agent", value) == expected
+
+
+@pytest.mark.parametrize("value", ["", "openai:gpt-5", "google_genai:", "google_genai:Gemma 4", "x:y:z"])
+def test_invalid_specs_are_rejected(value):
+    with pytest.raises(ValueError):
+        llm_config.validate_spec("agent", value)
+
+
+# --------------------------------------------------------------------------
+# models.list
+# --------------------------------------------------------------------------
+_GEMMA_NO_DESCRIPTION = {
+    "name": "models/gemma-4-31b-it", "displayName": "Gemma 4 31B",
+    "inputTokenLimit": 131072, "outputTokenLimit": 8192,
+    "supportedGenerationMethods": ["generateContent", "countTokens"],
+}
+
+
+def test_the_parser_tolerates_a_missing_description_and_filters_methods():
+    pages = [{"models": [
+        _GEMMA_NO_DESCRIPTION,
+        {"name": "models/gemini-embedding-2", "supportedGenerationMethods": ["embedContent"]},
+        {"name": "models/gemini-3.5-flash", "displayName": "Gemini 3.5 Flash", "description": "fast",
+         "inputTokenLimit": 1048576, "outputTokenLimit": 65536, "thinking": True,
+         "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/bare", "supportedGenerationMethods": ["generateContent"]},
+    ]}]
+
+    models = llm_config.parse_model_list(pages)
+
+    assert [m["name"] for m in models] == ["gemma-4-31b-it", "gemini-3.5-flash", "bare"]
+    assert models[0] == {
+        "name": "gemma-4-31b-it", "spec": "google_genai:gemma-4-31b-it", "display_name": "Gemma 4 31B",
+        "input_token_limit": 131072, "output_token_limit": 8192, "thinking": None,
+    }
+    assert models[1]["thinking"] is True
+    assert models[2]["display_name"] == "bare"
+
+
+def test_model_list_follows_pagination_and_caches(gemini, monkeypatch):
+    gemini.list_pages = [
+        {"models": [_GEMMA_NO_DESCRIPTION], "nextPageToken": "1"},
+        {"models": [{"name": "models/gemma-4-26b-it", "supportedGenerationMethods": ["generateContent"]}]},
+    ]
+    monkeypatch.setattr(llm_config, "_MODELS_URL", f"{gemini.url}/v1beta/models")
+    monkeypatch.setattr(llm_config, "settings", SimpleNamespace(gemini_api_key="test-key"))
+    monkeypatch.setattr(llm_config, "_model_list", None)
+
+    models, _ = llm_config.model_list()
+    assert [m["name"] for m in models] == ["gemma-4-31b-it", "gemma-4-26b-it"]
+    assert len(gemini.calls) == 2
+
+    llm_config.model_list()
+    assert len(gemini.calls) == 2  # cached
+    llm_config.model_list(refresh=True)
+    assert len(gemini.calls) == 4

@@ -28,7 +28,7 @@ def test_handler_logs_summed_usage(monkeypatch):
         {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
     ))
 
-    assert calls == [("recommendation", "gemini-3.5-flash", 105, 21, uid)]
+    assert calls == [("recommendation", "gemini-3.5-flash", 105, 21, uid, 0)]
 
 
 def test_handler_skips_calls_without_usage(monkeypatch):

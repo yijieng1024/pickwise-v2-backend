@@ -271,8 +271,6 @@ def test_a_withheld_candidate_does_not_break_recommendations(
     Embedding, LLM and API key are stubbed: this is about what the pipeline does
     with the scores, and none of the three touches them.
     """
-    from types import SimpleNamespace
-
     from langchain_core.runnables import RunnableLambda
 
     from app.benchmark.model import CPUBenchmark
@@ -306,11 +304,7 @@ def test_a_withheld_candidate_does_not_break_recommendations(
             return RunnableLambda(lambda _: _LLMOutput(explanations=[], summary="stub"))
 
     monkeypatch.setattr(service, "embed_text", lambda _q: near)
-    monkeypatch.setattr(service, "ChatGoogleGenerativeAI", _StubLLM)
-    monkeypatch.setattr(service, "settings", SimpleNamespace(
-        gemini_api_key="stub-never-sent", llm_timeout_s=60.0, llm_max_retries=1,
-        llm_total_deadline_s=60.0,
-    ))
+    monkeypatch.setattr(service, "build_llm", lambda *a, **k: _StubLLM())
 
     r = api_client.post("/api/v2/recommendations/laptops", json={"query": "gaming laptop", "top_k": 3})
     assert r.status_code == 200, r.text

@@ -58,7 +58,13 @@ import yaml
 
 EVAL_DIR = Path(__file__).parent
 RUNS_DIR = EVAL_DIR / "runs"
-JUDGE_MODEL = "gemma-4-31b-it"  # same model as the agent — one shared quota pool
+# Fixed on purpose and never behind a fallback: a judge that switched models
+# would make two runs incomparable.
+JUDGE_MODEL = "gemma-4-31b-it"
+# The agent model under test. None = the configured `agent` primary (app_settings
+# or env), resolved once in cmd_run. Always ONE model with no fallback, so a run
+# measures that model and not whichever answered. `--agent-model` overrides it.
+AGENT_MODEL_SPEC = None
 
 # make `import app` work when run as `python eval/run_eval.py`
 sys.path.insert(0, str(EVAL_DIR.parent))
@@ -101,7 +107,7 @@ def _get_agent():
         from app.agent.graph import build_agent_llm
         from app.agent.tools import ALL_TOOLS
 
-        llm = build_agent_llm(rate_limiter=_get_rate_limiter())
+        llm = build_agent_llm(rate_limiter=_get_rate_limiter(), model=AGENT_MODEL_SPEC)
         _agent = create_agent(llm, ALL_TOOLS)
     return _agent
 
@@ -519,9 +525,15 @@ async def run_one(item: dict, use_judge: bool) -> dict:
     }
 
 async def cmd_run(args):
-    global MAX_RPM
+    global MAX_RPM, AGENT_MODEL_SPEC
     if args.rpm:
         MAX_RPM = args.rpm
+    from app.common import llm_config
+
+    if args.agent_model:
+        AGENT_MODEL_SPEC = llm_config.validate_spec(llm_config.AGENT, args.agent_model)
+    else:
+        AGENT_MODEL_SPEC = llm_config.resolve_models(llm_config.AGENT)[0]
 
     queries = yaml.safe_load((EVAL_DIR / "queries.yaml").read_text(encoding="utf-8"))
     if args.only:
@@ -683,6 +695,11 @@ if __name__ == "__main__":
     pr.add_argument("--limit", type=int, help="run at most N queries (small trial slices)")
     pr.add_argument("--rpm", type=float, help=f"override the global rate limit (default {MAX_RPM:.0f} RPM)")
     pr.add_argument("--no-judge", action="store_true", help="skip the LLM judge, rule checks only")
+    pr.add_argument(
+        "--agent-model",
+        help="agent model under test, e.g. google_genai:gemma-4-26b-it "
+        "(default: the configured agent primary). Never falls back.",
+    )
 
     pc = sub.add_parser("compare")
     pc.add_argument("run_a")

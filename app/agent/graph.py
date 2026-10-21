@@ -1,16 +1,18 @@
 import json
 import uuid
+from functools import lru_cache
 from typing import Optional
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.rate_limiters import BaseRateLimiter, InMemoryRateLimiter
-from app.common.llm import ChatGoogleGenerativeAI
+from langchain_core.runnables import Runnable
+from app.common import llm_config
+from app.common.llm import build_llm
 from sqlmodel import Session, select
 
 from app.agent.monitoring_service import MonitoringCallbackHandler
 from app.agent.tools import ALL_TOOLS, make_search_laptops
-from app.config import settings
 from app.database import session_scope
 from app.rag.models import ConversationLaptop, Message, MessageRole
 from app.laptops.laptop_models import Laptop, LaptopStatus
@@ -25,17 +27,23 @@ from app.users.models import LaptopUserPreference
 # limit). 8 still covers ~4 back-and-forth exchanges of follow-up context.
 _HISTORY_WINDOW = 8
 
-# Single source of truth for the agent LLM config — eval/run_eval.py imports
-# build_agent_llm() so offline evals always measure the same setup
-# production runs.
-AGENT_MODEL = "gemma-4-31b-it"
+# Single source of truth for the agent LLM config -- eval/run_eval.py imports
+# build_agent_llm() so offline evals always measure the same setup production
+# runs. The MODEL is no longer a constant here: it is the `agent` use in
+# app/common/llm_config.py (admin-switchable, env default
+# LLM_AGENT_MODEL / LLM_AGENT_BACKUP_MODEL).
 AGENT_TEMPERATURE = 0.3
 
-# Process-wide token bucket that paces outbound model calls. The ReAct loop
-# fires every internal step back-to-back (sub-second apart), which is what
-# spikes tokens-per-minute past the Gemini free-tier cap (16K TPM) and trips
-# 429s. Pacing to ~1 call / 5s spreads those steps out and keeps request rate
-# well under the RPM ceiling (30/min).
+
+# Process-wide token bucket that paces outbound model calls, one per MODEL. The
+# ReAct loop fires every internal step back-to-back (sub-second apart), which
+# is what spikes tokens-per-minute past the Gemini free-tier cap (16K TPM) and
+# trips 429s. Pacing to ~1 call / 5s spreads those steps out and keeps request
+# rate well under the RPM ceiling (30/min).
+#
+# Per model, not per role: free-tier quotas are per model, so the backup has
+# its own budget and must not wait behind the primary's bucket after a 429 --
+# and a model switched from backup to primary keeps the same bucket.
 #
 # Tuning knob: lower requests_per_second = fewer 429s, slower replies. Note
 # this SMOOTHS bursts but does not by itself guarantee staying under 16K TPM
@@ -43,25 +51,36 @@ AGENT_TEMPERATURE = 0.3
 # to come down (system-prompt / tool-doc trim). Also: one bucket per process,
 # so a multi-worker deploy (e.g. Render with >1 worker) multiplies the
 # effective rate by the worker count.
-_AGENT_RATE_LIMITER = InMemoryRateLimiter(
-    requests_per_second=0.2,
-    check_every_n_seconds=0.1,
-    max_bucket_size=1,
-)
+@lru_cache(maxsize=None)
+def _agent_rate_limiter(_spec: str) -> InMemoryRateLimiter:
+    limiter = InMemoryRateLimiter(
+        requests_per_second=0.2,
+        check_every_n_seconds=0.1,
+        max_bucket_size=1,
+    )
+    # Start full. InMemoryRateLimiter starts EMPTY, so a model's first call in
+    # a process waited the whole 5 s refill -- for the backup, that is the
+    # first fallback after a 429. One request is the bucket's designed burst.
+    limiter.available_tokens = 1.0
+    return limiter
 
 
-def build_agent_llm(rate_limiter: Optional[BaseRateLimiter] = None) -> ChatGoogleGenerativeAI:
-    """Construct the agent LLM. Defaults to the shared production rate limiter;
-    the eval harness passes its own so it can share one global limiter across
-    agent + judge calls."""
-    return ChatGoogleGenerativeAI(
-        model=AGENT_MODEL,
+def build_agent_llm(
+    rate_limiter: Optional[BaseRateLimiter] = None,
+    model: Optional[str] = None,
+) -> Runnable:
+    """Construct the agent LLM: the configured primary, falling back through
+    the configured backups in order (at most 2 for the agent).
+
+    `model` pins ONE model with no fallback -- what the eval harness does, so
+    a run measures exactly one model instead of whichever answered. It also
+    passes `rate_limiter` to share one global limiter across agent + judge
+    calls; production uses a limiter per model."""
+    return build_llm(
+        llm_config.AGENT,
         temperature=AGENT_TEMPERATURE,
-        google_api_key=settings.gemini_api_key,
-        timeout=settings.llm_timeout_s,
-        max_retries=settings.llm_max_retries,
-        total_deadline_s=settings.llm_total_deadline_s,
-        rate_limiter=rate_limiter or _AGENT_RATE_LIMITER,
+        rate_limiter_for=(lambda _spec: rate_limiter) if rate_limiter else _agent_rate_limiter,
+        models=(model, ()) if model else None,
     )
 
 _SYSTEM_PROMPT = (

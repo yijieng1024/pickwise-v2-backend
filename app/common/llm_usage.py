@@ -46,6 +46,12 @@ class LLMUsageLog(SQLModel, table=True):
     model: str = Field(max_length=100)
     input_tokens: int = 0
     output_tokens: int = 0
+    # Where `model` sits in the use's chain: 0 = primary, 1..n = backups in
+    # order (app/common/llm.py). `is_fallback` is position > 0, kept as its own
+    # column so "how often did we fall back" needs no arithmetic.
+    # `model` is always the model that actually answered.
+    is_fallback: bool = Field(default=False, sa_column_kwargs={"server_default": "false"})
+    model_position: int = Field(default=0, sa_column_kwargs={"server_default": "0"})
     # Null for calls no user triggered directly (admin batch jobs).
     user_id: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id", index=True)
     # Naive UTC, matching agent_run_logs.created_at's live column type.
@@ -60,6 +66,7 @@ def log_llm_usage(
     input_tokens: int,
     output_tokens: int,
     user_id: Optional[uuid.UUID] = None,
+    model_position: int = 0,
 ) -> None:
     """Persist one usage row on its own short session. Never raises."""
     try:
@@ -68,6 +75,7 @@ def log_llm_usage(
                 feature=feature, model=model,
                 input_tokens=input_tokens, output_tokens=output_tokens,
                 user_id=user_id,
+                is_fallback=model_position > 0, model_position=model_position,
             ))
             session.commit()
     except Exception:
@@ -93,12 +101,15 @@ class TokenUsageHandler(BaseCallbackHandler):
     Errored calls fire on_llm_error instead of on_llm_end and are not logged —
     a failed call reports no usage to log."""
 
-    def __init__(self, feature: str, model: str, user_id: Optional[uuid.UUID] = None) -> None:
+    def __init__(
+        self, feature: str, model: str, user_id: Optional[uuid.UUID] = None, model_position: int = 0,
+    ) -> None:
         self.feature = feature
         self.model = model
         self.user_id = user_id
+        self.model_position = model_position
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         tokens_in, tokens_out = usage_from_response(response)
         if tokens_in or tokens_out:
-            log_llm_usage(self.feature, self.model, tokens_in, tokens_out, self.user_id)
+            log_llm_usage(self.feature, self.model, tokens_in, tokens_out, self.user_id, self.model_position)

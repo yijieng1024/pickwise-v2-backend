@@ -45,16 +45,6 @@ from ._adapters import (
     users_router,
 )
 
-_SETTINGS = SimpleNamespace(
-    gemini_api_key="test-key",
-    llm_timeout_s=60.0,
-    llm_max_retries=1,
-    llm_total_deadline_s=60.0,
-    embedding_timeout_s=15.0,
-    embedding_max_retries=2,
-)
-
-
 @pytest.fixture
 def db(tmp_path):
     """(engine, session) on a pooled SQLite file. The tables never exist;
@@ -117,7 +107,7 @@ def _laptop(**kw):
 
 
 class _FakeChatModel:
-    """Stands in for ChatGoogleGenerativeAI; the structured runnable is the probe."""
+    """Stands in for build_llm's model; the structured runnable is the probe."""
 
     probe = None
 
@@ -142,7 +132,6 @@ def test_recommendation_holds_no_connection_during_embed_or_llm(db, monkeypatch)
     )
     _reads(monkeypatch, session, [pref], [(laptop, "Asus", 0.2)])
     svc = recommendation_service
-    monkeypatch.setattr(svc, "settings", _SETTINGS)
     monkeypatch.setattr(svc, "embed_text", _probe(engine, calls, "embed", [0.0] * 768))
     monkeypatch.setattr(svc, "get_scoring_data", lambda s: ({}, [], []))
     monkeypatch.setattr(
@@ -153,7 +142,7 @@ def test_recommendation_holds_no_connection_during_embed_or_llm(db, monkeypatch)
         engine, calls, "llm",
         lambda: svc._LLMOutput(explanations=[], summary="ok"),
     )
-    monkeypatch.setattr(svc, "ChatGoogleGenerativeAI", _FakeChatModel)
+    monkeypatch.setattr(svc, "build_llm", lambda *a, **k: _FakeChatModel())
 
     svc.get_recommendations("gaming", uuid.uuid4(), session, None, None, 3, 15)
 
@@ -215,14 +204,13 @@ def test_review_processor_first_chunk_holds_no_connection(db, monkeypatch):
         raw_transcript={"segments": [{"start": 0.0, "duration": 5.0, "text": "fast"}]},
     )
     _reads(monkeypatch, session, [raw], [SimpleNamespace(channel_name="Chan")])
-    monkeypatch.setattr(review_processor, "settings", _SETTINGS)
     monkeypatch.setattr(review_processor.time, "sleep", lambda s: None)
     monkeypatch.setattr(review_processor, "embed_text", _probe(engine, calls, "embed", [0.0] * 768))
     _FakeChatModel.probe = _probe(
         engine, calls, "llm",
         lambda: review_processor._ChunkAnalysis(summary="fast", sentiment_tag="strength"),
     )
-    monkeypatch.setattr(review_processor, "ChatGoogleGenerativeAI", _FakeChatModel)
+    monkeypatch.setattr(review_processor, "build_llm", lambda *a, **k: _FakeChatModel())
 
     report = review_processor.process_raw_review(uuid.uuid4(), session)
 
@@ -373,14 +361,16 @@ def hanging_server():
 def test_agent_llm_times_out_against_a_hanging_provider(hanging_server, monkeypatch):
     from langchain_core.rate_limiters import InMemoryRateLimiter
 
-    monkeypatch.setattr(agent_graph, "settings", SimpleNamespace(
+    monkeypatch.setattr(llm_module, "settings", SimpleNamespace(
         gemini_api_key="test-key", llm_timeout_s=1.0, llm_max_retries=1, llm_total_deadline_s=60.0,
     ))
     monkeypatch.setattr(
-        agent_graph, "ChatGoogleGenerativeAI",
-        functools.partial(agent_graph.ChatGoogleGenerativeAI, base_url=hanging_server),
+        llm_module, "ChatGoogleGenerativeAI",
+        functools.partial(llm_module.ChatGoogleGenerativeAI, base_url=hanging_server),
     )
-    llm = agent_graph.build_agent_llm(rate_limiter=InMemoryRateLimiter(requests_per_second=100))
+    llm = agent_graph.build_agent_llm(
+        rate_limiter=InMemoryRateLimiter(requests_per_second=100), model="google_genai:gemma-4-31b-it",
+    )
 
     started = time.monotonic()
     with pytest.raises(Exception):
@@ -441,14 +431,16 @@ def test_every_chat_model_construction_sets_timeout_and_retries():
 def _deadline_llm(monkeypatch, hanging_server):
     from langchain_core.rate_limiters import InMemoryRateLimiter
 
-    monkeypatch.setattr(agent_graph, "settings", SimpleNamespace(
+    monkeypatch.setattr(llm_module, "settings", SimpleNamespace(
         gemini_api_key="test-key", llm_timeout_s=30.0, llm_max_retries=1, llm_total_deadline_s=1.0,
     ))
     monkeypatch.setattr(
-        agent_graph, "ChatGoogleGenerativeAI",
-        functools.partial(agent_graph.ChatGoogleGenerativeAI, base_url=hanging_server),
+        llm_module, "ChatGoogleGenerativeAI",
+        functools.partial(llm_module.ChatGoogleGenerativeAI, base_url=hanging_server),
     )
-    return agent_graph.build_agent_llm(rate_limiter=InMemoryRateLimiter(requests_per_second=100))
+    return agent_graph.build_agent_llm(
+        rate_limiter=InMemoryRateLimiter(requests_per_second=100), model="google_genai:gemma-4-31b-it",
+    )
 
 
 def test_the_deadline_not_the_read_timeout_ends_a_hanging_invoke(hanging_server, monkeypatch):

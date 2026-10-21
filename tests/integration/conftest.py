@@ -242,6 +242,23 @@ def no_scoring_cache_thread():
         yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def no_model_settings_reads():
+    """
+    Model resolution (app/common/llm_config.py) reads app_settings on its own
+    Session(engine) -- the APP's engine, which outside _app_client would be
+    built from DATABASE_URL and trip its "engine was resolved" guard, the same
+    way the scoring-cache thread did. So every test gets the env defaults;
+    test_llm_settings_api.py restores the real read inside admin_client, where
+    `engine` is the test's connection.
+    """
+    from app.common import llm_config
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(llm_config, "_read_rows", lambda use: {})
+        yield
+
+
 @pytest.fixture(scope="session")
 def engine(database_url):
     """

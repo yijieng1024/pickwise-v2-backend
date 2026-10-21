@@ -3,12 +3,12 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from langchain_core.prompts import ChatPromptTemplate
-from app.common.llm import ChatGoogleGenerativeAI
+from app.common import llm_config
+from app.common.llm import build_llm
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
-from app.common.llm_usage import LLMFeature, TokenUsageHandler
-from app.config import settings
+from app.common.llm_usage import LLMFeature
 from app.database import end_transaction, held_instances
 from app.embeddings.service import embed_text
 from app.laptops.brand_model import LaptopBrand
@@ -170,14 +170,10 @@ def get_recommendations(
     )
 
     # 6. Call Gemini with structured output
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash",
-        temperature=0.3,
-        google_api_key=settings.gemini_api_key,
-        timeout=settings.llm_timeout_s,
-        max_retries=settings.llm_max_retries,
-        total_deadline_s=settings.llm_total_deadline_s,
-        callbacks=[TokenUsageHandler(LLMFeature.RECOMMENDATION, "gemini-3.5-flash", user_id)],
+    # Configured primary, then each backup in order, on 429 / timeout / 5xx (app/common/llm.py).
+    llm = build_llm(
+        llm_config.RECOMMENDATION, temperature=0.3,
+        feature=LLMFeature.RECOMMENDATION, user_id=user_id,
     )
     structured_llm = llm.with_structured_output(_LLMOutput)
     chain = ChatPromptTemplate.from_messages([

@@ -18,10 +18,6 @@ from sqlmodel import select
 
 from tests.integration.conftest import make_laptop
 
-_SETTINGS = SimpleNamespace(
-    gemini_api_key="test-key", llm_timeout_s=60.0, llm_max_retries=1, llm_total_deadline_s=60.0,
-    embedding_timeout_s=15.0, embedding_max_retries=2,
-)
 _VEC = [0.01] * 768
 
 
@@ -69,9 +65,8 @@ def test_recommendation_on_real_rows_cold_and_warm(session, catalog, api_user, c
         priorities={}, screen_size=[], brand_preferences=[], tech_savviness="Very tech-savvy",
     ))
     session.commit()
-    monkeypatch.setattr(svc, "settings", _SETTINGS)
     monkeypatch.setattr(svc, "embed_text", lambda q: _VEC)
-    monkeypatch.setattr(svc, "ChatGoogleGenerativeAI", _FakeChatModel)
+    monkeypatch.setattr(svc, "build_llm", lambda *a, **k: _FakeChatModel())
     # Reads the caller's (fixture) rows from inside the LLM call: they must
     # still be usable after the service ended its transactions.
     _FakeChatModel.output = lambda: svc._LLMOutput(
@@ -240,10 +235,9 @@ def test_process_raw_review_on_real_rows(session, catalog, monkeypatch):
     raw.raw_transcript = {"segments": [{"start": float(s), "duration": 5.0, "text": "fast"} for s in range(0, 100, 5)]}
     session.add(raw)
     session.commit()
-    monkeypatch.setattr(processor, "settings", _SETTINGS)
     monkeypatch.setattr(processor.time, "sleep", lambda s: None)
     monkeypatch.setattr(processor, "embed_text", lambda t: _VEC)
-    monkeypatch.setattr(processor, "ChatGoogleGenerativeAI", _FakeChatModel)
+    monkeypatch.setattr(processor, "build_llm", lambda *a, **k: _FakeChatModel())
     _FakeChatModel.output = lambda: processor._ChunkAnalysis(summary="fast", sentiment_tag="strength")
 
     report = processor.process_raw_review(raw.id, session)

@@ -1,5 +1,6 @@
 from typing import Optional
 
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -48,6 +49,53 @@ class Settings(BaseSettings):
     llm_total_deadline_s: float = 60.0
     embedding_timeout_s: float = 15.0
     embedding_max_retries: int = 2
+
+    # Chat models per use, "provider:model": a primary and an ORDERED,
+    # comma-separated list of backups (empty = no fallback). These are the
+    # DEFAULTS: an admin override in app_settings (`<use>.model` /
+    # `<use>.backup_models`) wins, and an invalid override falls back to these
+    # (app/common/llm_config.py). Backups are tried in order when a model 429s,
+    # times out or 5xxs; the agent and recommendation allow at most 2.
+    # Not covered, on purpose: the eval judge (eval/run_eval.py, fixed so runs
+    # stay comparable) and embeddings (one vector space, one 0.53 threshold).
+    llm_agent_model: str = "google_genai:gemma-4-31b-it"
+    llm_agent_backup_models: str = "google_genai:gemma-4-26b-it"
+    llm_recommendation_model: str = "google_genai:gemini-3.5-flash"
+    llm_recommendation_backup_models: str = "google_genai:gemma-4-31b-it"
+    llm_review_processor_model: str = "google_genai:gemma-4-31b-it"
+    llm_review_processor_backup_models: str = "google_genai:gemma-4-26b-it"
+    # The processor's pre-Phase-2 overload chain, kept as its default.
+    llm_processor_model: str = "google_genai:gemma-4-31b-it"
+    llm_processor_backup_models: str = (
+        "google_genai:gemma-4-26b-it,google_genai:gemini-3.5-flash-lite,google_genai:gemini-3.1-flash-lite"
+    )
+
+    # The env value is the last resort for an invalid app_settings row, so it
+    # has nothing to fall back to: a bad one fails startup instead. Each primary
+    # is declared before its backups, so `info.data` holds it below.
+    @field_validator(
+        "llm_agent_model", "llm_recommendation_model",
+        "llm_review_processor_model", "llm_processor_model",
+    )
+    @classmethod
+    def _valid_model_spec(cls, value: str, info: ValidationInfo) -> str:
+        from app.common.llm_config import validate_spec  # imports this module
+
+        return validate_spec(info.field_name.removeprefix("llm_").removesuffix("_model"), value)
+
+    @field_validator(
+        "llm_agent_backup_models", "llm_recommendation_backup_models",
+        "llm_review_processor_backup_models", "llm_processor_backup_models",
+    )
+    @classmethod
+    def _valid_backup_list(cls, value: str, info: ValidationInfo) -> str:
+        from app.common.llm_config import split_env_list, validate_backups
+
+        use = info.field_name.removeprefix("llm_").removesuffix("_backup_models")
+        primary = info.data.get(f"llm_{use}_model")
+        if primary is None:  # the primary already failed; that error suffices
+            return value
+        return ",".join(validate_backups(use, split_env_list(value), primary))
 
     # Google Sign-In (OAuth web client ID) — optional; POST /auth/google
     # Google ID tokens sent by the frontend.
