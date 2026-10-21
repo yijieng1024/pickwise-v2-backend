@@ -98,15 +98,22 @@ class _FakeGemini:
 
 
 @pytest.fixture
-def gemini(monkeypatch):
+def llm_settings(monkeypatch):
+    """What building a model reads from settings. The unit tier runs with no
+    configuration (no .env in CI), so a test that builds a real model must
+    not reach the real Settings -- a local .env would hide that."""
+    monkeypatch.setattr(llm_module, "settings", SimpleNamespace(
+        gemini_api_key="test-key", llm_timeout_s=30.0, llm_max_retries=1, llm_total_deadline_s=1.0,
+    ))
+
+
+@pytest.fixture
+def gemini(monkeypatch, llm_settings):
     fake = _FakeGemini()
     srv = ThreadingHTTPServer(("127.0.0.1", 0), fake.handler())
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
     url = f"http://127.0.0.1:{srv.server_port}"
-    monkeypatch.setattr(llm_module, "settings", SimpleNamespace(
-        gemini_api_key="test-key", llm_timeout_s=30.0, llm_max_retries=1, llm_total_deadline_s=1.0,
-    ))
     monkeypatch.setattr(
         llm_module, "ChatGoogleGenerativeAI",
         functools.partial(llm_module.ChatGoogleGenerativeAI, base_url=url),
@@ -354,7 +361,7 @@ def test_usage_log_names_the_backup_when_it_answered(gemini, monkeypatch):
 # --------------------------------------------------------------------------
 # Where fallback must NOT apply
 # --------------------------------------------------------------------------
-def test_eval_pins_one_agent_model_with_no_fallback():
+def test_eval_pins_one_agent_model_with_no_fallback(llm_settings):
     llm = agent_graph.build_agent_llm(model=_P)
     assert isinstance(llm, llm_module.ChatGoogleGenerativeAI)  # not RunnableWithFallbacks
     assert llm.model == "primary-model"
@@ -380,7 +387,7 @@ def test_embeddings_have_no_fallback():
         assert marker not in src, f"embeddings must stay on one model ({marker})"
 
 
-def test_no_backups_means_no_fallback():
+def test_no_backups_means_no_fallback(llm_settings):
     for backups in ((), (_P,)):  # a backup equal to the primary is skipped
         llm = llm_module.build_llm("agent", temperature=0, models=(_P, backups))
         assert isinstance(llm, llm_module.ChatGoogleGenerativeAI)
@@ -420,7 +427,7 @@ def test_env_defaults_apply_when_no_row_exists(settings_db):
     assert (r.backups.values, r.backups.source) == (_AGENT_ENV_BACKUPS, "env")
 
 
-def test_a_settings_change_takes_effect_without_a_restart(settings_db):
+def test_a_settings_change_takes_effect_without_a_restart(settings_db, llm_settings):
     assert llm_config.resolve_models("agent")[0] == "google_genai:env-agent-model"  # now cached
 
     app_settings_module.set_setting(settings_db, "agent.model", "google_genai:gemma-4-26b-it")
