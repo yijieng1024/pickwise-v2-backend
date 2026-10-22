@@ -47,6 +47,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
           PRODUCTION_DB_REF: ${{ secrets.PRODUCTION_DB_REF }}
+          # Required by Settings() but never used by the eval (no JWTs signed,
+          # no email sent), so placeholders -- not real secrets -- are correct.
+          SECRET_KEY: ci-eval-placeholder
+          BREVO_API_KEY: ci-eval-placeholder
         run: |
           # 7 RPM, not the default 15: the binding free-tier limit is the
           # 16,000 input-TPM cap, not the request cap. Judge prompts carry up
