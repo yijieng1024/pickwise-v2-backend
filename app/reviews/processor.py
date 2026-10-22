@@ -11,8 +11,8 @@ from sqlmodel import Session, select
 from app.common.llm_usage import LLMFeature
 from app.embeddings.service import embed_text
 from app.logger import get_logger
-from app.reviews.link_service import links_by_review, processing_laptop_id
-from app.reviews.models import LaptopReviewChunk, RawYoutubeReview, ReviewStatus
+from app.reviews.link_service import links_by_review, processing_target
+from app.reviews.models import ChunkScope, LaptopReviewChunk, RawYoutubeReview, ReviewStatus
 
 logger = get_logger(__name__)
 
@@ -89,12 +89,19 @@ class AlreadyProcessed(ValueError):
     /process/{id} from running again on a finished review."""
 
 
-def _saved_windows(session: Session, video_id: str, laptop_id: uuid.UUID) -> set[int]:
+def _saved_windows(
+    session: Session, video_id: str, family_id: uuid.UUID, laptop_id: uuid.UUID | None
+) -> set[int]:
     return set(
         session.exec(
             select(LaptopReviewChunk.timestamp_start_seconds)
             .where(LaptopReviewChunk.video_id == video_id)
-            .where(LaptopReviewChunk.laptop_id == laptop_id)
+            .where(LaptopReviewChunk.family_id == family_id)
+            .where(
+                LaptopReviewChunk.laptop_id.is_(None)  # type: ignore[union-attr]
+                if laptop_id is None
+                else LaptopReviewChunk.laptop_id == laptop_id
+            )
         ).all()
     )
 
@@ -103,9 +110,9 @@ def processing_candidates(session: Session) -> list[dict]:
     """Reviews /process-bulk should run, and /pipeline-status counts -- one
     function so the two can never disagree.
 
-    A candidate is MATCHED, has effective links naming exactly one
-    configuration (link_service.processing_laptop_id), and has at least one
-    transcript window with no chunk for that laptop yet. "Any chunk exists" is
+    A candidate is MATCHED, has effective links that resolve to one target
+    (link_service.processing_target: one family, at most one configuration),
+    and has at least one transcript window with no chunk for that target yet. "Any chunk exists" is
     NOT "processed": a run that saved 3 of 40 windows would otherwise never be
     retried. Completion is derived from the transcript, so it needs no column.
     """
@@ -115,24 +122,25 @@ def processing_candidates(session: Session) -> list[dict]:
         .order_by(RawYoutubeReview.created_at, RawYoutubeReview.id)  # type: ignore[arg-type]
     ).all()
     links = links_by_review(session, [r.id for r in reviews])
-    saved: dict[tuple[str, uuid.UUID], set[int]] = {}
-    for video_id, laptop_id, start in session.exec(
+    saved: dict[tuple, set[int]] = {}
+    for video_id, family_id, laptop_id, start in session.exec(
         select(
             LaptopReviewChunk.video_id,
+            LaptopReviewChunk.family_id,
             LaptopReviewChunk.laptop_id,
             LaptopReviewChunk.timestamp_start_seconds,
         )
     ).all():
-        saved.setdefault((video_id, laptop_id), set()).add(start)
+        saved.setdefault((video_id, family_id, laptop_id), set()).add(start)
 
     out = []
     for r in reviews:
-        laptop_id = processing_laptop_id(links[r.id])
+        target = processing_target(links[r.id])
         segments = (r.raw_transcript or {}).get("segments", [])
-        if laptop_id is None or not segments:
+        if target is None or not segments:
             continue
         expected = {c["start"] for c in _chunk_transcript(segments)}
-        done = saved.get((r.video_id, laptop_id), set()) & expected
+        done = saved.get((r.video_id, *target), set()) & expected
         if done != expected:
             out.append({
                 "review_id": r.id,
@@ -160,9 +168,11 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
     class per chunk, so "the model rejected this excerpt" and "we are being
     rate limited" stay distinguishable.
 
-    The laptop comes from review_laptop_link, never matched_laptop_id: the
-    review must be MATCHED and its effective links must name exactly one
-    configuration. Family-only links stay unprocessed until Review B.
+    The target comes from review_laptop_link (link_service.processing_target):
+    the review must be MATCHED and its effective links must name one family and
+    at most one configuration. A config link writes config-scope chunks on that
+    laptop; a family-only link writes family-scope chunks with laptop_id NULL
+    (Review B -- the scope is a rule here, Review C makes it a per-chunk call).
 
     Raises AlreadyProcessed (a ValueError) when there is nothing left to do,
     and ValueError when the review is not processable.
@@ -173,20 +183,22 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
 
     if not raw:
         raise ValueError(f"RawYoutubeReview {raw_review_id} not found.")
-    laptop_id = processing_laptop_id(links_by_review(session, [raw.id])[raw.id])
-    if raw.status != ReviewStatus.MATCHED.value or laptop_id is None:
+    target = processing_target(links_by_review(session, [raw.id])[raw.id])
+    if raw.status != ReviewStatus.MATCHED.value or target is None:
         raise ValueError(
             f"Review {raw_review_id} is not processable (status={raw.status}): it "
-            "must be matched and linked to exactly one configuration. Family-only "
-            "links wait for Review B."
+            "must be matched and linked to one family and at most one "
+            "configuration. Reviews linked to several families wait for Review C."
         )
+    family_id, laptop_id = target
+    scope = (ChunkScope.FAMILY if laptop_id is None else ChunkScope.CONFIG).value
 
     transcript_segments: list[dict] = raw.raw_transcript.get("segments", [])
     if not transcript_segments:
         raise ValueError(f"Review {raw_review_id} has no transcript segments stored.")
 
     all_chunks = _chunk_transcript(transcript_segments)
-    already = _saved_windows(session, raw.video_id, laptop_id)
+    already = _saved_windows(session, raw.video_id, family_id, laptop_id)
     chunks = [c for c in all_chunks if c["start"] not in already]
     already_saved = len(all_chunks) - len(chunks)
     if not chunks:
@@ -238,6 +250,8 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
             session.add(
                 LaptopReviewChunk(
                     laptop_id=laptop_id,
+                    family_id=family_id,
+                    scope=scope,
                     video_id=video_id,
                     channel_name=channel_name,
                     timestamp_start_seconds=chunk["start"],

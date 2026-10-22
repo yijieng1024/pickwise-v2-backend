@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pgvector.sqlalchemy import Vector
 from pydantic import field_validator, model_validator
-from sqlalchemy import Column, Text
+from sqlalchemy import CheckConstraint, Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -231,11 +231,37 @@ class RawYoutubeReview(SQLModel, table=True):
     )
 
 
+class ChunkScope(str, Enum):
+    """Who a chunk's claim applies to (ADR-0012).
+
+    Review B sets it by rule from the link the review was processed through: a
+    config link gives CONFIG (laptop_id set), a family-only link gives FAMILY
+    (laptop_id NULL -- the tested configuration was not stated). Review C
+    replaces the rule with a per-chunk judgement from the same Gemini call.
+    """
+    FAMILY = "family"
+    CONFIG = "config"
+
+
 class LaptopReviewChunk(SQLModel, table=True):
     __tablename__ = "laptop_review_chunks"  # type: ignore
+    __table_args__ = (
+        CheckConstraint("scope IN ('family', 'config')", name="ck_review_chunk_scope"),
+        # A config-scope claim is about one configuration, so it must name it.
+        # Family scope may keep a laptop_id (Review C: a chassis claim from a
+        # known config) or not (B: a family-only link).
+        CheckConstraint(
+            "scope = 'family' OR laptop_id IS NOT NULL",
+            name="ck_review_chunk_config_has_laptop",
+        ),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
+    laptop_id: Optional[uuid.UUID] = Field(
+        default=None, foreign_key="laptops.id", index=True, nullable=True
+    )
+    family_id: uuid.UUID = Field(foreign_key="laptop_family.id", index=True)
+    scope: str
     video_id: str = Field(index=True)
     channel_name: str
     timestamp_start_seconds: int

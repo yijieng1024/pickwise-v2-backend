@@ -172,7 +172,9 @@ def test_review_processor_first_chunk_holds_no_connection(db, monkeypatch):
         video_id="vid", channel_id="ch",
         raw_transcript={"segments": [{"start": 0.0, "duration": 5.0, "text": "fast"}]},
     )
-    link = SimpleNamespace(raw_review_id=raw.id, match_source="auto", laptop_id=uuid.uuid4())
+    link = SimpleNamespace(
+        raw_review_id=raw.id, match_source="auto", family_id=uuid.uuid4(), laptop_id=uuid.uuid4(),
+    )
     _reads(
         monkeypatch, session,
         [raw], [link],                        # the review, then its links

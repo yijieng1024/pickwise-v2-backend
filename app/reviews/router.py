@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, exists, func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
@@ -44,6 +44,7 @@ from app.reviews.link_service import (
     links_for_reviews,
     mark_indistinguishable,
     processing_laptop_id,
+    processing_target,
     resolve_family_for_laptop,
     separability,
     write_auto_link,
@@ -319,13 +320,11 @@ def manual_match(
     family_id = body.family_id or resolve_family_for_laptop(session, body.laptop_id)  # type: ignore[arg-type]
     link = create_human_link(session, review_id, family_id, body.laptop_id)
 
-    # The link is the whole record of the decision; matched_laptop_id is no
-    # longer written (Review A). A family-only match leaves status as it is
-    # rather than going to MATCHED: in this pipeline MATCHED means "ready for
-    # chunk processing", and the processor needs one configuration, so
-    # promoting it would only queue a review /process-bulk cannot run. The
-    # queue shows it with its link attached.
-    if body.laptop_id is not None:
+    # The link is the whole record of the decision. A config match is MATCHED
+    # from any status, as before; a family-only match promotes PENDING only,
+    # the same rule as POST /reviews/{id}/links (Review B: the processor now
+    # writes family-scope chunks for it).
+    if body.laptop_id is not None or review.status == ReviewStatus.PENDING.value:
         review.status = ReviewStatus.MATCHED.value
     session.add(review)
     session.commit()
@@ -828,31 +827,21 @@ def retry_transcripts(
 # family first because that is the level a reviewer actually covers, and the
 # configuration is frequently unknowable from the video.
 
-def _needs_link():
-    """SQL predicate for the human queue. PENDING, or MATCHED without a usable
-    configuration link. "Usable" mirrors link_service.processing_laptop_id's
-    precedence: a human config link counts; an auto config link counts only
-    when the review has no human link at all. (A review whose links name
-    several configs is processable by neither rule and is left out here; that
-    is Review B's comparison-video case.)"""
-    link = ReviewLaptopLink
-    on_review = link.raw_review_id == RawYoutubeReview.id
-    human_config = exists().where(
-        on_review, link.match_source == MatchSource.HUMAN.value,
-        link.laptop_id.is_not(None),  # type: ignore[union-attr]
-    )
-    any_human = exists().where(on_review, link.match_source == MatchSource.HUMAN.value)
-    auto_config = exists().where(
-        on_review, link.match_source == MatchSource.AUTO.value,
-        link.laptop_id.is_not(None),  # type: ignore[union-attr]
-    )
+def _needs_link(session: Session):
+    """SQL predicate for the human queue: every PENDING review, plus MATCHED
+    reviews that link_service.processing_target cannot resolve (no link,
+    several families, several configs) -- status says "matched" but nothing
+    can be processed. Built from the same function the processor runs, so the
+    queue and /process-bulk cannot disagree; a SQL copy of the link rules
+    would have to be kept in step by hand."""
+    matched = session.exec(
+        select(RawYoutubeReview.id).where(RawYoutubeReview.status == ReviewStatus.MATCHED.value)
+    ).all()
+    links = links_by_review(session, matched)
+    stuck = [rid for rid in matched if processing_target(links[rid]) is None]
     return or_(
         RawYoutubeReview.status == ReviewStatus.PENDING.value,
-        and_(
-            RawYoutubeReview.status == ReviewStatus.MATCHED.value,
-            ~human_config,
-            or_(any_human, ~auto_config),
-        ),
+        RawYoutubeReview.id.in_(stuck),  # type: ignore[attr-defined]
     )
 
 
@@ -895,7 +884,7 @@ def list_pending_reviews(
         segment_count,
     # IRRELEVANT and REJECTED never qualify: a dismissed review has left the
     # queue (undo is GET /reviews/raw?status=irrelevant).
-    ).where(_needs_link())
+    ).where(_needs_link(session))
     statement = apply_search(statement, search, [RawYoutubeReview.video_title])
     total = count_total(session, statement)
 
@@ -1198,6 +1187,12 @@ def create_review_link(
 
     # Shared with PATCH /reviews/raw/{id}/match — see link_service.
     link = create_human_link(session, raw_review_id, body.family_id, body.laptop_id)
+    # A human link is the decision the queue waits for, so a PENDING review
+    # becomes MATCHED (Review B). Only PENDING: a REJECTED review has no
+    # transcript to process and an IRRELEVANT one was dismissed on purpose.
+    if review.status == ReviewStatus.PENDING.value:
+        review.status = ReviewStatus.MATCHED.value
+        session.add(review)
     session.commit()
     session.refresh(link)
 
@@ -1264,9 +1259,8 @@ def pipeline_status(
     process_candidates = len(processing_candidates(session))
 
     # Link queue: the same predicate as GET /reviews/pending, split by whether
-    # the review already holds any link. Done-ness comes from links, never from
-    # status — a family-only link leaves the review `pending` on purpose.
-    pending_ids = session.exec(select(RawYoutubeReview.id).where(_needs_link())).all()
+    # the review already holds any link.
+    pending_ids = session.exec(select(RawYoutubeReview.id).where(_needs_link(session))).all()
     linked_ids = set(
         session.exec(
             select(ReviewLaptopLink.raw_review_id).distinct()

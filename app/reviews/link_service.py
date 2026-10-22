@@ -532,16 +532,36 @@ def effective_links(links: list[ReviewLaptopLink]) -> list[ReviewLaptopLink]:
 
 
 def processing_laptop_id(links: list[ReviewLaptopLink]) -> Optional[uuid.UUID]:
-    """The one configuration a review's chunks are attached to, or None.
+    """The one configuration a review's effective links name, or None.
 
-    Today's processor writes every chunk of a review to ONE laptop (it used to
-    be matched_laptop_id). So a review is processable only when its effective
-    links name exactly one configuration. None for family-only links (they wait
-    for Review B's family scope) and for several configs (a comparison video --
-    attaching all its claims to one machine, or to each, would be wrong).
+    Display only now (the `matched_laptop_id` field of /reviews/raw). What the
+    processor writes to is processing_target, which also refuses a review that
+    names one config but spans several families.
     """
     configs = {l.laptop_id for l in effective_links(links) if l.laptop_id is not None}
     return configs.pop() if len(configs) == 1 else None
+
+
+def processing_target(
+    links: list[ReviewLaptopLink],
+) -> Optional[tuple[uuid.UUID, Optional[uuid.UUID]]]:
+    """(family_id, laptop_id) a review's chunks are written to, or None.
+
+    Processable when the effective links name exactly one family and at most
+    one configuration: one config gives (family, config) and config-scope
+    chunks; none gives (family, None) and family-scope chunks (Review B).
+
+    None for no links, for several configs, and for several families -- a
+    comparison video waits for Review C even when one of its links names a
+    config, because attaching every claim of a versus video to one machine is
+    the error this rule exists to prevent.
+    """
+    eff = effective_links(links)
+    families = {l.family_id for l in eff}
+    configs = {l.laptop_id for l in eff if l.laptop_id is not None}
+    if len(families) != 1 or len(configs) > 1:
+        return None
+    return families.pop(), (configs.pop() if configs else None)
 
 
 def links_by_review(

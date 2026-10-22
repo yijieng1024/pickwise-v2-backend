@@ -178,15 +178,15 @@ def audit_overwrite(session, reviews, links_by_review) -> None:
 
 
 def audit_orphan_chunks(chunks, reviews_by_video, links_by_review) -> None:
-    _heading("5", "Chunks whose laptop has no config-level link on their review")
+    _heading("5", "Chunks whose (family, laptop) has no link on their review")
     orphans: Counter = Counter()
     for c in chunks:
         r = reviews_by_video.get(c.video_id)
-        cfgs = {l.laptop_id for l in links_by_review.get(r.id, [])} if r else set()
-        if c.laptop_id not in cfgs:
+        pairs = {(l.family_id, l.laptop_id) for l in links_by_review.get(r.id, [])} if r else set()
+        if (c.family_id, c.laptop_id) not in pairs:
             reason = "no raw review row" if r is None else f"status={r.status}"
             orphans[(c.video_id, reason)] += 1
-    print(f"chunk rows not backed by a link (review, laptop_id): {sum(orphans.values())}")
+    print(f"chunk rows not backed by a link (review, family_id, laptop_id): {sum(orphans.values())}")
     for (vid, reason), n in orphans.most_common():
         print(f"    {vid:<12} {n:>4} rows  {reason}")
 
@@ -197,31 +197,36 @@ def audit_link_rules(reviews, chunks, links_by_review) -> None:
     calls the code it audits can only ever agree with it."""
     _heading("7", "Link-only rules: processable reviews and the human queue")
 
-    def config(review_id):
+    def target(review_id):
+        # Review B: one family and at most one config. None otherwise.
         ls = links_by_review.get(review_id, [])
         human = [l for l in ls if l.match_source == MatchSource.HUMAN.value]
-        cfgs = {l.laptop_id for l in (human or ls) if l.laptop_id}
-        return cfgs.pop() if len(cfgs) == 1 else None
+        eff = human or ls
+        fams = {l.family_id for l in eff}
+        cfgs = {l.laptop_id for l in eff if l.laptop_id}
+        if len(fams) != 1 or len(cfgs) > 1:
+            return None
+        return (fams.pop(), cfgs.pop() if cfgs else None)
 
     saved = defaultdict(set)
     for c in chunks:
-        saved[(c.video_id, c.laptop_id)].add(c.timestamp_start_seconds)
+        saved[(c.video_id, c.family_id, c.laptop_id)].add(c.timestamp_start_seconds)
 
     matched = [r for r in reviews if r.status == ReviewStatus.MATCHED.value]
     processable, candidates, queue_matched = [], [], []
     for r in matched:
-        lid = config(r.id)
-        if lid is None:
+        t = target(r.id)
+        if t is None:
             queue_matched.append(r)
             continue
         processable.append(r)
         segs = (r.raw_transcript or {}).get("segments", [])
         expected = {w["start"] for w in _chunk_transcript(segs)} if segs else set()
-        if expected - saved[(r.video_id, lid)]:
-            candidates.append((r, len(expected & saved[(r.video_id, lid)]), len(expected)))
+        if expected - saved[(r.video_id, *t)]:
+            candidates.append((r, len(expected & saved[(r.video_id, *t)]), len(expected)))
     pending = [r for r in reviews if r.status == ReviewStatus.PENDING.value]
 
-    print(f"matched reviews: {len(matched)}  processable (exactly one effective config): "
+    print(f"matched reviews: {len(matched)}  processable (one family, at most one config): "
           f"{len(processable)}")
     print(f"/process-bulk candidates (processable, some window unchunked): {len(candidates)}")
     for r, got, exp in candidates:

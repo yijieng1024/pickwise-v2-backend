@@ -150,7 +150,17 @@ def test_a_partial_review_is_reported_and_retried_for_its_missing_windows_only(
     assert starts == [0, 45, 90, 135]  # one per window, no duplicate
 
 
-def test_processing_follows_links_not_the_column(session, family_laptops, fake_llm):
+@pytest.fixture
+def other_family(session, brand):
+    from app.laptops.family_model import LaptopFamily
+
+    family = LaptopFamily(brand_id=brand.id, name="Zephyrus G16", family_key="zephyrus g16")
+    session.add(family)
+    session.commit()
+    return family
+
+
+def test_processing_follows_links_not_the_column(session, family_laptops, other_family, fake_llm):
     from app.reviews.processor import process_raw_review
 
     family, laptops = family_laptops
@@ -159,19 +169,60 @@ def test_processing_follows_links_not_the_column(session, family_laptops, fake_l
     with pytest.raises(ValueError, match="not processable"):
         process_raw_review(parked.id, session)
 
-    # An auto config link overruled by a human family-only link: refused.
-    overruled = _review(session)
-    _link(session, overruled, family, laptops[0], source="auto")
-    _link(session, overruled, family, None, source="human")
-    with pytest.raises(ValueError, match="not processable"):
-        process_raw_review(overruled.id, session)
-
     # A human config link wins over an auto link naming a different config.
     human = _review(session)
     _link(session, human, family, laptops[0], source="auto")
     _link(session, human, family, laptops[1], source="human")
     process_raw_review(human.id, session)
-    assert {c.laptop_id for c in _chunks(session, human)} == {laptops[1].id}
+    assert {(c.laptop_id, c.family_id, c.scope) for c in _chunks(session, human)} == {
+        (laptops[1].id, family.id, "config")}
+
+    # Several families (a versus video) wait for Review C, even when one link
+    # names a config.
+    versus = _review(session)
+    _link(session, versus, family, laptops[0], source="human")
+    _link(session, versus, other_family, None, source="human")
+    with pytest.raises(ValueError, match="several families"):
+        process_raw_review(versus.id, session)
+
+
+def test_a_family_only_review_writes_family_scope_chunks(session, family_laptops, fake_llm):
+    from app.reviews.processor import process_raw_review, processing_candidates
+
+    family, laptops = family_laptops
+    # A human family-only link overrules an auto config link (Review B: it used
+    # to be refused, now it is processed at family scope).
+    review = _review(session)
+    _link(session, review, family, laptops[0], source="auto")
+    _link(session, review, family, None, source="human")
+    assert review.id in {c["review_id"] for c in processing_candidates(session)}
+
+    out = process_raw_review(review.id, session)
+
+    assert out["complete"] and out["chunks_saved"] == 4
+    assert {(c.laptop_id, c.family_id, c.scope) for c in _chunks(session, review)} == {
+        (None, family.id, "family")}
+    assert review.id not in {c["review_id"] for c in processing_candidates(session)}
+    from app.reviews.processor import AlreadyProcessed
+    with pytest.raises(AlreadyProcessed):
+        process_raw_review(review.id, session)
+
+
+def test_a_config_scope_chunk_must_name_its_laptop(session, family_laptops):
+    """The CHECK constraint, not just the processor: a config-scope claim is
+    about one configuration."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.reviews.models import LaptopReviewChunk
+
+    family, _ = family_laptops
+    session.add(LaptopReviewChunk(
+        laptop_id=None, family_id=family.id, scope="config", video_id="v1",
+        channel_name="c", timestamp_start_seconds=0, timestamp_end_seconds=45,
+        chunk_text="x", embedding=_VEC, sentiment_tag="neutral"))
+    with pytest.raises(IntegrityError, match="ck_review_chunk_config_has_laptop"):
+        session.flush()
+    session.rollback()
 
 
 # --- 3. /rematch never touches a human-linked review ------------------------
@@ -267,15 +318,19 @@ def test_manual_match_writes_a_human_link_and_leaves_the_column_alone(session, f
     assert (row.status, row.match_confidence) == ("matched", 61.0)
 
 
-def test_the_queue_shows_matched_reviews_that_cannot_be_processed(session, family_laptops):
+def test_the_queue_shows_matched_reviews_that_cannot_be_processed(
+    session, family_laptops, other_family
+):
     from app.common.pagination_service import PaginationParams
     from app.reviews import router
 
     family, laptops = family_laptops
     parked = _review(session)                                    # matched, no link
-    overruled = _review(session)
-    _link(session, overruled, family, laptops[0], source="auto")
-    _link(session, overruled, family, None, source="human")
+    versus = _review(session)                                    # several families
+    _link(session, versus, family, laptops[0], source="human")
+    _link(session, versus, other_family, None, source="human")
+    family_only = _review(session)                               # processable now
+    _link(session, family_only, family, None, source="human")
     ready = _review(session)
     _link(session, ready, family, laptops[0], source="auto")
 
@@ -285,7 +340,8 @@ def test_the_queue_shows_matched_reviews_that_cannot_be_processed(session, famil
         return {item["id"] for item in page.items}
 
     ids = queue()
-    assert parked.id in ids and overruled.id in ids and ready.id not in ids
+    assert parked.id in ids and versus.id in ids
+    assert ready.id not in ids and family_only.id not in ids
     status = router.pipeline_status(session=session, _=None)
     assert status["link"]["pending_total"] == len(ids)
 
@@ -305,3 +361,44 @@ def test_a_linked_laptop_cannot_be_deleted(session, family_laptops):
     with pytest.raises(HTTPException) as exc:
         laptop_router.delete_laptop(laptops[0].id, session=session)
     assert exc.value.status_code == 409 and "review link" in exc.value.detail
+
+
+# --- 6. a human link moves a PENDING review to MATCHED (Review B) -----------
+
+def test_a_human_link_promotes_pending_only(session, family_laptops):
+    from app.reviews import router
+    from app.reviews.link_model import ReviewLinkCreate
+    from app.reviews.models import ManualMatchRequest, RawYoutubeReview
+
+    family, laptops = family_laptops
+    pending = _review(session, status="pending")
+    rejected = _review(session, status="rejected", segments=0)
+    irrelevant = _review(session, status="irrelevant")
+    for r in (pending, rejected, irrelevant):
+        router.create_review_link(r.id, ReviewLinkCreate(family_id=family.id), session=session, _=None)
+
+    via_patch = _review(session, status="pending")
+    router.manual_match(via_patch.id, ManualMatchRequest(family_id=family.id), session=session, _=None)
+
+    session.expire_all()
+    status = lambda r: session.get(RawYoutubeReview, r.id).status
+    assert (status(pending), status(rejected), status(irrelevant), status(via_patch)) == (
+        "matched", "rejected", "irrelevant", "matched")
+
+
+def test_a_family_with_review_chunks_cannot_be_deleted(session, family_laptops, fake_llm):
+    from fastapi import HTTPException
+
+    from app.laptops import family_router
+    from app.reviews.processor import process_raw_review
+
+    family, laptops = family_laptops
+    review = _review(session)
+    link = _link(session, review, family, None, source="human")
+    process_raw_review(review.id, session)
+    session.delete(link)  # so the link guard is not what refuses
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        family_router.delete_family(family.id, session)
+    assert exc.value.status_code == 409 and "review chunk" in exc.value.detail
