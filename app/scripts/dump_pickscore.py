@@ -219,7 +219,7 @@ def dump_use_cases(product, ranges, cpu_benchmarks, gpu_benchmarks):
     if presets is None:
         _rule("USE-CASE PRESETS: NOT FOUND")
         print("  Could not locate USE_CASE_PRIORITIES. Find it first:")
-        print("    grep -rn 'USE_CASE\\|use_case' app/pickscore/ app/recommendation/")
+        print("    grep -rn 'USE_CASE\\|use_case' app/pickscore/ app/laptops/")
         print("  Until then this section cannot reproduce the five UI scores —")
         print("  calling calculate_pick_score(user_pref=None) five times would")
         print("  print the same number five times.\n")

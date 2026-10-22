@@ -34,7 +34,6 @@ class LLMFeature:
     AGENT = "agent"
     PROCESSOR_EXTRACT = "processor_extract"
     PROCESSOR_CATEGORIZE = "processor_categorize"
-    RECOMMENDATION = "recommendation"
     REVIEW_CHUNK = "review_chunk"
 
 

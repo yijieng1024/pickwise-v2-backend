@@ -56,35 +56,6 @@ def cold_scoring_cache(monkeypatch):
     monkeypatch.setattr(ranges_cache, "_start_rebuild", lambda build: None)
 
 
-def test_recommendation_on_real_rows_cold_and_warm(session, catalog, api_user, cold_scoring_cache, monkeypatch):
-    from app.recommendation import service as svc
-    from app.users.models import LaptopUserPreference
-
-    session.add(LaptopUserPreference(
-        user_id=api_user.id, budget={"min": 0, "max": 6000}, purpose=["Gaming"],
-        priorities={}, screen_size=[], brand_preferences=[], tech_savviness="Very tech-savvy",
-    ))
-    session.commit()
-    monkeypatch.setattr(svc, "embed_text", lambda q: _VEC)
-    monkeypatch.setattr(svc, "build_llm", lambda *a, **k: _FakeChatModel())
-    # Reads the caller's (fixture) rows from inside the LLM call: they must
-    # still be usable after the service ended its transactions.
-    _FakeChatModel.output = lambda: svc._LLMOutput(
-        explanations=[{"laptop_id": str(l.id), "explanation": "fits"} for l in catalog], summary="ok",
-    )
-
-    for _ in range(2):  # 1st: cold scoring build (commits); 2nd: cached
-        resp = svc.get_recommendations("gaming laptop", api_user.id, session, 6000.0, None, 3, 15)
-        assert len(resp.recommendations) == 3
-        for rec in resp.recommendations:
-            assert rec.product_name.startswith("Asus TUF F16")  # read after close()
-            assert rec.explanation == "fits"
-            # No benchmark rows are seeded, so CPU and GPU are both unresolved
-            # and the score is withheld (ADR-0016); the breakdown proves the
-            # scoring ran on the detached rows.
-            assert len(rec.breakdown) == 8
-
-
 def test_search_laptops_semantic_and_fallback_on_real_rows(session, catalog, cold_scoring_cache, monkeypatch):
     import sys
 

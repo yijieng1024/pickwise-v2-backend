@@ -55,13 +55,11 @@ class Settings(BaseSettings):
     # DEFAULTS: an admin override in app_settings (`<use>.model` /
     # `<use>.backup_models`) wins, and an invalid override falls back to these
     # (app/common/llm_config.py). Backups are tried in order when a model 429s,
-    # times out or 5xxs; the agent and recommendation allow at most 2.
+    # times out or 5xxs; the agent allows at most 2.
     # Not covered, on purpose: the eval judge (eval/run_eval.py, fixed so runs
     # stay comparable) and embeddings (one vector space, one 0.53 threshold).
     llm_agent_model: str = "google_genai:gemma-4-31b-it"
     llm_agent_backup_models: str = "google_genai:gemma-4-26b-it"
-    llm_recommendation_model: str = "google_genai:gemini-3.5-flash"
-    llm_recommendation_backup_models: str = "google_genai:gemma-4-31b-it"
     llm_review_processor_model: str = "google_genai:gemma-4-31b-it"
     llm_review_processor_backup_models: str = "google_genai:gemma-4-26b-it"
     # The processor's pre-Phase-2 overload chain, kept as its default.
@@ -74,8 +72,7 @@ class Settings(BaseSettings):
     # has nothing to fall back to: a bad one fails startup instead. Each primary
     # is declared before its backups, so `info.data` holds it below.
     @field_validator(
-        "llm_agent_model", "llm_recommendation_model",
-        "llm_review_processor_model", "llm_processor_model",
+        "llm_agent_model", "llm_review_processor_model", "llm_processor_model",
     )
     @classmethod
     def _valid_model_spec(cls, value: str, info: ValidationInfo) -> str:
@@ -84,8 +81,8 @@ class Settings(BaseSettings):
         return validate_spec(info.field_name.removeprefix("llm_").removesuffix("_model"), value)
 
     @field_validator(
-        "llm_agent_backup_models", "llm_recommendation_backup_models",
-        "llm_review_processor_backup_models", "llm_processor_backup_models",
+        "llm_agent_backup_models", "llm_review_processor_backup_models",
+        "llm_processor_backup_models",
     )
     @classmethod
     def _valid_backup_list(cls, value: str, info: ValidationInfo) -> str:

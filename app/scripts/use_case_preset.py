@@ -9,7 +9,7 @@ name: it searches by content, in three passes.
   Pass 1  Text search across app/ for the five UI labels and for
           use-case-ish identifiers. Whatever renders those labels has to
           mention them, unless they live in the frontend.
-  Pass 2  Import every module under the pickscore/recommendation packages and
+  Pass 2  Import every module under the pickscore/laptops packages and
           dump any module-level dict that looks like a weight table -- keyed by
           use case, or keyed by the scoring factors.
   Pass 3  List route handlers whose path or name mentions use case / pickscore,
@@ -65,7 +65,6 @@ FACTOR_NAMES = {
 # Packages worth importing for pass 2. Missing ones are skipped silently.
 IMPORT_ROOTS = [
     "app.pickscore",
-    "app.recommendation",
     "app.laptops",
 ]
 

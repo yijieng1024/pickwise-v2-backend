@@ -52,17 +52,17 @@ def test_put_switches_the_model_without_a_restart(llm_settings):
 
 
 def test_put_sets_resets_and_clears_an_ordered_backup_list(llm_settings):
-    url = "/api/v2/admin/settings/llm/recommendation"
+    url = "/api/v2/admin/settings/llm/agent"
 
-    r = llm_settings.put(url, json={"backups": ["gemma-4-26b-it", "google_genai:gemma-4-31b-it"]})
+    r = llm_settings.put(url, json={"backups": ["gemma-4-26b-it", "google_genai:gemini-3.5-flash"]})
     assert r.status_code == 200, r.text
     body = r.json()
     assert [(b["position"], b["value"], b["in_model_list"]) for b in body["backups"]] == [
-        (1, "google_genai:gemma-4-26b-it", True), (2, "google_genai:gemma-4-31b-it", True),
+        (1, "google_genai:gemma-4-26b-it", True), (2, "google_genai:gemini-3.5-flash", True),
     ]
     assert (body["backups_source"], body["max_backups"], body["fallback_enabled"]) == ("app_settings", 2, True)
-    assert llm_config.resolve_models("recommendation")[1] == (
-        "google_genai:gemma-4-26b-it", "google_genai:gemma-4-31b-it",
+    assert llm_config.resolve_models("agent")[1] == (
+        "google_genai:gemma-4-26b-it", "google_genai:gemini-3.5-flash",
     )
 
     body = llm_settings.put(url, json={"backups": []}).json()  # no fallback
@@ -77,10 +77,10 @@ def test_put_sets_resets_and_clears_an_ordered_backup_list(llm_settings):
     ("agent", {"primary": "openai:gpt-5"}, "Unsupported provider"),
     ("agent", {"backups": ["google_genai:no-such-model"]}, "not in Gemini's models.list"),
     ("agent", {"backups": ["gemma-4-26b-it", "gemini-3.5-flash", "gemini-x-1"]}, "at most 2 backups"),
-    ("recommendation", {"backups": ["gemma-4-26b-it", "gemma-4-31b-it", "gemini-x-1"]}, "at most 2 backups"),
-    ("recommendation", {"backups": ["gemma-4-26b-it", "google_genai:gemma-4-26b-it"]}, "listed twice"),
-    ("recommendation", {"backups": ["gemini-3.5-flash"]}, "is the primary"),
-    ("recommendation", {"primary": "gemma-4-26b-it", "backups": ["gemma-4-26b-it"]}, "is the primary"),
+    ("agent", {"backups": ["gemini-3.5-flash", "gemma-4-26b-it", "gemini-x-1"]}, "at most 2 backups"),
+    ("agent", {"backups": ["gemma-4-26b-it", "google_genai:gemma-4-26b-it"]}, "listed twice"),
+    ("agent", {"backups": ["gemma-4-31b-it"]}, "is the primary"),
+    ("agent", {"primary": "gemma-4-26b-it", "backups": ["gemma-4-26b-it"]}, "is the primary"),
     # The processor's limiter has no budget for flash, as primary or backup.
     ("processor", {"primary": "gemini-3.5-flash"}, "budget"),
     ("processor", {"backups": ["gemini-3.5-flash"]}, "budget"),
@@ -95,7 +95,7 @@ def test_put_rejects_what_cannot_work(llm_settings, use, body, message):
 
 
 def test_a_primary_that_collides_with_the_stored_backups_is_refused(llm_settings):
-    url = "/api/v2/admin/settings/llm/recommendation"
+    url = "/api/v2/admin/settings/llm/agent"
     assert llm_settings.put(url, json={"backups": ["gemma-4-26b-it"]}).status_code == 200
 
     r = llm_settings.put(url, json={"primary": "gemma-4-26b-it"})
@@ -108,15 +108,15 @@ def test_a_primary_that_collides_with_the_stored_backups_is_refused(llm_settings
 
 
 def test_an_invalid_stored_list_is_surfaced_and_ignored(llm_settings, session):
-    session.add(AppSetting(key="recommendation.backup_models", value='["google_genai:Not Valid"]'))
+    session.add(AppSetting(key="agent.backup_models", value='["google_genai:Not Valid"]'))
     session.add(AppSetting(key="review_processor.model", value="google_genai:gemini-0-retired"))
     session.commit()
 
     body = llm_settings.get("/api/v2/admin/settings/llm").json()
 
-    rec = _use(body, "recommendation")
-    assert [b["value"] for b in rec["backups"]] == rec["backups_env_default"]
-    assert rec["backups_stored"] == '["google_genai:Not Valid"]' and "Malformed" in rec["backups_error"]
+    agent = _use(body, "agent")
+    assert [b["value"] for b in agent["backups"]] == agent["backups_env_default"]
+    assert agent["backups_stored"] == '["google_genai:Not Valid"]' and "Malformed" in agent["backups_error"]
     # Well-formed but gone from models.list: in effect, and flagged.
     retired = _use(body, "review_processor")["primary"]
     assert (retired["source"], retired["in_model_list"]) == ("app_settings", False)

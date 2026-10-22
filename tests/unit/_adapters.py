@@ -603,7 +603,6 @@ from app.laptops import pickscore_adapter as _pickscore_adapter  # noqa: E402,F4
 # YouTube / HTTP call. Exposed as modules because the tests replace the slow
 # call inside each one with a probe that checks the connection pool.
 # --------------------------------------------------------------------------
-from app.recommendation import service as recommendation_service  # noqa: E402,F401
 from app.reviews import processor as review_processor  # noqa: E402,F401
 from app.reviews import service as review_service  # noqa: E402,F401
 from app.reviews import router as review_router  # noqa: E402,F401

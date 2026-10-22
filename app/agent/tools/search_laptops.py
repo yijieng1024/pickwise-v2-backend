@@ -57,8 +57,8 @@ def _pick_scores_for(
     PickScore for the gated top results only — personalized when the caller
     passes the authenticated user's preference row, general-mode otherwise
     (the eval harness and signed-in users without a questionnaire row).
-    Same batch pattern as app/recommendation/service.py: ranges + benchmark
-    tuples fetched once, reused for every laptop. Keyed by str(laptop_id).
+    Ranges + benchmark tuples are fetched once and reused for every laptop.
+    Keyed by str(laptop_id).
 
     Only the composite score and a compact top-3 factor summary are exposed —
     the full 8-factor breakdown would bloat the LLM context and overflow the

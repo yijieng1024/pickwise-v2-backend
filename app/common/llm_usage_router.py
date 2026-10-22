@@ -62,8 +62,8 @@ def get_llm_usage(
     days: int = Query(default=7, ge=1, le=365, description="Window, counted back from today (UTC)"),
     session: Session = Depends(get_session),
 ):
-    """Token totals across every LLM call (agent, processor, recommendation,
-    review chunks), grouped by feature, model, UTC day and user. Batch-job
+    """Token totals across every LLM call (agent, processor, review chunks),
+    grouped by feature, model, UTC day and user. Batch-job
     calls have no user and appear under `user_id: null`."""
     since = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
     in_window = LLMUsageLog.created_at >= datetime.combine(since, datetime.min.time())

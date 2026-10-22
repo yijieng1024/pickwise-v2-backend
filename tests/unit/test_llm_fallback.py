@@ -353,9 +353,9 @@ def test_usage_log_names_the_backup_when_it_answered(gemini, monkeypatch):
     monkeypatch.setattr(llm_usage_module(), "log_llm_usage", lambda *a: rows.append(a))
     gemini.behaviour.update({"primary-model": "429", "backup-model": "ok"})
 
-    _llm(feature="recommendation").invoke("hi")
+    _llm(feature="agent").invoke("hi")
 
-    assert rows == [("recommendation", "backup-model", 7, 3, None, 1)]
+    assert rows == [("agent", "backup-model", 7, 3, None, 1)]
 
 
 # --------------------------------------------------------------------------
@@ -398,7 +398,7 @@ def test_no_backups_means_no_fallback(llm_settings):
 # --------------------------------------------------------------------------
 _ENV = SimpleNamespace(**{
     f"llm_{use}_{slot}": f"google_genai:env-{use}-{slot.replace('_', '-')}"
-    for use in ("agent", "recommendation", "review_processor", "processor")
+    for use in ("agent", "review_processor", "processor")
     for slot in ("model", "backup_models")
 })
 _ENV.llm_agent_backup_models = "google_genai:env-agent-b1,google_genai:env-agent-b2"
@@ -447,16 +447,16 @@ def test_an_invalid_row_falls_back_to_the_env_default_and_says_why(settings_db):
     # One bad entry rejects the whole list, not just that entry.
     stored = '["google_genai:fine-model", "openai:gpt-5"]'
     settings_db.add(app_settings_module.AppSetting(key="agent.backup_models", value=stored))
-    settings_db.add(app_settings_module.AppSetting(key="recommendation.model", value="Bad Model!"))
+    settings_db.add(app_settings_module.AppSetting(key="review_processor.model", value="Bad Model!"))
     settings_db.commit()
 
     agent = llm_config.resolve("agent")
     assert agent.backups.values == _AGENT_ENV_BACKUPS
     assert (agent.backups.source, agent.backups.stored) == ("env", stored)
     assert "backups[1]" in agent.backups.error and "Unsupported provider" in agent.backups.error
-    rec = llm_config.resolve("recommendation")
-    assert rec.primary.value == "google_genai:env-recommendation-model"
-    assert "Malformed" in rec.primary.error
+    rp = llm_config.resolve("review_processor")
+    assert rp.primary.value == "google_genai:env-review_processor-model"
+    assert "Malformed" in rp.primary.error
 
 
 def test_a_db_failure_serves_env_defaults(settings_db, monkeypatch):
@@ -520,10 +520,10 @@ def test_invalid_stored_backup_lists_fall_back_to_env(settings_db, stored, error
 def test_user_facing_uses_cap_backups_at_two_and_background_uses_do_not():
     many = [f"google_genai:m-{i}" for i in range(6)]
     assert len(llm_config.validate_backups("review_processor", many, "google_genai:p")) == 6
-    for use in ("agent", "recommendation"):
-        assert len(llm_config.validate_backups(use, many[:2], "google_genai:p")) == 2
-        with pytest.raises(ValueError, match="at most 2"):
-            llm_config.validate_backups(use, many[:3], "google_genai:p")
+    assert llm_config.MAX_BACKUPS == {"agent": 2}  # the agent is the one user-facing use
+    assert len(llm_config.validate_backups("agent", many[:2], "google_genai:p")) == 2
+    with pytest.raises(ValueError, match="at most 2"):
+        llm_config.validate_backups("agent", many[:3], "google_genai:p")
 
 
 def test_processor_backups_each_need_a_budget():
@@ -554,13 +554,14 @@ def test_env_backup_lists_are_validated_at_startup(monkeypatch):
     assert Settings(_env_file=None).llm_agent_backup_models == "google_genai:a-1,google_genai:a-2"
     monkeypatch.setenv("LLM_AGENT_BACKUP_MODELS", "")
     assert Settings(_env_file=None).llm_agent_backup_models == ""
+    # The recommendation use is gone: a leftover env var for it (still set on
+    # an old deploy) is ignored rather than failing startup.
     monkeypatch.setenv("LLM_RECOMMENDATION_BACKUP_MODELS", "a-1,a-2,a-3")
-    with pytest.raises(Exception, match="at most 2 backups"):
-        Settings(_env_file=None)
+    assert not hasattr(Settings(_env_file=None), "llm_recommendation_backup_models")
 
 
 def test_the_default_env_chains_pass_validation(monkeypatch):
-    # Every shipped default, including recommendation's, under the new caps.
+    # Every shipped default, including the agent's capped list, under the caps.
     from ._adapters import Settings
 
     for key in ("DATABASE_URL", "SECRET_KEY", "BREVO_API_KEY", "GEMINI_API_KEY"):
@@ -569,7 +570,7 @@ def test_the_default_env_chains_pass_validation(monkeypatch):
         if name.startswith("llm_") and name.endswith(("_model", "_backup_models")):
             monkeypatch.delenv(name.upper(), raising=False)
     s = Settings(_env_file=None)
-    assert s.llm_recommendation_backup_models == "google_genai:gemma-4-31b-it"
+    assert s.llm_agent_backup_models == "google_genai:gemma-4-26b-it"
 
 
 def test_the_processor_default_chain_is_the_pre_phase_2_one():

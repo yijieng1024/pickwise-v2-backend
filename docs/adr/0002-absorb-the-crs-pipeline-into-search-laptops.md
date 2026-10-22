@@ -109,10 +109,10 @@ guaranteed.
 **Known gaps**
 
 - **Retrieval is still not one implementation.**
-  `app/recommendation/service.py` (`POST /recommendations/laptops`) and
-  `POST /laptops/hybrid-search` keep their own pgvector queries, and both
-  apply `brand` as a hard SQL filter — the opposite of the agent path
-  (ADR-0007).
+  `POST /laptops/hybrid-search` keeps its own pgvector query and applies
+  `brand` as a hard SQL filter — the opposite of the agent path (ADR-0007).
+  *(Update 2026-10-22: the second copy, `app/recommendation/service.py` /
+  `POST /recommendations/laptops`, was removed — nothing called it.)*
 - `relax_and_retry` re-enters `retrieve_candidates` with the relaxed budget
   but not `weight_max`. On the semantic path weight is still applied by the
   reranker, so this only matters on the relational fallback, where weight is

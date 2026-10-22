@@ -41,10 +41,9 @@ from app.logger import get_logger
 logger = get_logger(__name__)
 
 AGENT = "agent"
-RECOMMENDATION = "recommendation"
 REVIEW_PROCESSOR = "review_processor"
 PROCESSOR = "processor"
-USES = (AGENT, RECOMMENDATION, REVIEW_PROCESSOR, PROCESSOR)
+USES = (AGENT, REVIEW_PROCESSOR, PROCESSOR)
 
 SUPPORTED_PROVIDERS = ("google_genai",)
 _DEFAULT_PROVIDER = "google_genai"
@@ -67,11 +66,11 @@ MODEL_OPTIONS: dict[str, dict[str, int]] = {
 }
 _ALLOW_LISTS = {PROCESSOR: MODEL_OPTIONS}
 
-# User-facing uses: every model in the chain may take the full 60 s deadline,
-# so a user waits at most (1 + 2) x 60 s if every model hangs. The agent and
-# POST /recommendations/laptops are both synchronous requests. The background
-# uses (review_processor, processor) are uncapped.
-MAX_BACKUPS = {AGENT: 2, RECOMMENDATION: 2}
+# The user-facing use: every model in the chain may take the full 60 s
+# deadline, so a user waits at most (1 + 2) x 60 s if every model hangs. The
+# agent is a synchronous request; the background uses (review_processor,
+# processor) are uncapped.
+MAX_BACKUPS = {AGENT: 2}
 
 
 def primary_key(use: str) -> str:

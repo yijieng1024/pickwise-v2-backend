@@ -23,12 +23,12 @@ def test_handler_logs_summed_usage(monkeypatch):
     monkeypatch.setattr(llm_usage, "log_llm_usage", lambda *a: calls.append(a))
     uid = uuid.uuid4()
 
-    TokenUsageHandler("recommendation", "gemini-3.5-flash", uid).on_llm_end(_result(
+    TokenUsageHandler("agent", "gemma-4-31b-it", uid).on_llm_end(_result(
         {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
         {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
     ))
 
-    assert calls == [("recommendation", "gemini-3.5-flash", 105, 21, uid, 0)]
+    assert calls == [("agent", "gemma-4-31b-it", 105, 21, uid, 0)]
 
 
 def test_handler_skips_calls_without_usage(monkeypatch):

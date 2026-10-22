@@ -255,7 +255,7 @@ def update_llm_settings(
 
     Rejected (400): malformed spec, unsupported provider, a model missing from
     Gemini's models.list, a duplicate backup, a backup equal to the primary,
-    more than 2 backups for agent or recommendation, or a processor model without a
+    more than 2 backups for the agent, or a processor model without a
     rate-limit budget. If models.list cannot be fetched, a well-formed value is
     accepted -- the list is a typo guard, not a dependency. 404: unknown use.
     """

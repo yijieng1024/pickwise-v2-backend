@@ -37,7 +37,6 @@ from ._adapters import (
     embeddings_service,
     llm_module,
     Settings,
-    recommendation_service,
     review_processor,
     review_router,
     review_service,
@@ -117,36 +116,6 @@ class _FakeChatModel:
     def with_structured_output(self, _schema):
         from langchain_core.runnables import RunnableLambda
         return RunnableLambda(lambda _payload: type(self).probe())
-
-
-# --------------------------------------------------------------------------
-# recommendation/service.py
-# --------------------------------------------------------------------------
-def test_recommendation_holds_no_connection_during_embed_or_llm(db, monkeypatch):
-    engine, session = db
-    calls = []
-    laptop = _laptop()
-    pref = SimpleNamespace(
-        tech_savviness=None, budget={"min": 0, "max": 6000}, purpose=["Gaming"],
-        portability=None, brand_preferences=[],
-    )
-    _reads(monkeypatch, session, [pref], [(laptop, "Asus", 0.2)])
-    svc = recommendation_service
-    monkeypatch.setattr(svc, "embed_text", _probe(engine, calls, "embed", [0.0] * 768))
-    monkeypatch.setattr(svc, "get_scoring_data", lambda s: ({}, [], []))
-    monkeypatch.setattr(
-        svc, "calculate_pick_score",
-        lambda *a: SimpleNamespace(score=70.0, breakdown=[], mode="personalized"),
-    )
-    _FakeChatModel.probe = _probe(
-        engine, calls, "llm",
-        lambda: svc._LLMOutput(explanations=[], summary="ok"),
-    )
-    monkeypatch.setattr(svc, "build_llm", lambda *a, **k: _FakeChatModel())
-
-    svc.get_recommendations("gaming", uuid.uuid4(), session, None, None, 3, 15)
-
-    assert calls == ["embed", "llm"]
 
 
 # --------------------------------------------------------------------------
