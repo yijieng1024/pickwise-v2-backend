@@ -167,6 +167,13 @@ def database_url():
         yield url
         return
 
+    if os.environ.get("CI"):
+        # GitHub Actions sets CI=true. An unset or EMPTY secret lands here, and
+        # skipping (or quietly testing a throwaway container instead) would
+        # turn a misconfigured job green while it ran nothing it was meant to.
+        pytest.exit("CI run with no TEST_DATABASE_URL: set the repo secret. "
+                    "Skipping is for local runs only.", returncode=1)
+
     try:
         from testcontainers.postgres import PostgresContainer
     except ImportError:
@@ -275,14 +282,16 @@ def engine(database_url):
             conn.commit()
     except Exception as exc:
         # Configured but unreachable -- a wrong password, a paused project, no
-        # route. Skipped rather than errored 21 times with the same traceback,
-        # but the reason is carried verbatim so this can never be mistaken for
-        # "no database configured": that one says so in its own words.
-        pytest.skip(
+        # route. A FAILURE, not a skip: a skip exits 0, so CI would go
+        # green on a bad secret while this tier ran nothing. One exit
+        # rather than every test erroring with the same traceback; the reason
+        # is carried verbatim. (No URL configured at all still skips locally --
+        # see database_url.)
+        pytest.exit(
             "TEST_DATABASE_URL is set but the database could not be reached, so this tier has run NOTHING. "
             f"target={database_url.split('@')[-1]} "
             f"error={type(exc).__name__}: {str(exc)[:300]}",
-            allow_module_level=True,
+            returncode=1,
         )
     return eng
 

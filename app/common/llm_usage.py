@@ -78,8 +78,14 @@ def log_llm_usage(
                 is_fallback=model_position > 0, model_position=model_position,
             ))
             session.commit()
-    except Exception:
-        logger.exception("failed to write llm_usage_log (monitoring only, call unaffected)")
+    except Exception as e:
+        # One line, no traceback: this runs once per LLM call, so a database
+        # outage (CI with an unreachable DB) would otherwise bury every log in
+        # identical stacks. Monitoring only -- the call itself is unaffected.
+        logger.warning(
+            "failed to write llm_usage_log (%s: %s); call unaffected",
+            type(e).__name__, str(e).strip().split("\n")[0][:200],
+        )
 
 
 def usage_from_response(response: Any) -> tuple[int, int]:

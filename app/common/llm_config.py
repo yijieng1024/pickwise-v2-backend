@@ -242,8 +242,15 @@ def resolve(use: str) -> UseModels:
             return hit[2]
     try:
         rows = _read_rows(use)
-    except Exception:
-        logger.exception("Reading model settings for %s failed; using env defaults.", use)
+    except Exception as e:
+        # One line, no traceback: the env-default result below is cached for
+        # the TTL like a successful read, so this fires once per window, not per
+        # call -- and a settings outage is expected noise (CI with an
+        # unreachable DB), not a bug whose stack anyone needs.
+        logger.warning(
+            "Reading model settings for %s failed (%s: %s); using env defaults for %.0fs.",
+            use, type(e).__name__, str(e).strip().split("\n")[0][:200], _CACHE_TTL_S,
+        )
         rows = {}
     primary = _primary(use, rows.get(primary_key(use)))
     resolved = UseModels(

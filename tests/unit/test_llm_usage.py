@@ -38,3 +38,23 @@ def test_handler_skips_calls_without_usage(monkeypatch):
     TokenUsageHandler("review_chunk", "gemma-4-31b-it").on_llm_end(_result(None))
 
     assert calls == []
+
+
+def test_a_failed_usage_write_logs_one_line_and_never_raises(monkeypatch):
+    class _Broken:
+        def __init__(self, *a, **kw):
+            raise RuntimeError('password authentication failed for user "postgres"\nDETAIL: x')
+
+    warnings = []
+    monkeypatch.setattr(llm_usage, "Session", _Broken)
+    monkeypatch.setattr(llm_usage.logger, "warning", lambda *a, **kw: warnings.append((a, kw)))
+    monkeypatch.setattr(llm_usage.logger, "exception",
+                        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("no traceback")))
+
+    # The whole handler path, as an LLM call's callback runs it.
+    TokenUsageHandler("agent", "gemma-4-31b-it").on_llm_end(_result(
+        {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    ))
+
+    assert len(warnings) == 1 and "exc_info" not in warnings[0][1]
+    assert "\n" not in (warnings[0][0][0] % warnings[0][0][1:])

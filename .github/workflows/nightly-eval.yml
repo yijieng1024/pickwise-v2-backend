@@ -12,9 +12,11 @@ name: Nightly agent eval
 # what `run_eval.py compare` is for.
 
 on:
-  schedule:
-    # 02:00 UTC = 10:00 MYT, after the free-tier quota day rolls over.
-    - cron: "0 2 * * *"
+  # Manual only, for now. The test project it points at is left schema-less by
+  # the integration tier (it drops every table), so a scheduled run searched an
+  # empty catalog and its numbers meant nothing. Restore the schedule
+  # (`- cron: "0 2 * * *"`, 10:00 MYT, after the quota day rolls over) once
+  # the eval has a seeded database of its own.
   workflow_dispatch:
 
 permissions:

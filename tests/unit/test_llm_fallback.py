@@ -467,6 +467,29 @@ def test_a_db_failure_serves_env_defaults(settings_db, monkeypatch):
     assert llm_config.resolve_models("agent") == ("google_genai:env-agent-model", _AGENT_ENV_BACKUPS)
 
 
+def test_a_db_failure_is_cached_and_logged_once_without_a_traceback(settings_db, monkeypatch):
+    calls, warnings = [], []
+
+    def broken(use):
+        calls.append(use)
+        raise RuntimeError("password authentication failed\nDETAIL: more")
+
+    monkeypatch.setattr(llm_config, "_read_rows", broken)
+    monkeypatch.setattr(llm_config.logger, "warning", lambda *a, **kw: warnings.append((a, kw)))
+    monkeypatch.setattr(llm_config.logger, "exception",
+                        lambda *a, **kw: pytest.fail("a settings outage must not log a traceback"))
+    for _ in range(5):
+        assert llm_config.resolve_models("agent")[0] == "google_genai:env-agent-model"
+    assert calls == ["agent"]  # the failure is cached for the TTL like a success
+    assert len(warnings) == 1 and "exc_info" not in warnings[0][1]
+    assert "\n" not in (warnings[0][0][0] % warnings[0][0][1:])
+
+    t = time.monotonic()
+    monkeypatch.setattr(llm_config.time, "monotonic", lambda: t + llm_config._CACHE_TTL_S + 1)
+    llm_config.resolve_models("agent")
+    assert len(calls) == 2 and len(warnings) == 2  # next window retries, and says so once
+
+
 def test_the_legacy_processor_row_is_read_as_is(settings_db):
     # processor.model predates this: bare model names, no provider prefix.
     app_settings_module.set_setting(settings_db, "processor.model", "gemma-4-26b-it")
