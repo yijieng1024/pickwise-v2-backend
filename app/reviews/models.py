@@ -329,7 +329,9 @@ class RawYoutubeReviewRead(SQLModel):
     video_title: str
     published_at: Optional[datetime]
     matched_laptop_id: Optional[uuid.UUID]
-    # Resolved from `matched_laptop_id` by the listing route, not stored on the
+    # The configuration this review's links resolve to
+    # (link_service.processing_laptop_id) -- an API field that kept its name,
+    # not the column. Name resolved by the listing route, not stored on the
     # table. Without it every client showing a match has to fetch the whole
     # laptop catalog just to turn one id into a name. None when unmatched, or
     # when the laptop has since been deleted.

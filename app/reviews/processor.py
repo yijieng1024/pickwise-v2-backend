@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.common.llm_usage import LLMFeature
 from app.embeddings.service import embed_text
 from app.logger import get_logger
+from app.reviews.link_service import links_by_review, processing_laptop_id
 from app.reviews.models import LaptopReviewChunk, RawYoutubeReview, ReviewStatus
 
 logger = get_logger(__name__)
@@ -80,22 +81,91 @@ def _chunk_transcript(
     return chunks
 
 
+class AlreadyProcessed(ValueError):
+    """Every window of the transcript already has a chunk for this laptop.
+
+    The duplicate guard. 11 of the 15 processed videos were processed twice
+    before it existed (205 duplicate rows), because nothing stopped
+    /process/{id} from running again on a finished review."""
+
+
+def _saved_windows(session: Session, video_id: str, laptop_id: uuid.UUID) -> set[int]:
+    return set(
+        session.exec(
+            select(LaptopReviewChunk.timestamp_start_seconds)
+            .where(LaptopReviewChunk.video_id == video_id)
+            .where(LaptopReviewChunk.laptop_id == laptop_id)
+        ).all()
+    )
+
+
+def processing_candidates(session: Session) -> list[dict]:
+    """Reviews /process-bulk should run, and /pipeline-status counts -- one
+    function so the two can never disagree.
+
+    A candidate is MATCHED, has effective links naming exactly one
+    configuration (link_service.processing_laptop_id), and has at least one
+    transcript window with no chunk for that laptop yet. "Any chunk exists" is
+    NOT "processed": a run that saved 3 of 40 windows would otherwise never be
+    retried. Completion is derived from the transcript, so it needs no column.
+    """
+    reviews = session.exec(
+        select(RawYoutubeReview)
+        .where(RawYoutubeReview.status == ReviewStatus.MATCHED.value)
+        .order_by(RawYoutubeReview.created_at, RawYoutubeReview.id)  # type: ignore[arg-type]
+    ).all()
+    links = links_by_review(session, [r.id for r in reviews])
+    saved: dict[tuple[str, uuid.UUID], set[int]] = {}
+    for video_id, laptop_id, start in session.exec(
+        select(
+            LaptopReviewChunk.video_id,
+            LaptopReviewChunk.laptop_id,
+            LaptopReviewChunk.timestamp_start_seconds,
+        )
+    ).all():
+        saved.setdefault((video_id, laptop_id), set()).add(start)
+
+    out = []
+    for r in reviews:
+        laptop_id = processing_laptop_id(links[r.id])
+        segments = (r.raw_transcript or {}).get("segments", [])
+        if laptop_id is None or not segments:
+            continue
+        expected = {c["start"] for c in _chunk_transcript(segments)}
+        done = saved.get((r.video_id, laptop_id), set()) & expected
+        if done != expected:
+            out.append({
+                "review_id": r.id,
+                "video_title": r.video_title,
+                "windows_expected": len(expected),
+                "windows_saved": len(done),
+            })
+    return out
+
+
 def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
     """
-    Chunk, summarise, sentiment-tag, and embed all transcript segments for a matched review.
+    Chunk, summarise, sentiment-tag, and embed the transcript windows of a
+    matched review that do not have a chunk yet.
 
     Returns a per-chunk outcome report, not just a count:
 
-        {"chunks_total", "chunks_saved", "chunks_failed", "failures": [...]}
+        {"windows_expected", "windows_already_saved", "chunks_total",
+         "chunks_saved", "chunks_failed", "failures": [...], "complete"}
 
-    A bare count hid partial processing — a review that saved 3 of 40 chunks
-    and a review that saved 40 of 40 both looked like a success to
-    /reviews/process-bulk, and the reason each chunk failed was only ever
-    visible in the log file. `failures` carries the timestamp window and the
-    exception class per chunk so a caller can tell "the model rejected this
-    excerpt" apart from "we are being rate limited".
+    `chunks_total` is the windows attempted THIS run. `complete` is whether
+    every window now has a chunk; a partial run (complete=False) is picked up
+    again by /process-bulk and only its missing windows are redone, so a retry
+    never writes a duplicate. `failures` carries the window and the exception
+    class per chunk, so "the model rejected this excerpt" and "we are being
+    rate limited" stay distinguishable.
 
-    Raises ValueError if the review is not in 'matched' status.
+    The laptop comes from review_laptop_link, never matched_laptop_id: the
+    review must be MATCHED and its effective links must name exactly one
+    configuration. Family-only links stay unprocessed until Review B.
+
+    Raises AlreadyProcessed (a ValueError) when there is nothing left to do,
+    and ValueError when the review is not processable.
     """
     raw: RawYoutubeReview | None = session.exec(
         select(RawYoutubeReview).where(RawYoutubeReview.id == raw_review_id)
@@ -103,19 +173,27 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
 
     if not raw:
         raise ValueError(f"RawYoutubeReview {raw_review_id} not found.")
-    if raw.status != ReviewStatus.MATCHED.value or raw.matched_laptop_id is None:
+    laptop_id = processing_laptop_id(links_by_review(session, [raw.id])[raw.id])
+    if raw.status != ReviewStatus.MATCHED.value or laptop_id is None:
         raise ValueError(
-            f"Review {raw_review_id} is not matched (status={raw.status}). "
-            "Match it to a laptop first."
+            f"Review {raw_review_id} is not processable (status={raw.status}): it "
+            "must be matched and linked to exactly one configuration. Family-only "
+            "links wait for Review B."
         )
 
     transcript_segments: list[dict] = raw.raw_transcript.get("segments", [])
     if not transcript_segments:
         raise ValueError(f"Review {raw_review_id} has no transcript segments stored.")
 
-    chunks = _chunk_transcript(transcript_segments)
+    all_chunks = _chunk_transcript(transcript_segments)
+    already = _saved_windows(session, raw.video_id, laptop_id)
+    chunks = [c for c in all_chunks if c["start"] not in already]
+    already_saved = len(all_chunks) - len(chunks)
     if not chunks:
-        return {"chunks_total": 0, "chunks_saved": 0, "chunks_failed": 0, "failures": []}
+        raise AlreadyProcessed(
+            f"Review {raw_review_id} is already fully processed "
+            f"({already_saved}/{len(all_chunks)} windows saved)."
+        )
 
     # The `review_processor` use: configured primary, then each backup in order, on 429 / timeout
     # / 5xx. Resolved once per review, so one review is not split across a
@@ -143,7 +221,6 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
     # session.commit() expires every loaded instance by default, so touching
     # `raw.video_id` inside the loop would silently re-SELECT the row once per
     # chunk — and would raise outright if the row were gone.
-    laptop_id = raw.matched_laptop_id
     video_id = raw.video_id
     # End the read transaction before the first Gemini + embedding call. The
     # per-chunk commit below only closes transactions from chunk 1 on; the
@@ -211,10 +288,13 @@ def process_raw_review(raw_review_id: uuid.UUID, session: Session) -> dict:
             time.sleep(_INTER_REQUEST_DELAY)
 
     logger.info(
-        "Processed %d/%d chunks for video %s (%d failed)",
-        saved, len(chunks), video_id, len(failures),
+        "Processed %d/%d chunks for video %s (%d failed, %d already saved)",
+        saved, len(chunks), video_id, len(failures), already_saved,
     )
     return {
+        "windows_expected": len(all_chunks),
+        "windows_already_saved": already_saved,
+        "complete": already_saved + saved == len(all_chunks),
         "chunks_total": len(chunks),
         "chunks_saved": saved,
         "chunks_failed": len(failures),

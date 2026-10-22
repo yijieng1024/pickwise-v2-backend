@@ -199,11 +199,17 @@ def test_review_processor_first_chunk_holds_no_connection(db, monkeypatch):
     engine, session = db
     calls = []
     raw = SimpleNamespace(
-        status=review_processor.ReviewStatus.MATCHED.value,
-        matched_laptop_id=uuid.uuid4(), video_id="vid", channel_id="ch",
+        id=uuid.uuid4(), status=review_processor.ReviewStatus.MATCHED.value,
+        video_id="vid", channel_id="ch",
         raw_transcript={"segments": [{"start": 0.0, "duration": 5.0, "text": "fast"}]},
     )
-    _reads(monkeypatch, session, [raw], [SimpleNamespace(channel_name="Chan")])
+    link = SimpleNamespace(raw_review_id=raw.id, match_source="auto", laptop_id=uuid.uuid4())
+    _reads(
+        monkeypatch, session,
+        [raw], [link],                        # the review, then its links
+        [],                                   # windows already saved: none
+        [SimpleNamespace(channel_name="Chan")],
+    )
     monkeypatch.setattr(review_processor.time, "sleep", lambda s: None)
     monkeypatch.setattr(review_processor, "embed_text", _probe(engine, calls, "embed", [0.0] * 768))
     _FakeChatModel.probe = _probe(

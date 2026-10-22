@@ -27,8 +27,8 @@ wearing that disguise. Human links carry match_source=HUMAN and
 match_confidence=NULL — a human did not score anything, and recording a
 fabricated 100.0 would put a measurement where a judgement belongs.
 
-`matched_laptop_id` stays live on raw_youtube_reviews through the cutover;
-dropping it is a later revision once every reader has moved.
+Since Review A nothing reads or writes `matched_laptop_id`; the column stays
+on raw_youtube_reviews until the migration that drops it (Review A, phase A2).
 """
 import uuid
 from datetime import datetime, timezone

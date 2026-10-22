@@ -607,6 +607,7 @@ from app.recommendation import service as recommendation_service  # noqa: E402,F
 from app.reviews import processor as review_processor  # noqa: E402,F401
 from app.reviews import service as review_service  # noqa: E402,F401
 from app.reviews import router as review_router  # noqa: E402,F401
+from app.reviews import link_service as review_link_service  # noqa: E402,F401 - effective links, one rule for every reader
 from app.reviews.transcript import TranscriptResult  # noqa: E402,F401
 from app.users import router as users_router  # noqa: E402,F401
 from app.agent import graph as agent_graph  # noqa: E402,F401

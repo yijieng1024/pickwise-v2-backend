@@ -15,6 +15,8 @@ from app.laptops.family_key import family_key
 from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.logger import get_logger
 from app.reviews.discovery import discover_videos
+from app.reviews.link_model import MatchSource, ReviewLaptopLink
+from app.reviews.link_service import clear_auto_links, write_auto_link
 from app.reviews.matcher import match_laptop
 from app.reviews.models import RawYoutubeReview, ReviewStatus, YoutubeChannel
 from app.reviews.transcript import TranscriptFetchGuard, is_terminal
@@ -98,18 +100,17 @@ def family_worklist(
 
     covered: set[str] = set()
     if skip_covered:
-        # NOTE: coverage can only be derived through matched_laptop_id, which
-        # is the single link from a review back to a laptop. A `pending` review
-        # has that column NULL by construction (match_laptop returns None below
-        # MATCH_THRESHOLD), so a family whose videos are all in the human queue
-        # still reads as uncovered and gets re-searched at full quota cost.
-        # Fixing that needs somewhere to record which family a search covered —
-        # see ADR-0012. Do not paper over it by re-running the matcher here:
-        # 89% of titles tie at rank 1, so quota decisions would be made from
-        # database row order.
+        # NOTE: coverage is derived from config-level links (laptop_id set), the
+        # same thing the old single-laptop column said -- deliberately unchanged
+        # behaviour for Review A. A family whose videos only have family-level
+        # links still reads as uncovered and gets re-searched; counting those
+        # is a decision for Review B. Do not paper over it by re-running the
+        # matcher here: 89% of titles tie at rank 1, so quota decisions would
+        # be made from database row order.
         matched_laptops = session.exec(
             select(Laptop)
-            .join(RawYoutubeReview, RawYoutubeReview.matched_laptop_id == Laptop.id)  # type: ignore[arg-type]
+            .join(ReviewLaptopLink, ReviewLaptopLink.laptop_id == Laptop.id)  # type: ignore[arg-type]
+            .distinct()
         ).all()
         # Same grouping function as `families` above — two different key
         # derivations would silently never intersect, and skip_covered would
@@ -229,7 +230,9 @@ def _parse_published(value: str | None) -> datetime | None:
 
 
 def should_skip_existing(
-    existing: RawYoutubeReview | None, fetch_transcripts: bool
+    existing: RawYoutubeReview | None,
+    fetch_transcripts: bool,
+    has_human_link: bool = False,
 ) -> bool:
     """Should a rediscovered video be left exactly as it is?
 
@@ -254,7 +257,12 @@ def should_skip_existing(
     if existing is None:
         return False
     return (
-        not fetch_transcripts
+        # A human has linked it: re-ingest would overwrite the status and
+        # replace the review's links with the matcher's guess. Its transcript
+        # can still be retried, without touching the match, through
+        # POST /reviews/retry-transcripts.
+        has_human_link
+        or not fetch_transcripts
         or existing.status != ReviewStatus.REJECTED.value
         # A rejected row whose failure is terminal (no captions at all, or the
         # video is gone) can never be recovered by fetching again. Left
@@ -354,11 +362,16 @@ def ingest_for_laptop(
         existing = session.exec(
             select(RawYoutubeReview).where(RawYoutubeReview.video_id == video_id)
         ).first()
-        if should_skip_existing(existing, fetch_transcripts):
+        has_human_link = existing is not None and session.exec(
+            select(ReviewLaptopLink.id)
+            .where(ReviewLaptopLink.raw_review_id == existing.id)
+            .where(ReviewLaptopLink.match_source == MatchSource.HUMAN.value)
+        ).first() is not None
+        if should_skip_existing(existing, fetch_transcripts, has_human_link):
             counts["skipped"] += 1
             continue
 
-        matched_laptop_id, confidence = match_laptop(video["video_title"], session)
+        match_id, confidence = match_laptop(video["video_title"], session)
 
         if not fetch_transcripts:
             # Discovery-only. status is PENDING, never REJECTED: a row with no
@@ -368,9 +381,8 @@ def ingest_for_laptop(
             #
             # PENDING rather than MATCHED even when the title matched: in this
             # pipeline MATCHED means "ready for chunk processing", and a row
-            # with no transcript is not. The match is still recorded in
-            # matched_laptop_id / match_confidence, so nothing is lost — the
-            # row is promoted once a transcript arrives.
+            # with no transcript is not. The match is still recorded as an
+            # auto link, so nothing is lost.
             #
             # transcript_attempts stays 0, which is what makes these rows
             # findable later: POST /reviews/retry-transcripts picks up
@@ -391,7 +403,7 @@ def ingest_for_laptop(
             attempts = 1
             if result.ok:
                 status = (
-                    ReviewStatus.MATCHED.value if matched_laptop_id
+                    ReviewStatus.MATCHED.value if match_id
                     else ReviewStatus.PENDING.value
                 )
                 raw_transcript = {"segments": result.segments}
@@ -412,30 +424,45 @@ def ingest_for_laptop(
             if video.get("video_description") is not None:
                 existing.video_description = video["video_description"]
             existing.raw_transcript = raw_transcript
-            existing.matched_laptop_id = matched_laptop_id
             existing.match_confidence = confidence
             existing.status = status
             existing.failure_reason = failure_reason
             existing.transcript_language = language
             existing.transcript_attempts += attempts
             session.add(existing)
+            row = existing
         else:
-            session.add(
-                RawYoutubeReview(
-                    video_id=video_id,
-                    channel_id=video["channel_id"],
-                    video_title=video["video_title"],
-                    video_description=video.get("video_description"),
-                    published_at=_parse_published(video.get("published_at")),
-                    raw_transcript=raw_transcript,
-                    matched_laptop_id=matched_laptop_id,
-                    match_confidence=confidence,
-                    status=status,
-                    failure_reason=failure_reason,
-                    transcript_language=language,
-                    transcript_attempts=attempts,
-                )
+            row = RawYoutubeReview(
+                video_id=video_id,
+                channel_id=video["channel_id"],
+                video_title=video["video_title"],
+                video_description=video.get("video_description"),
+                published_at=_parse_published(video.get("published_at")),
+                raw_transcript=raw_transcript,
+                match_confidence=confidence,
+                status=status,
+                failure_reason=failure_reason,
+                transcript_language=language,
+                transcript_attempts=attempts,
             )
+            session.add(row)
+
+        # The match is recorded as an auto link. Flushed first:
+        # the link's FK needs the review row inserted, and the two models have
+        # no relationship for the unit of work to order them by.
+        session.flush()
+        if not match_id:
+            # A retried rejected row that no longer matches loses its old
+            # guess, as the column used to be set back to NULL. (A new row has
+            # no links to clear.)
+            if existing:
+                clear_auto_links(session, row.id)
+        elif not write_auto_link(session, row.id, match_id, confidence):
+            # The laptop has no family, so no link can be written -- and a
+            # MATCHED row with nothing to process would only fail on every
+            # /process-bulk run. Leave it for a human.
+            if row.status == ReviewStatus.MATCHED.value:
+                row.status = status = ReviewStatus.PENDING.value
 
         if fetch_transcripts:
             counts[status] += 1

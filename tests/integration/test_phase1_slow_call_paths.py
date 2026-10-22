@@ -228,10 +228,18 @@ def test_process_raw_review_on_real_rows(session, catalog, monkeypatch):
     from app.reviews import processor
     from app.reviews.models import LaptopReviewChunk
 
+    from app.laptops.family_model import LaptopFamily
+    from app.reviews.link_model import ReviewLaptopLink
+
     ch = _channel(session)
-    raw = _raw_review(
-        session, ch.channel_id, status="matched", matched_laptop_id=catalog[0].id,
-    )
+    raw = _raw_review(session, ch.channel_id, status="matched")
+    family = LaptopFamily(brand_id=catalog[0].brand_id, name="TUF F16")
+    session.add(family)
+    session.commit()
+    catalog[0].family_id = family.id
+    session.add(catalog[0])
+    session.add(ReviewLaptopLink(raw_review_id=raw.id, family_id=family.id, laptop_id=catalog[0].id))
+    session.commit()
     raw.raw_transcript = {"segments": [{"start": float(s), "duration": 5.0, "text": "fast"} for s in range(0, 100, 5)]}
     session.add(raw)
     session.commit()

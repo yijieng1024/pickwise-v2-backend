@@ -429,7 +429,7 @@ def create_human_link(
     domain error twice is the duplication this function exists to remove.
 
     Adds to the session but does NOT commit — the caller decides, because the
-    manual-match path writes matched_laptop_id in the same transaction.
+    manual-match path updates the review's status in the same transaction.
     """
     family = session.get(LaptopFamily, family_id)
     if not family:
@@ -515,3 +515,97 @@ def resolve_family_for_laptop(
             ),
         )
     return laptop.family_id
+
+
+# --------------------------------------------------------------------------
+# The link table as the single source of truth (Review A). Every reader that
+# used raw_youtube_reviews.matched_laptop_id goes through these instead.
+# --------------------------------------------------------------------------
+
+def effective_links(links: list[ReviewLaptopLink]) -> list[ReviewLaptopLink]:
+    """The links that count. Human links, if a review has any, replace its auto
+    links for every reader: a human who linked a family and left the config
+    unknown has said "we don't know which config" -- an auto link still naming
+    one must not be allowed to answer for them."""
+    human = [l for l in links if l.match_source == MatchSource.HUMAN.value]
+    return human or list(links)
+
+
+def processing_laptop_id(links: list[ReviewLaptopLink]) -> Optional[uuid.UUID]:
+    """The one configuration a review's chunks are attached to, or None.
+
+    Today's processor writes every chunk of a review to ONE laptop (it used to
+    be matched_laptop_id). So a review is processable only when its effective
+    links name exactly one configuration. None for family-only links (they wait
+    for Review B's family scope) and for several configs (a comparison video --
+    attaching all its claims to one machine, or to each, would be wrong).
+    """
+    configs = {l.laptop_id for l in effective_links(links) if l.laptop_id is not None}
+    return configs.pop() if len(configs) == 1 else None
+
+
+def links_by_review(
+    session: Session, review_ids
+) -> dict[uuid.UUID, list[ReviewLaptopLink]]:
+    """Raw link rows grouped by review, one query."""
+    review_ids = list(review_ids)
+    grouped: dict[uuid.UUID, list[ReviewLaptopLink]] = {r: [] for r in review_ids}
+    if review_ids:
+        for link in session.exec(
+            select(ReviewLaptopLink).where(
+                ReviewLaptopLink.raw_review_id.in_(review_ids)  # type: ignore[attr-defined]
+            )
+        ).all():
+            grouped[link.raw_review_id].append(link)
+    return grouped
+
+
+def human_linked_review_ids(session: Session) -> set[uuid.UUID]:
+    return set(
+        session.exec(
+            select(ReviewLaptopLink.raw_review_id).where(
+                ReviewLaptopLink.match_source == MatchSource.HUMAN.value
+            )
+        ).all()
+    )
+
+
+def clear_auto_links(session: Session, raw_review_id: uuid.UUID) -> None:
+    """Delete a review's auto links (never its human ones). Flushes: the unit
+    of work runs INSERTs before DELETEs, so a caller re-adding the same
+    (review, family, laptop) would otherwise hit uq_review_family_laptop."""
+    for old in session.exec(
+        select(ReviewLaptopLink)
+        .where(ReviewLaptopLink.raw_review_id == raw_review_id)
+        .where(ReviewLaptopLink.match_source == MatchSource.AUTO.value)
+    ).all():
+        session.delete(old)
+    session.flush()
+
+
+def write_auto_link(
+    session: Session,
+    raw_review_id: uuid.UUID,
+    laptop_id: uuid.UUID,
+    confidence: float,
+) -> bool:
+    """Record the matcher's answer as THE auto link for a review, replacing any
+    earlier auto link -- a re-match supersedes the previous guess. Human links
+    are never touched; callers must not call this for a human-linked review at
+    all (the guard lives with them, where the skip is counted).
+
+    False when the laptop has no family: family_id is NOT NULL, and guessing
+    one is worse than leaving the review for a human. Does not commit.
+    """
+    family_id = find_family_id(session, laptop_id)
+    if family_id is None:
+        return False
+    clear_auto_links(session, raw_review_id)
+    session.add(ReviewLaptopLink(
+        raw_review_id=raw_review_id,
+        family_id=family_id,
+        laptop_id=laptop_id,
+        match_source=MatchSource.AUTO.value,
+        match_confidence=confidence,
+    ))
+    return True

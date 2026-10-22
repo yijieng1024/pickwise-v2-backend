@@ -10,7 +10,8 @@ from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_service import resolve_family_id
 from app.embeddings.service import embed_text
 from app.rag.models import ConversationLaptop
-from app.reviews.models import LaptopReviewChunk, LaptopReviewSummary, RawYoutubeReview
+from app.reviews.link_model import ReviewLaptopLink
+from app.reviews.models import LaptopReviewChunk, LaptopReviewSummary
 from app.saved.models import SavedLaptop
 from app.scraper.models import RawScrapLaptop
 from app.common.filter_service import apply_filters, apply_range, filter_query
@@ -278,7 +279,7 @@ _DELETE_BLOCKING_REFERENCES = [
     (ConversationLaptop, ConversationLaptop.laptop_id, "conversation shortlist"),
     (LaptopReviewChunk, LaptopReviewChunk.laptop_id, "review chunk"),
     (LaptopReviewSummary, LaptopReviewSummary.laptop_id, "review summary"),
-    (RawYoutubeReview, RawYoutubeReview.matched_laptop_id, "matched YouTube review"),
+    (ReviewLaptopLink, ReviewLaptopLink.laptop_id, "YouTube review link"),
 ]
 
 

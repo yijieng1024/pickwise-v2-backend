@@ -74,3 +74,12 @@ def test_only_rejected_can_ever_be_rewritten(status):
     is the moment to think about it."""
     skipped = should_skip_existing(_row(status), True)
     assert skipped is (status != ReviewStatus.REJECTED.value)
+
+
+def test_a_human_linked_row_is_never_rewritten():
+    """Review A: re-ingest must not overwrite a human decision. A rejected row
+    with an operational failure is normally retried -- but not once a human has
+    linked it (its transcript can still be retried via /retry-transcripts)."""
+    row = _row(ReviewStatus.REJECTED.value, TranscriptFailure.IP_BLOCKED.value)
+    assert should_skip_existing(row, True, has_human_link=False) is False
+    assert should_skip_existing(row, True, has_human_link=True) is True
