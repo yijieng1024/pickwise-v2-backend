@@ -21,7 +21,8 @@ Reports:
      "processed") but fewer distinct windows were saved than the transcript
      yields. "Expected" re-uses processor._chunk_transcript so the window count
      is byte-identical to what process_raw_review would produce.
-  3. matched_laptop_id set with no review_laptop_link agreeing with it —
+  3. (removed in A2 -- it compared matched_laptop_id with the links, and the
+     column is gone. Reviews needing a human link are listed by section 7.)
      split into "no link at all" (the backfill set, expected 3) and "links
      exist, but none names this laptop" (the two sources disagree).
   4. Human links that matching would overwrite today:
@@ -30,7 +31,7 @@ Reports:
           exposed. Re-runs match_laptop (local fuzzy match, no network, no
           writes) to say which rows would actually flip, not just which could.
        b. ingest: should_skip_existing re-processes REJECTED rows, rewriting
-          matched_laptop_id/status. A human link on a rejected row is exposed.
+          status and auto links. A human link on a rejected row is exposed.
   5. Chunks whose laptop has no config-level link on their review — what a
      link deletion leaves behind (input to A1 step 4).
   6. Every reference to matched_laptop_id in the code (static scan).
@@ -142,36 +143,6 @@ def audit_partial(chunks, reviews_by_video) -> None:
               f"{_title(r, 50)}{extra}")
 
 
-def audit_unlinked(reviews, links_by_review) -> None:
-    _heading("3", "matched_laptop_id set, no review_laptop_link agreeing with it")
-    with_col = [r for r in reviews if r.matched_laptop_id]
-    no_link, disagree = [], []
-    for r in with_col:
-        links = links_by_review.get(r.id, [])
-        if not links:
-            no_link.append(r)
-        elif not any(l.laptop_id == r.matched_laptop_id for l in links):
-            disagree.append((r, links))
-
-    print(f"reviews with matched_laptop_id set: {len(with_col)}")
-    print(f"  NO link row at all (backfill set, expected 3): {len(no_link)}")
-    for r in no_link:
-        print(f"    {r.id}  {r.video_id:<12} status={r.status:<9} "
-              f"conf={r.match_confidence}  {_title(r, 45)}")
-    print(f"  links exist but none names matched_laptop_id:  {len(disagree)}")
-    for r, links in disagree:
-        print(f"    {r.id}  {r.video_id:<12} column={r.matched_laptop_id}  "
-              f"links={[(l.match_source, str(l.laptop_id)) for l in links]}")
-
-    conf = Counter(
-        "100.0" if r.match_confidence == 100.0 else
-        "NULL" if r.match_confidence is None else "<100"
-        for r in with_col
-    )
-    print(f"  match_confidence on those rows: {dict(conf)}  "
-          "(100.0 = written by the old manual-match path)")
-
-
 def audit_overwrite(session, reviews, links_by_review) -> None:
     _heading("4", "Human links that matching would overwrite today")
     human = {
@@ -200,7 +171,7 @@ def audit_overwrite(session, reviews, links_by_review) -> None:
     exposed_rejected = [by_id[rid] for rid in human
                         if rid in by_id and by_id[rid].status == ReviewStatus.REJECTED.value]
     print(f"\n(b) ingest: human-linked REJECTED reviews (re-processed, and "
-          f"matched_laptop_id/status rewritten, on the next ingest that discovers them): "
+          f"status/links rewritten, on the next ingest that discovers them): "
           f"{len(exposed_rejected)}")
     for r in exposed_rejected:
         print(f"    {r.video_id:<12} failure={r.failure_reason}  {_title(r, 50)}")
@@ -213,9 +184,7 @@ def audit_orphan_chunks(chunks, reviews_by_video, links_by_review) -> None:
         r = reviews_by_video.get(c.video_id)
         cfgs = {l.laptop_id for l in links_by_review.get(r.id, [])} if r else set()
         if c.laptop_id not in cfgs:
-            reason = ("no raw review row" if r is None else
-                      f"column={'match' if r.matched_laptop_id == c.laptop_id else 'other/NULL'}, "
-                      f"status={r.status}")
+            reason = "no raw review row" if r is None else f"status={r.status}"
             orphans[(c.video_id, reason)] += 1
     print(f"chunk rows not backed by a link (review, laptop_id): {sum(orphans.values())}")
     for (vid, reason), n in orphans.most_common():
@@ -308,7 +277,6 @@ def main() -> None:
 
         audit_duplicates(chunks, reviews_by_video)
         audit_partial(chunks, reviews_by_video)
-        audit_unlinked(reviews, links_by_review)
         audit_overwrite(session, reviews, links_by_review)
         audit_orphan_chunks(chunks, reviews_by_video, links_by_review)
         audit_link_rules(reviews, chunks, links_by_review)

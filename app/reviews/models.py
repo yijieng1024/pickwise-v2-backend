@@ -207,9 +207,10 @@ class RawYoutubeReview(SQLModel, table=True):
     )
     published_at: Optional[datetime] = None
     raw_transcript: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
-    matched_laptop_id: Optional[uuid.UUID] = Field(
-        default=None, foreign_key="laptops.id", nullable=True
-    )
+    # The matcher's score for this title, written by ingest on every row
+    # (pending and rejected too) and shown by /reviews/raw and /reviews/pending.
+    # Which laptop it scored lives in review_laptop_link (match_source auto);
+    # the old single-laptop column was dropped in A2 (migration f3a9c2d81b60).
     match_confidence: Optional[float] = None
     status: str = Field(default=ReviewStatus.PENDING.value)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

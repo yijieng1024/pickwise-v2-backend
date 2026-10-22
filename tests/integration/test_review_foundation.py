@@ -1,11 +1,8 @@
 """
-Review A: the review pipeline reads and writes review_laptop_link, never
-raw_youtube_reviews.matched_laptop_id, and its three known holes stay shut --
+Review A: the review pipeline reads and writes review_laptop_link only (A2
+dropped the old single-laptop column), and its three known holes stay shut --
 reprocessing a finished review, a partial review counting as done, and
 matching overwriting a human decision.
-
-Every test also asserts the column stays NULL: "nothing writes it" is the
-property A2's DROP COLUMN relies on.
 """
 import uuid
 
@@ -122,7 +119,6 @@ def test_a_finished_review_is_never_processed_again(session, family_laptops, fak
     assert exc.value.status_code == 409
     assert router.process_bulk(limit=50, session=session, _=None)["candidates"] == 0
     assert len(_chunks(session, review)) == 4
-    assert review.matched_laptop_id is None
 
 
 # --- 2. partial processing ---------------------------------------------------
@@ -158,8 +154,8 @@ def test_processing_follows_links_not_the_column(session, family_laptops, fake_l
     from app.reviews.processor import process_raw_review
 
     family, laptops = family_laptops
-    # Column set (as the 3 parked production rows are) but no link: refused.
-    parked = _review(session, matched_laptop_id=laptops[0].id)
+    # MATCHED with no link (the parked production rows): refused.
+    parked = _review(session)
     with pytest.raises(ValueError, match="not processable"):
         process_raw_review(parked.id, session)
 
@@ -200,7 +196,7 @@ def test_rematch_skips_human_linked_reviews(session, family_laptops, monkeypatch
     assert [(l.match_source, l.laptop_id) for l in human_links] == [("human", None)]
 
     plain_row = session.get(RawYoutubeReview, plain.id)
-    assert plain_row.status == "matched" and plain_row.matched_laptop_id is None
+    assert plain_row.status == "matched"
     auto = session.exec(select(ReviewLaptopLink).where(ReviewLaptopLink.raw_review_id == plain.id)).all()
     assert [(l.match_source, l.laptop_id, l.match_confidence) for l in auto] == [("auto", laptops[0].id, 90.0)]
 
@@ -248,7 +244,7 @@ def test_ingest_skips_human_linked_rejected_and_links_new_matches(session, famil
         select(ReviewLaptopLink).where(ReviewLaptopLink.raw_review_id == rejected.id))] == ["human"]
 
     new = session.exec(select(RawYoutubeReview).where(RawYoutubeReview.video_id == new_vid)).one()
-    assert new.status == "matched" and new.matched_laptop_id is None
+    assert new.status == "matched"
     link = session.exec(select(ReviewLaptopLink).where(ReviewLaptopLink.raw_review_id == new.id)).one()
     assert (link.match_source, link.laptop_id, link.family_id, link.match_confidence) == (
         "auto", laptops[1].id, family.id, 88.0)
@@ -266,9 +262,9 @@ def test_manual_match_writes_a_human_link_and_leaves_the_column_alone(session, f
     out = router.manual_match(review.id, ManualMatchRequest(laptop_id=laptops[0].id), session=session, _=None)
 
     assert [(l["match_source"], l["match_confidence"]) for l in out["links"]] == [("human", None)]
-    assert out["review"].matched_laptop_id == laptops[0].id  # resolved from the link
+    assert out["review"].matched_laptop_id == laptops[0].id  # API field, resolved from the link
     row = session.get(RawYoutubeReview, review.id)
-    assert (row.status, row.matched_laptop_id, row.match_confidence) == ("matched", None, 61.0)
+    assert (row.status, row.match_confidence) == ("matched", 61.0)
 
 
 def test_the_queue_shows_matched_reviews_that_cannot_be_processed(session, family_laptops):
@@ -276,7 +272,7 @@ def test_the_queue_shows_matched_reviews_that_cannot_be_processed(session, famil
     from app.reviews import router
 
     family, laptops = family_laptops
-    parked = _review(session, matched_laptop_id=laptops[0].id)   # column, no link
+    parked = _review(session)                                    # matched, no link
     overruled = _review(session)
     _link(session, overruled, family, laptops[0], source="auto")
     _link(session, overruled, family, None, source="human")
