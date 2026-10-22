@@ -143,6 +143,7 @@ Different user groups (students, people who don't understand specs, people decid
 - Adding a human link moves the review from pending to matched, the same as manual match. Found in the B0 survey (2026-10-22): 17 reviews with a human family link were stuck in pending because adding a link didn't change the status, so the processor never picked them up. A one-off script moves them (dry run first)
 - Family-scope chunks from family-only reviews are shown on the public details page and to the agent, each labelled "configuration not stated". Accepted trade-off until Review C: a performance claim (frame rate, temperature, battery hours) from an untested configuration can appear on sibling pages, with that label. The agent must say so when it uses them
 - Summaries on the public endpoint are computed from chunks on each request, not stored, so they can't go stale and the manual aggregate step goes away. `laptop_review_summary` stays for admin use for now
+- Agent evidence (`get_review_evidence`), per question: first this laptop's own chunks plus its family's family-scope chunks; if none of those pass the 0.44 relevance cutoff, fall back to other configurations in the same family, labelled "tested on <config>". The two tiers are never mixed. Other families are never used. Each line carries its label ("this configuration" / "configuration not stated" / "tested on <config>"), and the result tells the agent to say so whenever a line isn't this exact configuration. The cutoff (`REVIEW_EVIDENCE_MAX_DISTANCE`, 0.44) guards against filler; it isn't a precision filter, and should be re-derived after Review C or once there are more real agent queries
 - `get_review_evidence` searches by family + config, applies a relevance cutoff, and deduplicates before returning
 - Aggregator works per family
 - Public endpoint, e.g. `GET /laptops/{id}/reviews`
@@ -287,6 +288,7 @@ A laptop that fails stays inactive, and the notification says which condition fa
 
 ## 5. To decide later
 
+- Known gap from Review B1, not scheduled: when a laptop is moved to another family (`POST /families/laptops/move`), its review chunks keep the old `family_id` (review links have the same gap). Fix would be to update that laptop's chunks and links in the move
 - What Pico's opening on the compare page contains, and whether it is also the same for everyone (cacheable per set of laptops)
 - Which Google model is the backup (picked on the admin page, after it passes the eval harness)
 - How many courses, and which ones, in the first software compatibility batch (suggested: 5–10)

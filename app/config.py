@@ -50,6 +50,16 @@ class Settings(BaseSettings):
     embedding_timeout_s: float = 15.0
     embedding_max_retries: int = 2
 
+    # get_review_evidence drops chunks farther than this cosine distance from
+    # the query. A guard against filler when nothing relevant exists, NOT a
+    # precision filter: relevant and irrelevant distances overlap heavily
+    # (median 0.353 vs 0.417), so ranking within the laptop's family does the
+    # real work. Derived on 2026-10-22 from keyword-labelled data (14 realistic
+    # and 3 off-topic queries against 346 chunks); re-derive it after Review
+    # C's topic tags, or once there are more real agent queries. Tied to the
+    # embedding model, like the 0.53 gate.
+    review_evidence_max_distance: float = 0.44
+
     # Chat models per use, "provider:model": a primary and an ORDERED,
     # comma-separated list of backups (empty = no fallback). These are the
     # DEFAULTS: an admin override in app_settings (`<use>.model` /
