@@ -157,6 +157,22 @@ class _Lazy:
     def __setattr__(self, name, value):
         setattr(self._resolve(), name, value)
 
+    # Equal to, and hashing like, the object it stands for. Not cosmetic:
+    # SQLAlchemy files a session's connection under `conn.engine` (the real
+    # Engine) and looks it up again with `bind in self._connections`, where
+    # bind is whatever was passed to Session(...) -- this proxy. With identity
+    # hashing that lookup always missed, so Session(engine) opened a NEW pooled
+    # connection for every statement and held all of them until close: the
+    # pool exhaustion, and a later query not seeing the same session's flushed
+    # writes. __eq__ never resolves (nothing can equal an object not yet
+    # built); __hash__ resolves, but SQLAlchemy only hashes the bind on the way
+    # to bind.connect(), which resolves anyway.
+    def __eq__(self, other):
+        return other is self or other is object.__getattribute__(self, "_real")
+
+    def __hash__(self):
+        return hash(self._resolve())
+
     def __repr__(self):
         built = object.__getattribute__(self, "_real") is not None
         label = object.__getattribute__(self, "_label")

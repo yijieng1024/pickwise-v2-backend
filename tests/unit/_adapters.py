@@ -617,3 +617,4 @@ from app.common import app_settings as app_settings_module  # noqa: E402,F401
 from app.agent import monitoring_service  # noqa: E402,F401
 run_eval = _run_eval  # the eval harness module (judge must never fall back)
 from app.config import Settings  # noqa: E402,F401 - class only; reading defaults builds nothing
+from app.config import _Lazy  # noqa: E402,F401 - the deferred-construction proxy behind app.database.engine
