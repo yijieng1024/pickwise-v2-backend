@@ -11,7 +11,8 @@ from app.laptops.family_service import resolve_family_id
 from app.embeddings.service import embed_text
 from app.rag.models import ConversationLaptop
 from app.reviews.link_model import ReviewLaptopLink
-from app.reviews.models import LaptopReviewChunk, LaptopReviewSummary
+from app.reviews.aggregator import laptop_reviews
+from app.reviews.models import LaptopReviewChunk, LaptopReviewSummary, LaptopReviewsRead
 from app.saved.models import SavedLaptop
 from app.scraper.models import RawScrapLaptop
 from app.common.filter_service import apply_filters, apply_range, filter_query
@@ -250,6 +251,19 @@ def update_laptop(
         session.commit()
 
     return db_laptop
+
+@router.get("/{laptop_id}/reviews", response_model=LaptopReviewsRead)
+def get_laptop_reviews(laptop_id: UUID, session: Session = Depends(get_session)):
+    """Public. What YouTube reviewers said about this laptop, for the details
+    page: top strengths and weaknesses, each saying whether it was tested on
+    this configuration, on another one (named), or with the configuration not
+    stated. Computed from chunks on every request (Review B3); `source: none`
+    means there are no reviews for this laptop or its family yet."""
+    db_laptop = session.get(Laptop, laptop_id)
+    if not db_laptop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Laptop not found")
+    return laptop_reviews(session, db_laptop)
+
 
 @router.get("/{laptop_id}/price-history", response_model=List[LaptopPriceHistoryRead])
 def get_laptop_price_history(laptop_id: UUID, session: Session = Depends(get_session)):

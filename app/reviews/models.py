@@ -290,6 +290,32 @@ class LaptopReviewSummary(SQLModel, table=True):
 
 # --- Read schemas ---
 
+class ReviewPointRead(SQLModel):
+    """One reviewer point on the public details page (GET /laptops/{id}/reviews)."""
+    text: str                       # LLM paraphrase, never a verbatim quote
+    sentiment: str                  # strength | weakness
+    # this_configuration | configuration_not_stated | other_configuration
+    applies_to: str
+    # Set only for other_configuration: the configuration the reviewer tested.
+    tested_on_laptop_id: Optional[uuid.UUID] = None
+    tested_on_name: Optional[str] = None
+    channel_name: str
+    video_id: str
+    video_title: Optional[str] = None
+    timestamp_start_seconds: int
+    url: str                        # YouTube link at the timestamp
+
+
+class LaptopReviewsRead(SQLModel):
+    laptop_id: uuid.UUID
+    # this_laptop | other_configurations | none -- which tier of the display
+    # rule the points come from; `none` means show "no reviews yet".
+    source: str
+    review_count: int               # distinct videos behind the chunks used
+    strengths: List[ReviewPointRead]
+    weaknesses: List[ReviewPointRead]
+
+
 class YoutubeChannelCreate(SQLModel):
     channel_url: str  # YouTube URL, @handle, or UC... ID — resolved automatically
     trust_tier: str = TrustTier.TIER_2.value  # deprecated, see TrustTier

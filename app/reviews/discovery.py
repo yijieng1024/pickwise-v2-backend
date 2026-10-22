@@ -1,3 +1,4 @@
+import html
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -209,7 +210,11 @@ def discover_videos(
                     {
                         "video_id": item["id"]["videoId"],
                         "channel_id": channel.channel_id,
-                        "video_title": item["snippet"]["title"],
+                        # search.list returns titles HTML-escaped (&amp;,
+                        # &#39;, ...). Decoded here, where every title enters:
+                        # stored escaped, they reached users verbatim and gave
+                        # the matcher stray "amp"/"39" tokens.
+                        "video_title": html.unescape(item["snippet"]["title"]),
                         "published_at": item["snippet"]["publishedAt"],
                     }
                 )

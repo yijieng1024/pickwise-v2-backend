@@ -618,3 +618,4 @@ from app.agent import monitoring_service  # noqa: E402,F401
 run_eval = _run_eval  # the eval harness module (judge must never fall back)
 from app.config import Settings  # noqa: E402,F401 - class only; reading defaults builds nothing
 from app.config import _Lazy  # noqa: E402,F401 - the deferred-construction proxy behind app.database.engine
+from app.reviews import discovery as review_discovery  # noqa: E402,F401 - search.list title handling

@@ -1,12 +1,16 @@
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
+from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
 from app.reviews.models import (
+    ChunkScope,
     LaptopReviewChunk,
     LaptopReviewSummary,
+    RawYoutubeReview,
     YoutubeChannel,
 )
 
@@ -15,12 +19,9 @@ logger = get_logger(__name__)
 _MAX_PER_SENTIMENT = 5
 
 
-def aggregate_for_laptop(laptop_id: uuid.UUID, session: Session) -> LaptopReviewSummary:
-    """
-    Roll up all processed chunks for a laptop into laptop_review_summary.
-    Deduplicates by selecting the top _MAX_PER_SENTIMENT distinct chunk texts per sentiment.
-    Creates a new summary row if one doesn't exist; updates in-place otherwise.
-    """
+def _ordered_chunks(session: Session, where) -> list[LaptopReviewChunk]:
+    """Chunks matching `where`, in the order every roll-up takes its top
+    points from (the stored summary and the public view)."""
     # Explicit ordering, and it is load-bearing rather than tidiness: the
     # "top 5" below is just the first five distinct texts this query returns,
     # so with no ORDER BY it was Postgres's return order. Two aggregations of
@@ -45,7 +46,7 @@ def aggregate_for_laptop(laptop_id: uuid.UUID, session: Session) -> LaptopReview
     # which is a chunk-scope problem, not an ordering one — reordering cannot
     # remove a foreign price figure from the pool, only rank it lower. That
     # belongs with ADR-0012's scope mechanism.
-    chunks = session.exec(
+    return session.exec(
         select(LaptopReviewChunk)
         .join(
             YoutubeChannel,
@@ -56,13 +57,22 @@ def aggregate_for_laptop(laptop_id: uuid.UUID, session: Session) -> LaptopReview
             # ranking it last, which is what the NULLS LAST below does.
             isouter=True,
         )
-        .where(LaptopReviewChunk.laptop_id == laptop_id)
+        .where(where)
         .order_by(
             YoutubeChannel.evidence_tier.asc().nullslast(),  # type: ignore[union-attr]
             LaptopReviewChunk.created_at.desc(),  # type: ignore[attr-defined]
             LaptopReviewChunk.id,
         )
     ).all()
+
+
+def aggregate_for_laptop(laptop_id: uuid.UUID, session: Session) -> LaptopReviewSummary:
+    """
+    Roll up all processed chunks for a laptop into laptop_review_summary.
+    Deduplicates by selecting the top _MAX_PER_SENTIMENT distinct chunk texts per sentiment.
+    Creates a new summary row if one doesn't exist; updates in-place otherwise.
+    """
+    chunks = _ordered_chunks(session, LaptopReviewChunk.laptop_id == laptop_id)
 
     strengths = list(
         dict.fromkeys(c.chunk_text for c in chunks if c.sentiment_tag == "strength")
@@ -100,3 +110,87 @@ def aggregate_for_laptop(laptop_id: uuid.UUID, session: Session) -> LaptopReview
         review_count,
     )
     return summary
+
+
+def laptop_reviews(session: Session, laptop: Laptop) -> dict:
+    """The public details-page view (GET /laptops/{id}/reviews, Review B3),
+    computed from chunks on every request: no stored summary to go stale and
+    no manual aggregate step. laptop_review_summary stays for admin use.
+
+    Display rule, tiers never mixed:
+      1. this laptop's own chunks plus its family's family-scope chunks
+      2. if there are none, its sibling configurations' chunks, each naming
+         the configuration the reviewer tested
+      3. otherwise nothing -- the page says "no reviews yet"
+    There is no query here, so unlike get_review_evidence the fallback is
+    decided by existence, not relevance.
+    """
+    C = LaptopReviewChunk
+    own = C.laptop_id == laptop.id
+    source = "this_laptop"
+    if laptop.family_id is None:
+        chunks = _ordered_chunks(session, own)
+    else:
+        chunks = _ordered_chunks(session, or_(
+            own, (C.family_id == laptop.family_id) & (C.scope == ChunkScope.FAMILY.value)
+        ))
+        if not chunks:
+            chunks = _ordered_chunks(
+                session, (C.family_id == laptop.family_id) & (C.laptop_id != laptop.id)
+            )
+            source = "other_configurations"
+    if not chunks:
+        return {"laptop_id": laptop.id, "source": "none", "review_count": 0,
+                "strengths": [], "weaknesses": []}
+
+    titles = dict(session.exec(
+        select(RawYoutubeReview.video_id, RawYoutubeReview.video_title).where(
+            RawYoutubeReview.video_id.in_({c.video_id for c in chunks})  # type: ignore[attr-defined]
+        )
+    ).all())
+    names = dict(session.exec(
+        select(Laptop.id, Laptop.product_name).where(
+            Laptop.id.in_({c.laptop_id for c in chunks if c.laptop_id})  # type: ignore[attr-defined]
+        )
+    ).all())
+
+    def point(c: LaptopReviewChunk) -> dict:
+        if c.laptop_id == laptop.id:
+            applies_to = "this_configuration"
+        elif c.laptop_id is None:
+            applies_to = "configuration_not_stated"
+        else:
+            applies_to = "other_configuration"
+        other = applies_to == "other_configuration"
+        return {
+            "text": c.chunk_text,
+            "sentiment": c.sentiment_tag,
+            "applies_to": applies_to,
+            "tested_on_laptop_id": c.laptop_id if other else None,
+            "tested_on_name": names.get(c.laptop_id) if other else None,
+            "channel_name": c.channel_name,
+            "video_id": c.video_id,
+            "video_title": titles.get(c.video_id),
+            "timestamp_start_seconds": c.timestamp_start_seconds,
+            "url": f"https://youtube.com/watch?v={c.video_id}&t={c.timestamp_start_seconds}",
+        }
+
+    def top(sentiment: str) -> list[dict]:
+        out, seen = [], set()
+        for c in chunks:
+            key = c.chunk_text.strip().casefold()
+            if c.sentiment_tag != sentiment or key in seen:
+                continue
+            seen.add(key)
+            out.append(point(c))
+            if len(out) == _MAX_PER_SENTIMENT:
+                break
+        return out
+
+    return {
+        "laptop_id": laptop.id,
+        "source": source,
+        "review_count": len({c.video_id for c in chunks}),
+        "strengths": top("strength"),
+        "weaknesses": top("weakness"),
+    }
