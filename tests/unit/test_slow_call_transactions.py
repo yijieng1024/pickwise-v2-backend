@@ -169,7 +169,8 @@ def test_review_processor_first_chunk_holds_no_connection(db, monkeypatch):
     calls = []
     raw = SimpleNamespace(
         id=uuid.uuid4(), status=review_processor.ReviewStatus.MATCHED.value,
-        video_id="vid", channel_id="ch",
+        video_id="vid", video_title="TUF F16 review", channel_id="ch",
+        reprocess_requested_at=None,
         raw_transcript={"segments": [{"start": 0.0, "duration": 5.0, "text": "fast"}]},
     )
     link = SimpleNamespace(
@@ -178,14 +179,20 @@ def test_review_processor_first_chunk_holds_no_connection(db, monkeypatch):
     _reads(
         monkeypatch, session,
         [raw], [link],                        # the review, then its links
-        [],                                   # windows already saved: none
+        [], [],                               # windows already saved: chunks, unattached
         [SimpleNamespace(channel_name="Chan")],
     )
+    cands = review_processor.Candidates(
+        ids={"F1": (link.family_id, None)}, link_config={link.family_id: link.laptop_id},
+    )
+    monkeypatch.setattr(review_processor, "build_candidates", lambda s, l: cands)
     monkeypatch.setattr(review_processor.time, "sleep", lambda s: None)
     monkeypatch.setattr(review_processor, "embed_text", _probe(engine, calls, "embed", [0.0] * 768))
     _FakeChatModel.probe = _probe(
         engine, calls, "llm",
-        lambda: review_processor._ChunkAnalysis(summary="fast", sentiment_tag="strength"),
+        lambda: review_processor._WindowAnalysis(
+            summary="fast", about="F1", sentiment="strength", topic="performance", scope="config",
+        ),
     )
     monkeypatch.setattr(review_processor, "build_llm", lambda *a, **k: _FakeChatModel())
 

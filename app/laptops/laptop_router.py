@@ -12,7 +12,12 @@ from app.embeddings.service import embed_text
 from app.rag.models import ConversationLaptop
 from app.reviews.link_model import ReviewLaptopLink
 from app.reviews.aggregator import laptop_reviews
-from app.reviews.models import LaptopReviewChunk, LaptopReviewSummary, LaptopReviewsRead
+from app.reviews.models import (
+    LaptopReviewChunk,
+    LaptopReviewSummary,
+    LaptopReviewsRead,
+    ReviewClaimStaging,
+)
 from app.saved.models import SavedLaptop
 from app.scraper.models import RawScrapLaptop
 from app.common.filter_service import apply_filters, apply_range, filter_query
@@ -292,6 +297,7 @@ _DELETE_BLOCKING_REFERENCES = [
     (SavedLaptop, SavedLaptop.laptop_id, "user wishlist"),
     (ConversationLaptop, ConversationLaptop.laptop_id, "conversation shortlist"),
     (LaptopReviewChunk, LaptopReviewChunk.laptop_id, "review chunk"),
+    (ReviewClaimStaging, ReviewClaimStaging.laptop_id, "staged review claim"),
     (LaptopReviewSummary, LaptopReviewSummary.laptop_id, "review summary"),
     (ReviewLaptopLink, ReviewLaptopLink.laptop_id, "YouTube review link"),
 ]

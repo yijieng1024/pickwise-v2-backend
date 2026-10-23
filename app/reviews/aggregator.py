@@ -11,6 +11,7 @@ from app.reviews.models import (
     LaptopReviewChunk,
     LaptopReviewSummary,
     RawYoutubeReview,
+    SHOWN_CHUNKS,
     YoutubeChannel,
 )
 
@@ -58,6 +59,7 @@ def _ordered_chunks(session: Session, where) -> list[LaptopReviewChunk]:
             isouter=True,
         )
         .where(where)
+        .where(SHOWN_CHUNKS)  # no price claims (HIDDEN_TOPICS)
         .order_by(
             YoutubeChannel.evidence_tier.asc().nullslast(),  # type: ignore[union-attr]
             LaptopReviewChunk.created_at.desc(),  # type: ignore[attr-defined]

@@ -105,6 +105,14 @@ def test_identical_members_are_reported_distinctly():
     assert code == "identical_specs"
 
 
+def test_price_never_makes_a_family_separable():
+    """Review C: price differs between nearly all configurations and no
+    review's (usually US) price identifies a catalog row."""
+    assert separability(["price_rm", "ram_gb", "ssd_gb"], 3)[1] == "ram_storage_only"
+    assert separability(["price_rm"], 2)[1] == "identical_specs"
+    assert separability(["price_rm", "gpu_model"], 2)[1] == "separable"
+
+
 # --- 2. Recompute the table after dropping suspended rows --------------------
 
 def test_dropping_a_suspended_row_can_remove_a_column():

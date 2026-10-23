@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review C Labels</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ec; --line: #deded8;
+    --text: #1d1d1b; --muted: #6b6b66; --accent: #2f5bd3; --accent-text: #ffffff;
+    --done: #2e8b57; --partial: #d49a1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151514; --surface: #1f1f1d; --surface-2: #2a2a27; --line: #3a3a36;
+      --text: #ecece8; --muted: #a3a39c; --accent: #7c9cf0; --accent-text: #111111;
+      --done: #5cbf86; --partial: #e2b44d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  h1 { font-size: 18px; margin: 0; }
+  .muted { color: var(--muted); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 14px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  .rubric dt { font-weight: 600; margin-top: 8px; }
+  .rubric dd { margin: 2px 0 0 0; }
+  .dots { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+  .dot { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface);
+         font-size: 11px; color: var(--muted); cursor: pointer; padding: 0; }
+  .dot.partial { border-color: var(--partial); color: var(--partial); }
+  .dot.done { background: var(--done); border-color: var(--done); color: var(--accent-text); }
+  .dot.current { outline: 2px solid var(--accent); outline-offset: 1px; }
+  pre { white-space: pre-wrap; font: 13px/1.45 ui-monospace, Consolas, monospace; background: var(--surface-2);
+        border-radius: 10px; padding: 10px; margin: 6px 0 0; overflow-wrap: anywhere; }
+  .prev { color: var(--muted); font-size: 14px; }
+  .excerpt { font-size: 16px; background: var(--surface-2); border-radius: 10px; padding: 12px; margin-top: 6px; }
+  fieldset { border: 0; padding: 0; margin: 16px 0 0; }
+  legend { font-weight: 600; margin-bottom: 6px; }
+  .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .opts label { position: relative; }
+  .opts input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .opts span { display: inline-block; padding: 6px 11px; border: 1px solid var(--line); border-radius: 999px;
+               background: var(--surface); font-size: 14px; }
+  .opts input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .opts input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .opts .unsure span { border-style: dashed; color: var(--muted); }
+  input[type="text"], textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+                                 background: var(--surface); color: var(--text); font: inherit; }
+  .nav { display: flex; gap: 8px; justify-content: space-between; margin-top: 16px; }
+  button.btn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface);
+               color: var(--text); font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  a { color: var(--accent); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Review C labels <span class="muted" id="progress"></span></h1>
+    <div class="row">
+      <button class="btn primary" id="export">Export labels</button>
+      <label class="btn" for="import">Import labels</label>
+      <input type="file" id="import" accept="application/json" hidden>
+    </div>
+  </header>
+
+  <details class="card" id="rubric-box">
+    <summary>Definitions (the same ones the model is given)</summary>
+    <dl class="rubric" id="rubric"></dl>
+  </details>
+
+  <div class="card">
+    <div class="dots" id="dots" aria-label="Windows"></div>
+  </div>
+
+  <section class="card" id="window" aria-live="polite"></section>
+
+  <p class="muted">Saved in this browser as you go. Export to keep a copy and to hand the labels to the comparison script.
+    Keys: ← → previous / next.</p>
+</main>
+
+<script id="sample" type="application/json">__SAMPLE_JSON__</script>
+<script>
+(() => {
+  const S = JSON.parse(document.getElementById("sample").textContent);
+  const KEY = "review-c-labels-" + S.sample_id;
+  const W = S.windows;
+  const FIELDS = ["about", "sentiment"];
+  let labels = {};
+  try { labels = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { labels = {}; }
+  let i = 0;
+  try { i = Math.min(W.length - 1, Number(localStorage.getItem(KEY + "-pos") || 0)); } catch (e) {}
+
+  const save = () => {
+    try { localStorage.setItem(KEY, JSON.stringify(labels)); localStorage.setItem(KEY + "-pos", String(i)); } catch (e) {}
+  };
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  const state = id => {
+    const l = labels[id] || {};
+    const n = FIELDS.filter(f => l[f]).length;
+    return n === FIELDS.length ? "done" : n ? "partial" : "";
+  };
+
+  const r = S.rubric;
+  document.getElementById("rubric").innerHTML =
+    `<dt>about</dt><dd>${esc(r.about)}<br>${Object.entries(r.fixed_answers).map(([k, v]) => `<b>${k}</b>: ${esc(v)}`).join(" · ")}</dd>` +
+    `<dt>sentiment</dt><dd>${esc(r.sentiment)}</dd>` +
+    `<dt>unsure</dt><dd>Pick it when you can't tell; that field is left out of the score for this window.</dd>`;
+  if (!Object.keys(labels).length) document.getElementById("rubric-box").open = true;
+
+  const group = (name, options, current) =>
+    `<fieldset><legend>${name}</legend><div class="opts">` +
+    options.map(([value, text, cls]) =>
+      `<label class="${cls || ""}"><input type="radio" name="${name}" value="${esc(value)}"${current === value ? " checked" : ""}><span>${esc(text)}</span></label>`
+    ).join("") + `</div></fieldset>`;
+
+  function render() {
+    const w = W[i];
+    const l = labels[w.id] || {};
+    const about = w.candidate_ids.map(([id, name]) => [id, `${id} ${name}`])
+      .concat(Object.keys(r.fixed_answers).map(k => [k, k]), [["UNSURE", "unsure", "unsure"]]);
+    const mm = Math.floor(w.start / 60), ss = String(w.start % 60).padStart(2, "0");
+    document.getElementById("window").innerHTML =
+      `<div class="row" style="justify-content:space-between"><b>Window ${i + 1} of ${W.length}</b>` +
+      `<a href="${esc(w.url)}" target="_blank" rel="noopener noreferrer">Watch at ${mm}:${ss} ↗</a></div>` +
+      `<p style="margin:6px 0 0"><span class="muted">Video title:</span> ${esc(w.video_title)}</p>` +
+      `<div style="margin-top:10px"><span class="muted">Laptops this review is linked to:</span><pre>${esc(w.candidates_text)}</pre></div>` +
+      (w.previous ? `<div style="margin-top:10px"><span class="muted">Previous excerpt (context only):</span><div class="prev">…${esc(w.previous)}</div></div>` : "") +
+      `<div style="margin-top:10px"><span class="muted">Excerpt:</span><div class="excerpt">${esc(w.text)}</div></div>` +
+      group("about", about, l.about) +
+      group("sentiment", [["strength", "strength"], ["weakness", "weakness"], ["neutral", "neutral"], ["UNSURE", "unsure", "unsure"]], l.sentiment) +
+      `<fieldset><legend>Other laptop (when about is OTHER or SEVERAL)</legend><input type="text" name="other_laptop" value="${esc(l.other_laptop || "")}"></fieldset>` +
+      `<fieldset><legend>Notes</legend><textarea name="notes" rows="2">${esc(l.notes || "")}</textarea></fieldset>` +
+      `<div class="nav"><button class="btn" id="prev"${i === 0 ? " disabled" : ""}>← Previous</button>` +
+      `<button class="btn primary" id="next"${i === W.length - 1 ? " disabled" : ""}>Next →</button></div>`;
+    document.getElementById("prev").onclick = () => go(i - 1);
+    document.getElementById("next").onclick = () => go(i + 1);
+    renderDots();
+  }
+
+  function renderDots() {
+    document.getElementById("dots").innerHTML = W.map((w, k) =>
+      `<button class="dot ${state(w.id)}${k === i ? " current" : ""}" data-k="${k}" aria-label="Window ${k + 1}">${k + 1}</button>`).join("");
+    const done = W.filter(w => state(w.id) === "done").length;
+    document.getElementById("progress").textContent = `· ${done} / ${W.length} done`;
+  }
+
+  function go(k) { if (k >= 0 && k < W.length) { i = k; save(); render(); window.scrollTo(0, 0); } }
+
+  document.getElementById("window").addEventListener("input", e => {
+    const w = W[i];
+    const l = labels[w.id] = labels[w.id] || {};
+    l[e.target.name] = e.target.value;
+    save(); renderDots();
+  });
+  document.getElementById("dots").addEventListener("click", e => {
+    const k = e.target.closest(".dot")?.dataset.k;
+    if (k !== undefined) go(Number(k));
+  });
+  document.addEventListener("keydown", e => {
+    if (["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;  // radios use arrows themselves
+    if (e.key === "ArrowRight") go(i + 1);
+    if (e.key === "ArrowLeft") go(i - 1);
+  });
+
+  document.getElementById("export").onclick = () => {
+    const out = { sample_id: S.sample_id, exported_at: new Date().toISOString(),
+                  done: W.filter(w => state(w.id) === "done").length, total: W.length, labels };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: "application/json" }));
+    a.download = "labels.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  document.getElementById("import").onchange = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const data = JSON.parse(await file.text());
+    if (data.sample_id !== S.sample_id) {
+      document.getElementById("progress").textContent = "· import refused: labels are for a different sample";
+      return;
+    }
+    labels = data.labels || {};
+    save(); render();
+  };
+
+  render();
+})();
+</script>
+</body>
+</html>

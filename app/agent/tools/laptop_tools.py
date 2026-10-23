@@ -11,7 +11,7 @@ from app.embeddings.service import embed_text
 from app.taxonomy.category_model import Category  # noqa: F401 — must precede Laptop to register with SQLAlchemy mapper
 from app.laptops.customization_model import LaptopCustomization  # must precede Laptop import
 from app.laptops.laptop_models import Laptop
-from app.reviews.models import ChunkScope, LaptopReviewChunk
+from app.reviews.models import SHOWN_CHUNKS, ChunkScope, LaptopReviewChunk
 
 
 @tool
@@ -126,6 +126,7 @@ def get_review_evidence(laptop_id: str, query_context: str) -> str:
         return session.execute(
             sa_select(C, distance_col.label("distance"))
             .where(where)
+            .where(SHOWN_CHUNKS)  # no price claims (HIDDEN_TOPICS)
             .order_by(distance_col.asc(), C.id)
             .limit(_EVIDENCE_POOL)
         ).all()

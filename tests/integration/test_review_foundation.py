@@ -65,12 +65,13 @@ def _link(session, review, family, laptop=None, source="auto", confidence=80.0):
 
 @pytest.fixture
 def fake_llm(monkeypatch):
-    """Gemini + embeddings faked. `fail_at` makes those window starts raise."""
+    """Gemini + embeddings faked. `fail_at` makes those window starts raise;
+    `about` / `scope` are the model's answer for every window."""
     from langchain_core.runnables import RunnableLambda
 
     from app.reviews import processor
 
-    state = {"fail_at": set()}
+    state = {"fail_at": set(), "about": "F1", "scope": "family"}
 
     class _Model:
         def __init__(self, **_kw):
@@ -78,15 +79,23 @@ def fake_llm(monkeypatch):
 
         def with_structured_output(self, _schema):
             def run(prompt_value):
-                text = prompt_value.to_messages()[-1].content
+                # The excerpt only: the prompt also carries the previous window's tail.
+                text = prompt_value.to_messages()[-1].content.split('Excerpt: "', 1)[1]
                 if any(f"part {i}" in text for i in state["fail_at"]):
                     raise RuntimeError("429 quota")
-                return processor._ChunkAnalysis(summary="ok", sentiment_tag="neutral")
+                return processor._WindowAnalysis(
+                    summary="ok", about=state["about"], sentiment="neutral",
+                    topic="other", scope=state["scope"],
+                )
             return RunnableLambda(run)
 
     monkeypatch.setattr(processor, "build_llm", lambda *a, **k: _Model())
     monkeypatch.setattr(processor, "embed_text", lambda t: _VEC)
     monkeypatch.setattr(processor.time, "sleep", lambda s: None)
+    from types import SimpleNamespace
+
+    from app.reviews import router
+    monkeypatch.setattr(router, "settings", SimpleNamespace(review_processing_paused=False))
     return state
 
 
@@ -119,6 +128,25 @@ def test_a_finished_review_is_never_processed_again(session, family_laptops, fak
     assert exc.value.status_code == 409
     assert router.process_bulk(limit=50, session=session, _=None)["candidates"] == 0
     assert len(_chunks(session, review)) == 4
+
+
+def test_processing_routes_are_paused_by_default(session, family_laptops):
+    """Until the Review C accuracy check is done (REVIEW_PROCESSING_PAUSED)."""
+    from fastapi import HTTPException
+
+    from app.config import Settings
+    from app.reviews import router
+
+    assert Settings.model_fields["review_processing_paused"].default is True
+    family, laptops = family_laptops
+    review = _review(session)
+    _link(session, review, family, laptops[0])
+    for call in (lambda: router.process_review(review.id, session=session, _=None),
+                 lambda: router.process_bulk(limit=5, session=session, _=None)):
+        with pytest.raises(HTTPException) as exc:
+            call()
+        assert exc.value.status_code == 409 and "REVIEW_PROCESSING_PAUSED" in exc.value.detail
+    assert _chunks(session, review) == []
 
 
 # --- 2. partial processing ---------------------------------------------------
@@ -164,6 +192,7 @@ def test_processing_follows_links_not_the_column(session, family_laptops, other_
     from app.reviews.processor import process_raw_review
 
     family, laptops = family_laptops
+    fake_llm["scope"] = "config"
     # MATCHED with no link (the parked production rows): refused.
     parked = _review(session)
     with pytest.raises(ValueError, match="not processable"):
@@ -177,13 +206,12 @@ def test_processing_follows_links_not_the_column(session, family_laptops, other_
     assert {(c.laptop_id, c.family_id, c.scope) for c in _chunks(session, human)} == {
         (laptops[1].id, family.id, "config")}
 
-    # Several families (a versus video) wait for Review C, even when one link
-    # names a config.
+    # Several families (a versus video) are processable since Review C: each
+    # window is assigned on its own (tests/integration/test_review_c.py).
     versus = _review(session)
     _link(session, versus, family, laptops[0], source="human")
     _link(session, versus, other_family, None, source="human")
-    with pytest.raises(ValueError, match="several families"):
-        process_raw_review(versus.id, session)
+    assert process_raw_review(versus.id, session)["complete"]
 
 
 def test_a_family_only_review_writes_family_scope_chunks(session, family_laptops, fake_llm):
@@ -326,7 +354,7 @@ def test_the_queue_shows_matched_reviews_that_cannot_be_processed(
 
     family, laptops = family_laptops
     parked = _review(session)                                    # matched, no link
-    versus = _review(session)                                    # several families
+    versus = _review(session)                                    # several families: processable (Review C)
     _link(session, versus, family, laptops[0], source="human")
     _link(session, versus, other_family, None, source="human")
     family_only = _review(session)                               # processable now
@@ -340,8 +368,8 @@ def test_the_queue_shows_matched_reviews_that_cannot_be_processed(
         return {item["id"] for item in page.items}
 
     ids = queue()
-    assert parked.id in ids and versus.id in ids
-    assert ready.id not in ids and family_only.id not in ids
+    assert parked.id in ids
+    assert ready.id not in ids and family_only.id not in ids and versus.id not in ids
     status = router.pipeline_status(session=session, _=None)
     assert status["link"]["pending_total"] == len(ids)
 

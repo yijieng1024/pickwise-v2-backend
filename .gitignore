@@ -35,3 +35,6 @@ Technical_Spec.md
 
 # Local DB exports taken before data changes -- never committed
 backups/
+
+# Review C accuracy sample: transcript text and hand labels, never committed
+eval/review_c/out/

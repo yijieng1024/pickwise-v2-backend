@@ -46,7 +46,7 @@ from app.laptops.family_service import move_laptops, regroup_unassigned
 from app.laptops.laptop_models import Laptop
 from app.logger import get_logger
 from app.reviews.link_model import ReviewLaptopLink
-from app.reviews.models import LaptopReviewChunk
+from app.reviews.models import LaptopReviewChunk, ReviewClaimStaging, ReviewUnattachedClaim
 from app.users.auth import get_current_admin
 
 logger = get_logger(__name__)
@@ -454,23 +454,27 @@ def delete_family(family_id: uuid.UUID, session: Session = Depends(get_session))
     release them to, and dropping them would silently discard a human's
     decision about which product a video covers. Re-point them first. Review
     chunks are refused the same way: `laptop_review_chunks.family_id` is NOT
-    NULL too (Review B).
+    NULL too (Review B), and staged or unattached review claims (Review C)
+    reference the family as well.
     """
     family = _get_family(session, family_id)
 
-    chunks = session.execute(
-        sa_select(func.count(LaptopReviewChunk.id)).where(
-            LaptopReviewChunk.family_id == family_id
-        )
-    ).scalar_one()
-    if chunks:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Cannot delete family '{family.name}': still referenced by "
-                f"{chunks} review chunk{'s' if chunks > 1 else ''}."
-            ),
-        )
+    for model, noun in (
+        (LaptopReviewChunk, "review chunk"),
+        (ReviewClaimStaging, "staged review claim"),
+        (ReviewUnattachedClaim, "unattached review claim"),
+    ):
+        count = session.execute(
+            sa_select(func.count(model.id)).where(model.family_id == family_id)
+        ).scalar_one()
+        if count:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Cannot delete family '{family.name}': still referenced by "
+                    f"{count} {noun}{'s' if count > 1 else ''}."
+                ),
+            )
 
     links = session.execute(
         sa_select(func.count(ReviewLaptopLink.id)).where(

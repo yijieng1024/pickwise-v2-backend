@@ -43,14 +43,20 @@ from app.reviews.link_service import (
     links_by_review,
     links_for_reviews,
     mark_indistinguishable,
+    effective_links,
     processing_laptop_id,
-    processing_target,
     resolve_family_for_laptop,
     separability,
     write_auto_link,
 )
 from app.reviews.matcher import match_laptop
-from app.reviews.processor import AlreadyProcessed, process_raw_review, processing_candidates
+from app.config import settings
+from app.reviews.processor import (
+    AlreadyProcessed,
+    on_links_changed,
+    process_raw_review,
+    processing_candidates,
+)
 from app.reviews.service import family_worklist, ingest_bulk, ingest_for_laptop
 from app.reviews.transcript import (
     TERMINAL_FAILURES,
@@ -327,6 +333,7 @@ def manual_match(
     if body.laptop_id is not None or review.status == ReviewStatus.PENDING.value:
         review.status = ReviewStatus.MATCHED.value
     session.add(review)
+    on_links_changed(session, review_id)
     session.commit()
     session.refresh(review)
     session.refresh(link)
@@ -458,6 +465,18 @@ def rematch_pending(
 
 # --- Chunking / embedding ---
 
+def _refuse_while_paused() -> None:
+    if settings.review_processing_paused:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Review processing is paused until the Review C accuracy check is "
+                "done (REVIEW_PROCESSING_PAUSED). Set REVIEW_PROCESSING_PAUSED=false "
+                "to allow it."
+            ),
+        )
+
+
 @router.post("/process/{review_id}")
 def process_review(
     review_id: uuid.UUID,
@@ -466,10 +485,12 @@ def process_review(
 ):
     """Run chunking, sentiment tagging, and embedding for a matched raw review.
 
-    Only windows without a chunk are processed, so this doubles as the retry
+    Only windows without a claim are processed, so this doubles as the retry
     for a partial review. 409 when every window is already saved -- the
-    duplicate guard. The response carries per-chunk outcomes and `complete`.
+    duplicate guard. The response carries per-window outcomes, `complete`, and
+    whether a re-processed review was swapped in (`swapped`).
     """
+    _refuse_while_paused()
     try:
         report = process_raw_review(review_id, session)
     except AlreadyProcessed as e:
@@ -495,13 +516,18 @@ def process_bulk(
     _: None = Depends(get_current_admin),
 ):
     """
-    Bulk chunking/embedding: runs the /process/{review_id} step over every
-    candidate from processor.processing_candidates -- matched, linked to one
-    configuration, and with at least one transcript window still unchunked. A
-    partial review is therefore retried (only its missing windows), and a
-    finished one is never re-run. Failures are reported per review and don't
-    stop the run.
+    Bulk processing: runs the /process/{review_id} step over every candidate
+    from processor.processing_candidates -- matched, linked to at least one
+    family, and with a transcript window still without a claim, or marked for
+    re-processing after a link change (re-processed into staging, swapped in
+    when complete). A partial review is retried for its missing windows only,
+    and a finished one is never re-run. Failures are reported per review and
+    don't stop the run.
+
+    Do not run it during the full Review C re-run
+    (app/scripts/reprocess_reviews): it would process the same windows twice.
     """
+    _refuse_while_paused()
     candidates = processing_candidates(session)[:limit]
 
     results = []
@@ -829,16 +855,15 @@ def retry_transcripts(
 
 def _needs_link(session: Session):
     """SQL predicate for the human queue: every PENDING review, plus MATCHED
-    reviews that link_service.processing_target cannot resolve (no link,
-    several families, several configs) -- status says "matched" but nothing
-    can be processed. Built from the same function the processor runs, so the
-    queue and /process-bulk cannot disagree; a SQL copy of the link rules
-    would have to be kept in step by hand."""
+    reviews with no effective link -- status says "matched" but nothing can be
+    processed. Since Review C a review linked to several families is
+    processable (each window is assigned on its own), so only "no link" is
+    stuck. Same rule as processor.processing_candidates."""
     matched = session.exec(
         select(RawYoutubeReview.id).where(RawYoutubeReview.status == ReviewStatus.MATCHED.value)
     ).all()
     links = links_by_review(session, matched)
-    stuck = [rid for rid in matched if processing_target(links[rid]) is None]
+    stuck = [rid for rid in matched if not effective_links(links[rid])]
     return or_(
         RawYoutubeReview.status == ReviewStatus.PENDING.value,
         RawYoutubeReview.id.in_(stuck),  # type: ignore[attr-defined]
@@ -1193,6 +1218,7 @@ def create_review_link(
     if review.status == ReviewStatus.PENDING.value:
         review.status = ReviewStatus.MATCHED.value
         session.add(review)
+    on_links_changed(session, raw_review_id)
     session.commit()
     session.refresh(link)
 
@@ -1217,15 +1243,17 @@ def delete_review_link(
     the kind of thing a reviewer needs to be able to remove.
 
     Everything that decides what a review IS reads the links, so deleting one
-    needs no other write: a matched review left with no single configuration
-    stops being processable and reappears in GET /reviews/pending. Chunks
-    already produced from the link are NOT deleted -- they stay attached to
-    that laptop (see the Review A report for the proposal).
+    needs no other write: a matched review left with no link stops being
+    processable and reappears in GET /reviews/pending. A processed review is
+    marked for re-processing (Review C): its claims are redone for the
+    remaining links and swapped in once complete, so the old ones stay public
+    until then -- and stay as they are if no link remains.
     """
     link = session.get(ReviewLaptopLink, link_id)
     if not link:
         raise HTTPException(status_code=404, detail="Link not found.")
     session.delete(link)
+    on_links_changed(session, link.raw_review_id)
     session.commit()
     return None
 

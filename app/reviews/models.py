@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pgvector.sqlalchemy import Vector
 from pydantic import field_validator, model_validator
-from sqlalchemy import CheckConstraint, Column, Text
+from sqlalchemy import CheckConstraint, Column, Text, UniqueConstraint, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -229,18 +229,50 @@ class RawYoutubeReview(SQLModel, table=True):
     transcript_attempts: int = Field(
         default=0, sa_column_kwargs={"server_default": "0"}
     )
+    # Set when the review's links change after it was processed (Review C).
+    # Its windows are then re-processed into review_claims_staging and swapped
+    # in once all are written, so the old claims stay public until then.
+    reprocess_requested_at: Optional[datetime] = Field(default=None, nullable=True)
 
 
 class ChunkScope(str, Enum):
     """Who a chunk's claim applies to (ADR-0012).
 
-    Review B sets it by rule from the link the review was processed through: a
-    config link gives CONFIG (laptop_id set), a family-only link gives FAMILY
-    (laptop_id NULL -- the tested configuration was not stated). Review C
-    replaces the rule with a per-chunk judgement from the same Gemini call.
+    Review C: a per-window judgement from the same Gemini call. CONFIG means
+    the claim depends on parts that differ between the family's configurations
+    (laptop_id set); FAMILY means it holds for every configuration (laptop_id
+    is the tested configuration when known, else NULL).
     """
     FAMILY = "family"
     CONFIG = "config"
+
+
+class ReviewTopic(str, Enum):
+    THERMALS = "thermals"
+    BUILD = "build"
+    DISPLAY = "display"
+    BATTERY = "battery"
+    PERFORMANCE = "performance"
+    PORTABILITY = "portability"
+    PRICE = "price"
+    OTHER = "other"
+
+
+# Kept out of the public endpoint and get_review_evidence: reviews mostly quote
+# US prices, which mislead Malaysian users.
+HIDDEN_TOPICS = (ReviewTopic.PRICE.value,)
+
+
+class UnattachedReason(str, Enum):
+    """Why a window's claim is not attached to any laptop (Review C)."""
+    OTHER_LAPTOP = "other_laptop"      # about a laptop the review is not linked to
+    SEVERAL = "several"                # compares linked laptops, no single subject
+    NONE = "none"                      # no laptop: intro, sponsor, channel talk
+    CONFIG_UNKNOWN = "config_unknown"  # depends on the configuration, which is unknown
+
+
+_TOPICS_SQL = ", ".join(f"'{t.value}'" for t in ReviewTopic)
+_REASONS_SQL = ", ".join(f"'{r.value}'" for r in UnattachedReason)
 
 
 class LaptopReviewChunk(SQLModel, table=True):
@@ -254,6 +286,9 @@ class LaptopReviewChunk(SQLModel, table=True):
             "scope = 'family' OR laptop_id IS NOT NULL",
             name="ck_review_chunk_config_has_laptop",
         ),
+        CheckConstraint(f"topic IN ({_TOPICS_SQL})", name="ck_review_chunk_topic"),
+        # One claim per transcript window (Review C).
+        UniqueConstraint("video_id", "timestamp_start_seconds", name="uq_review_chunk_window"),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -269,7 +304,90 @@ class LaptopReviewChunk(SQLModel, table=True):
     chunk_text: str  # LLM-paraphrased summary — never verbatim transcript
     embedding: Any = Field(sa_column=Column(Vector(768)))
     sentiment_tag: str  # strength | weakness | neutral
+    topic: Optional[str] = None  # ReviewTopic; NULL on chunks written before Review C
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ReviewUnattachedClaim(SQLModel, table=True):
+    """A window's claim that names no linked laptop it can be attached to
+    (UnattachedReason). Nothing public reads this table; Review D matches
+    `mentioned_laptop` and moves rows into laptop_review_chunks.
+
+    A window has a row here or in laptop_review_chunks, never both."""
+    __tablename__ = "review_unattached_claims"  # type: ignore
+    __table_args__ = (
+        CheckConstraint(f"reason IN ({_REASONS_SQL})", name="ck_unattached_reason"),
+        CheckConstraint(f"topic IN ({_TOPICS_SQL})", name="ck_unattached_topic"),
+        UniqueConstraint("video_id", "timestamp_start_seconds", name="uq_unattached_window"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    video_id: str = Field(index=True)
+    channel_name: str
+    timestamp_start_seconds: int
+    timestamp_end_seconds: int
+    chunk_text: str
+    embedding: Any = Field(sa_column=Column(Vector(768)))
+    sentiment_tag: str
+    topic: str
+    reason: str
+    # Set for config_unknown: the family is known, the configuration is not.
+    family_id: Optional[uuid.UUID] = Field(
+        default=None, foreign_key="laptop_family.id", index=True, nullable=True
+    )
+    mentioned_laptop: Optional[str] = None  # the name as the reviewer said it
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ReviewClaimStaging(SQLModel, table=True):
+    """The next generation of a video's claims, written here and swapped into
+    laptop_review_chunks / review_unattached_claims in one transaction once
+    every window has a row (processor.swap_claims). Never read by the public
+    endpoint or the agent. A row with `reason` NULL is an attached chunk,
+    otherwise an unattached claim -- one table, because both kinds change
+    between generations and must be swapped together.
+
+    After a swap that keeps the previous generation, it holds that generation,
+    so swapping again rolls back."""
+    __tablename__ = "review_claims_staging"  # type: ignore
+    __table_args__ = (
+        CheckConstraint(
+            "(reason IS NULL AND family_id IS NOT NULL AND scope IN ('family', 'config')"
+            " AND (scope = 'family' OR laptop_id IS NOT NULL))"
+            " OR (reason IS NOT NULL AND laptop_id IS NULL AND scope IS NULL)",
+            name="ck_staging_kind",
+        ),
+        CheckConstraint(f"reason IN ({_REASONS_SQL})", name="ck_staging_reason"),
+        CheckConstraint(f"topic IN ({_TOPICS_SQL})", name="ck_staging_topic"),
+        UniqueConstraint("video_id", "timestamp_start_seconds", name="uq_staging_window"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    video_id: str = Field(index=True)
+    channel_name: str
+    timestamp_start_seconds: int
+    timestamp_end_seconds: int
+    chunk_text: str
+    embedding: Any = Field(sa_column=Column(Vector(768)))
+    sentiment_tag: str
+    topic: Optional[str] = None  # NULL only on pre-Review-C chunks kept for rollback
+    family_id: Optional[uuid.UUID] = Field(
+        default=None, foreign_key="laptop_family.id", index=True, nullable=True
+    )
+    laptop_id: Optional[uuid.UUID] = Field(
+        default=None, foreign_key="laptops.id", index=True, nullable=True
+    )
+    scope: Optional[str] = None
+    reason: Optional[str] = None
+    mentioned_laptop: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# The chunks readers may show (public endpoint, get_review_evidence).
+SHOWN_CHUNKS = or_(
+    LaptopReviewChunk.topic.is_(None),  # type: ignore[union-attr]
+    LaptopReviewChunk.topic.notin_(HIDDEN_TOPICS),  # type: ignore[union-attr]
+)
 
 
 class LaptopReviewSummary(SQLModel, table=True):

@@ -140,7 +140,13 @@ def separability(
     RAM — the human can answer the CPU question and the RAM question rides
     along with it. Only a family whose entire remaining difference is RAM and
     storage is unanswerable in principle.
+
+    Price is ignored (Review C): it differs between nearly every pair of
+    configurations, so counting it made almost every family "separable", and
+    a review's price -- usually in US dollars -- cannot identify a catalog row.
+    The screen still shows price as a column; it just never decides this.
     """
+    columns = [c for c in columns if c != "price_rm"]
     if member_count == 0:
         # Reachable, and not a data error: the ExpertBook P3 G2 family is two
         # rows and both are suspended, so the config filter empties it. Given a
@@ -159,7 +165,7 @@ def separability(
     if not columns:
         return False, "identical_specs", (
             "The configurations in this line are identical in every spec we "
-            "track, so there is nothing to choose between."
+            "track apart from price, so there is nothing to choose between."
         )
     if set(columns) <= _UNSTATEABLE_COLUMNS:
         return False, "ram_storage_only", (

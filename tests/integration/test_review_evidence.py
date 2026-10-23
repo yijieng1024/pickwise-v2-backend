@@ -121,14 +121,13 @@ def test_siblings_are_a_labelled_fallback_when_nothing_else_exists(session, worl
 def test_duplicates_collapse_and_results_are_capped_at_three(session, world, evidence):
     _chunk(session, world.tuf, world.a, "Runs cool.", 0.10, start=0)
     _chunk(session, world.tuf, world.a, "runs cool. ", 0.11, start=45)          # same text
-    _chunk(session, world.tuf, world.a, "Same window, other text.", 0.12, start=0)  # same window
+    # Two chunks in one window can no longer exist (uq_review_chunk_window, Review C).
     for i in range(4):
         _chunk(session, world.tuf, world.a, f"Point {i}.", 0.2 + i / 100, start=100 + 45 * i)
 
     out = evidence(world.a)
 
     assert out.lower().count("runs cool.") == 1
-    assert "Same window" not in out
     assert out.count("[STRENGTH]") == 3
 
 

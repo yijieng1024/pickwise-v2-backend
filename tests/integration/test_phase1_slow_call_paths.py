@@ -217,7 +217,9 @@ def test_process_raw_review_on_real_rows(session, catalog, monkeypatch):
     monkeypatch.setattr(processor.time, "sleep", lambda s: None)
     monkeypatch.setattr(processor, "embed_text", lambda t: _VEC)
     monkeypatch.setattr(processor, "build_llm", lambda *a, **k: _FakeChatModel())
-    _FakeChatModel.output = lambda: processor._ChunkAnalysis(summary="fast", sentiment_tag="strength")
+    _FakeChatModel.output = lambda: processor._WindowAnalysis(
+        summary="fast", about="F1", sentiment="strength", topic="performance", scope="config",
+    )
 
     report = processor.process_raw_review(raw.id, session)
 

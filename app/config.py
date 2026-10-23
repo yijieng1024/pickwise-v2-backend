@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     # embedding model, like the 0.53 gate.
     review_evidence_max_distance: float = 0.44
 
+    # Blocks POST /reviews/process/{id} and /reviews/process-bulk, which write
+    # the Review C prompt's output straight to the public tables. On until the
+    # C2 accuracy check is done; lift with REVIEW_PROCESSING_PAUSED=false.
+    # The staging re-run (app/scripts/reprocess_reviews) is not affected.
+    review_processing_paused: bool = True
+
     # Chat models per use, "provider:model": a primary and an ORDERED,
     # comma-separated list of backups (empty = no fallback). These are the
     # DEFAULTS: an admin override in app_settings (`<use>.model` /
