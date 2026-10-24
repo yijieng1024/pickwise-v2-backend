@@ -19,9 +19,14 @@ Writes eval/review_c/out/sample.json and eval/review_c/out/labeling.html
 (gitignored: transcript text, and later your labels). Open the HTML from disk;
 "Export labels" saves labels.json for the C2 comparison.
 
+--holdout draws a fresh 20 (multi_family 7, known 3, single_family 10, at
+least 5 Chinese) from windows not in sample.json, with its own seed, and
+writes sample_holdout.json / labeling_holdout.html.
+
 Usage:
-    python eval/review_c/build_sample.py
+    python eval/review_c/build_sample.py [--holdout]
 """
+import argparse
 import hashlib
 import json
 import random
@@ -45,6 +50,9 @@ KNOWN = ("TEJdZf31x6s", "IOZrScopvLE", "lotIrC6zzmU")
 QUOTA = {"multi_family": 13, "known": 6, "single_family": 21}
 CAP = {"multi_family": 2, "known": 2, "single_family": 2}
 ZH_CAP, ZH_MIN = 3, 8
+HOLDOUT_SEED = 20261024
+HOLDOUT_QUOTA = {"multi_family": 7, "known": 3, "single_family": 10}
+HOLDOUT_ZH_MIN = 5
 HERE = Path(__file__).resolve().parent
 _CJK = re.compile(r"[㐀-鿿]")
 
@@ -81,9 +89,13 @@ def load_pool() -> dict:
     return pool
 
 
-def draw(pool: dict) -> list[dict]:
-    rng = random.Random(SEED)
-    remaining = {(s, v): rng.sample(ws, len(ws)) for s in sorted(pool) for v, ws in sorted(pool[s].items())}
+def draw(pool: dict, seed=SEED, quota=QUOTA, zh_min=ZH_MIN, exclude=frozenset()) -> list[dict]:
+    rng = random.Random(seed)
+    remaining = {}
+    for s in sorted(pool):
+        for v, ws in sorted(pool[s].items()):
+            ws = [w for w in ws if w["id"] not in exclude]
+            remaining[(s, v)] = rng.sample(ws, len(ws))
     taken: dict = defaultdict(int)
     count: dict = defaultdict(int)
     picked: list[dict] = []
@@ -102,7 +114,7 @@ def draw(pool: dict) -> list[dict]:
             for key in keys:
                 if stop():
                     break
-                if count[key[0]] < QUOTA[key[0]] and taken[key] < cap(key) and remaining[key]:
+                if count[key[0]] < quota[key[0]] and taken[key] < cap(key) and remaining[key]:
                     picked.append(remaining[key].pop())
                     taken[key] += 1
                     count[key[0]] += 1
@@ -110,30 +122,42 @@ def draw(pool: dict) -> list[dict]:
 
     zh_keys = [k for k in remaining if is_zh_video(k)]
     rng.shuffle(zh_keys)
-    fill(zh_keys, lambda: sum(w["language"] == "zh" for w in picked) >= ZH_MIN)
-    for stratum in QUOTA:
+    fill(zh_keys, lambda: sum(w["language"] == "zh" for w in picked) >= zh_min)
+    for stratum in quota:
         keys = [k for k in remaining if k[0] == stratum]
         rng.shuffle(keys)
-        fill(keys, lambda: count[stratum] >= QUOTA[stratum])
+        fill(keys, lambda: count[stratum] >= quota[stratum])
     rng.shuffle(picked)  # blind to stratum order
     return picked
 
 
 def main() -> None:
-    sample = draw(load_pool())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--holdout", action="store_true", help="fresh 20, none from sample.json")
+    args = parser.parse_args()
+    out = HERE / "out"
+    sample_file, page_file = (
+        ("sample_holdout.json", "labeling_holdout.html") if args.holdout else ("sample.json", "labeling.html")
+    )
+    if args.holdout:
+        used = {w["id"] for w in json.loads((out / "sample.json").read_text(encoding="utf-8"))["windows"]}
+        sample = draw(load_pool(), HOLDOUT_SEED, HOLDOUT_QUOTA, HOLDOUT_ZH_MIN, frozenset(used))
+        assert not used & {w["id"] for w in sample}
+    else:
+        sample = draw(load_pool())
     sample_id = hashlib.sha256(json.dumps([w["id"] for w in sample]).encode()).hexdigest()[:12]
     rubric = {
         "about": processor.ABOUT_RULE,
         "fixed_answers": processor.FIXED_ANSWERS,
         "sentiment": processor.SENTIMENT_RULE,
     }
-    out = HERE / "out"
     out.mkdir(exist_ok=True)
-    payload = {"sample_id": sample_id, "seed": SEED, "rubric": rubric, "windows": sample}
-    (out / "sample.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    payload = {"sample_id": sample_id, "seed": HOLDOUT_SEED if args.holdout else SEED,
+               "rubric": rubric, "windows": sample}
+    (out / sample_file).write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     page = (HERE / "labeling_template.html").read_text(encoding="utf-8")
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
-    (out / "labeling.html").write_text(page.replace("__SAMPLE_JSON__", data), encoding="utf-8")
+    (out / page_file).write_text(page.replace("__SAMPLE_JSON__", data), encoding="utf-8")
 
     by = defaultdict(int)
     for w in sample:
@@ -141,7 +165,7 @@ def main() -> None:
     zh = sum(w["language"] == "zh" for w in sample)
     print(f"sample {sample_id}: {len(sample)} windows {dict(by)}, Chinese {zh}, "
           f"videos {len({w['video_id'] for w in sample})}")
-    print(f"wrote {out / 'sample.json'}\nwrote {out / 'labeling.html'}")
+    print(f"wrote {out / sample_file}\nwrote {out / page_file}")
 
 
 if __name__ == "__main__":
