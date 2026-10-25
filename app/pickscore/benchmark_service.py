@@ -67,6 +67,14 @@ _JUNK = dict.fromkeys(map(ord, "®™©℠⁰¹²³⁴⁵⁶⁷⁸⁹\u2018\u201
 #     first. Hyphen handling is unchanged: still anchored on `core`.
 _CORE_COUNT = re.compile(r"\(?(\d+)(?:\s*[-\u2011\u2013]\s*|\s+)core\)?")
 
+# Qualcomm writes one part number four ways: X1E-78-100 and X1E78100 (both in
+# PassMark), X1E 78 100 (ASUS), X1-26-100 (HP). Joined to one token, on both
+# sides, so the part number can be matched exactly (see resolve_benchmark).
+# x1/x2 + optional E/P + exactly 2+3 digits: "Athlon 64 X2 4200+" and
+# "Adreno X1-45" do not match. Measured 2026-10-25: changes 4 CPU-table rows,
+# 0 GPU-table rows, 5 catalog strings, 3 _INTEGRATED_GPU_BY_CPU keys.
+_QUALCOMM_PART = re.compile(r"\b(x[12][ep]?)[ \-\u2011\u2013]*(\d{2})[ \-\u2011\u2013]*(\d{3})\b")
+
 
 def _normalize(s: str) -> str:
     s = s.translate(_JUNK)
@@ -86,6 +94,9 @@ def _normalize(s: str) -> str:
     # '(10 processor core)', which needs the strip BEFORE the rewrite.
     s = re.sub(r"\bprocessor\b", " ", s)
     s = re.sub(r"\s+", " ", s)
+    # After the collapse: it only removes separators, so it adds no whitespace
+    # for a second pass to act on.
+    s = _QUALCOMM_PART.sub(r"\1\2\3", s)
     return s.strip()
 
 def has_anchor_token(model_string: str) -> bool:
@@ -131,9 +142,14 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
     # --- Intel, Panther Lake (Core Ultra series 3) -----------------------
     "core ultra x9 388h": "Intel Arc B390 GPU",
     "core ultra 7 358h": "Intel Arc B390 GPU",
+    # PassMark has only one generic "Intel Graphics" row (3253) for every
+    # Panther Lake iGPU Intel names "Intel® Graphics", whatever its Xe-core
+    # count, so these are likely under-scored -- the 4-Xe 356H most of all.
     "core ultra 9 386h": "Intel Graphics",
     "core ultra 7 355": "Intel Graphics",
     "core ultra 5 325": "Intel Graphics",
+    "core ultra 5 322": "Intel Graphics",    # ARK 245716: GPU Name "Intel® Graphics", 2 Xe-cores
+    "core ultra 7 356h": "Intel Graphics",   # ARK 245532: GPU Name "Intel® Graphics", 4 Xe-cores; likely under-scored, see above
 
     # --- Intel, Meteor Lake-U / Arrow Lake-U -----------------------------
     "core ultra 7 255u": "Intel Graphics",
@@ -146,6 +162,7 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
     "core i7-1355u": "Intel Iris Xe",
     "core i5-1335u": "Intel Iris Xe",
     "core i7-1370p": "Intel Iris Xe",
+    "core 3 100u": "Intel Graphics",         # ARK 236776: GPU Name "Intel® Graphics", 64 EU
 
     # --- Intel, Raptor Lake-H and Alder Lake-N ---------------------------
     "core i7-13620h": "Intel UHD Graphics",
@@ -166,6 +183,10 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
     "ryzen ai 5 430": "Radeon 840M",
     "ryzen ai 5 330": "Radeon 820M",
     "ryzen 5 150": "Radeon 660M",      # Zen 3+ Rembrandt-R, AMD product page
+    "ryzen ai 5 435": "Radeon 840M",       # AMD product page: Graphics Model "AMD Radeon™ 840M"
+    "ryzen ai 7 pro 450": "Radeon 860M",   # AMD product page: Graphics Model "AMD Radeon™ 860M"
+    "ryzen ai max pro 385": "Radeon 8050S", # AMD product page: Graphics Model "Radeon 8050S Graphics"
+    "ryzen 5 pro 230": "Radeon 760M",      # AMD product page: Graphics Model "AMD Radeon™ 760M"
 
     # --- AMD, Ryzen 7000-series mobile and rebrands ----------------------
     "ryzen 7 7730u": "Ryzen 7 7730U with Radeon Graphics",
@@ -174,6 +195,11 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
     "ryzen 5 7520u": "Radeon 610M",
     "ryzen 3 7320u": "Radeon 610M",
     "ryzen 5 220": "Radeon 740M",
+    # Generic row (3142), like ryzen 5 150 above. PassMark also has a
+    # CPU-specific "Radeon 660M Ryzen 5 7535HS" row (3087, 1.7% lower).
+    "ryzen 5 7535hs": "Radeon 660M",       # AMD product page: Graphics Model "AMD Radeon™ 660M"
+    # No AMD product page exists (404); the spec block on AMD's support page.
+    "athlon silver 7120u": "Radeon 610M",  # amd.com support page: Graphics Model "AMD Radeon™ 610M"
 
     # --- Qualcomm Snapdragon X / X2 --------------------------------------
     "snapdragon x x1 26 100": "Qualcomm Adreno X1-45 GPU",
@@ -232,11 +258,19 @@ def _laptop_variant(key: str, benchmarks: list[tuple[str, int]]) -> Optional[str
     return None
 
 
+# Keys normalized the same way as the CPU string they are looked up in, so
+# HP's "Snapdragon X X1-26-100" finds "snapdragon x x1 26 100". Longest first.
+_INTEGRATED_KEYS = sorted(
+    ((_normalize(k), v) for k, v in _INTEGRATED_GPU_BY_CPU.items()),
+    key=lambda kv: len(kv[0]), reverse=True,
+)
+
+
 def _integrated_gpu_for(cpu_model: str) -> Optional[str]:
     key = _normalize(cpu_model or "")
-    for cpu_key in sorted(_INTEGRATED_GPU_BY_CPU, key=len, reverse=True):
+    for cpu_key, gpu_name in _INTEGRATED_KEYS:
         if cpu_key in key:
-            return _INTEGRATED_GPU_BY_CPU[cpu_key]
+            return gpu_name
     return None
 
 
@@ -290,6 +324,31 @@ def resolve_benchmark(
         _indexes[table_key] = ({_normalize(name): name for name, _ in benchmarks},
                                {name: score for name, score in benchmarks})
     by_norm, score_map = _indexes[table_key]
+
+    # A Qualcomm part number is an identity, so it is matched exactly, before
+    # and instead of the fuzzy match. Fuzzy cannot reach the threshold here:
+    # PassMark's rows carry a " - Qualcomm Oryon" suffix, and WRatio scales any
+    # candidate 1.5x longer than the query by 0.9, capping X126100 / X1P42100 /
+    # X2E88100 at 0.855 -- tied with "Snapdragon 435" and "Athlon 64 X2". Same
+    # rule as _laptop_variant: exact, never fuzzy. When several rows carry the
+    # number, the scorer picks among those rows only, in sorted order so a tie
+    # is deterministic: X1E78100 has the curated PassMark entry (id 6095,
+    # "Qualcomm Snapdragon X Elite - X1E-78-100") and an uncurated row from a
+    # truncated name string (id 7089, "... - Qualcomm Or"); 6095 wins.
+    part = _QUALCOMM_PART.search(key)
+    if part:
+        token = re.compile(rf"\b{part.group(0)}\b")
+        same = sorted(n for n in by_norm if token.search(n))
+        if same:
+            matched_name = by_norm[process.extractOne(key, same, scorer=fuzz.WRatio)[0]]
+            result = {
+                "score": score_map[matched_name],
+                "matched_name": matched_name,
+                "match_confidence": 1.0,
+                "is_proxy": False,
+            }
+            _cache[cache_key] = (result, now)
+            return result
 
     match = process.extractOne(key, list(by_norm), scorer=fuzz.WRatio)
 
