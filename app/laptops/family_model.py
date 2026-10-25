@@ -1,21 +1,21 @@
 """
 The `laptop_family` table: the human-correctable product line a laptop belongs to.
 
-A family is a COARSE product line, at the granularity a manufacturer segments
-its own catalog by -- not a configuration, not a chassis code, not a model
-year. Apple has three (MacBook Air, MacBook Pro, MacBook Neo: Air 13 and Air
-15 are one family, and so are Pro 14 and Pro 16, because the chip tiers
-overlap between Air and Pro so size is not a product boundary). Every ROG
-Strix is one family -- Strix G16, SCAR 16 and SCAR 18 together.
+A family is one product line at one screen size (the rule since 2026-10-11)
+-- not a configuration, not a chassis code, not a model year. MacBook Air 13
+and MacBook Air 15 are separate families, as are ROG Strix 16 (G16 and SCAR 16
+together) and ROG Strix 18; ExpertBook lines are split by size with their
+generations merged. Reviews never cross a family boundary, so a 15-inch Air
+with no reviews of its own shows none even when the 13-inch has some.
 
 `app.laptops.family_key.family_key` proposes a starting grouping from the
 product name, and that seed is FINER than this taxonomy wants. Merging up to
-the product line is a human action, taken through the /families CRUD, which
+the product line and screen size is a human action, taken through the /families CRUD, which
 is why two schema decisions here are load-bearing:
 
   - `family_key` is NOT unique. Several seed keys legitimately map to one
-    family ("14-inch macbook pro" and "16-inch macbook pro" are both MacBook
-    Pro), and a unique constraint would make that merge impossible to express.
+    family ("rog strix g16" and "rog strix scar 16" are both ROG Strix 16),
+    and a unique constraint would make that merge impossible to express.
   - `family_key` is therefore PROVENANCE, not a lookup key. It records the
     seed the family was auto-created from and goes stale the moment a merge
     folds a second seed into it. Nothing may resolve a family by matching on

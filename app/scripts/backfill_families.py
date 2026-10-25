@@ -9,12 +9,11 @@ silently -- and a wrong grouping is invisible once written. Hence: read-only
 unless --apply, and three reports whose job is to make the failures visible
 before anyone writes them.
 
-WHAT A FAMILY IS. A coarse product line, at the granularity the manufacturer
-segments its own catalog by -- not a configuration, not a chassis code, not a
-model year. Apple has three: MacBook Air (13 and 15 together), MacBook Pro (14
-and 16 together), MacBook Neo. Size is not a product boundary there, because
-the chip tiers overlap between Air and Pro. Every ROG Strix is one family --
-Strix G16, SCAR 16 and SCAR 18 together.
+WHAT A FAMILY IS. One product line at one screen size (the rule since
+2026-10-11) -- not a configuration, not a chassis code, not a model year.
+MacBook Air 13 and MacBook Air 15 are separate families, as are ROG Strix 16
+(G16 and SCAR 16 together) and ROG Strix 18; ExpertBook lines are split by
+size with their generations merged.
 
 At that granularity the seed key mostly OVER-SPLITS, which is why the three
 reports are not equally interesting:
@@ -236,9 +235,9 @@ def report_over_splits(ordered, threshold):
     print("\n3b. Key pairs scoring >= {} on token_set_ratio:".format(threshold))
     print("    Score is printed so the threshold can be tuned from real output.")
     print("    Note token_set_ratio will NOT surface the merges the taxonomy")
-    print("    wants most -- 'macbook air' vs 'macbook pro' score low, and")
-    print("    'rog strix scar 18' vs 'rog strix g16' lower still. Those come")
-    print("    from knowing the product line, not from string distance.\n")
+    print("    wants most -- 'rog strix scar 16' vs 'rog strix g16' (both")
+    print("    ROG Strix 16) score low. Those come from knowing the product")
+    print("    line, not from string distance.\n")
     pairs = []
     for i, a in enumerate(keys):
         for b in keys[i + 1:]:
