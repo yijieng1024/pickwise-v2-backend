@@ -359,7 +359,7 @@ Bulk scrape queries `is_active=True` AND (`last_scraped_at IS NULL` OR `scrape_s
   in the **unit** job: unit + golden together is ~2.2 s. It asserts that score
   changes were deliberate, not that scores are correct. Regenerate with
   `pytest tests/test_golden_pickscore.py --update-golden`, never automatically.
-  Its numbers are percentile ranks against 20 fixture laptops and **must not**
+  Its numbers are percentile ranks against 22 fixture laptops and **must not**
   be compared with production scores or ADR-0011's figures.
 - `tests/integration/` — needs a Postgres with pgvector. Resolves
   `TEST_DATABASE_URL` first, else starts a `pgvector/pgvector` container via

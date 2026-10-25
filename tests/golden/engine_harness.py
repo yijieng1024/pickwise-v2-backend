@@ -16,7 +16,7 @@ The two things this file exists to get right:
 2. THE BENCHMARKS ARE FROZEN. The engine resolves marks against whatever rows
    it is handed, so handing it the 2852-row production table would mean a
    PassMark re-scrape moves the golden file and every future diff mixes "the
-   engine changed" with "NVIDIA released something". Only the rows these 20
+   engine changed" with "NVIDIA released something". Only the rows these 22
    laptops resolve to are stored, and they are stored by name so the resolution
    path itself still runs.
 

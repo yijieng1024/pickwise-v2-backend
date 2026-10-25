@@ -4,19 +4,21 @@
     "file whose inputs drift is not a golden file.",
     "",
     "THESE SCORES ARE NOT PRODUCTION SCORES. _normalize ranks by percentile",
-    "against the population it is given, and this population is 20 laptops, not",
-    "the ~238 in the catalog. A laptop's score here is its rank among these 20.",
+    "against the population it is given, and this population is 22 laptops, not",
+    "the ~333 in the catalog. A laptop's score here is its rank among these 22.",
     "Never compare a number in tests/golden/pickscore.json with a number from",
     "the live API or from ADR-0011 (which quotes the F16 at 57/59/62/61/56 from",
     "the full catalog). They answer different questions and will not agree.",
     "",
-    "The benchmark rows below are FROZEN: only the rows these 20 laptops",
+    "The benchmark rows below are FROZEN: only the rows these 22 laptops",
     "actually resolve to, copied once from the production tables on 2026-09-14.",
     "The engine is handed these instead of the 5985 cpu / 2852 gpu rows in the",
     "database, so re-scraping PassMark cannot move the golden file. Tier 2 tests",
     "the SCORING LOGIC; benchmark RESOLUTION is covered in Tier 0 (string",
     "pipeline, anchor gate) and Tier 3 (the desktop/laptop rewrite against the",
     "seven real collisions).",
+    "s15_snapdragon and hp15_7535hs, and their rows, were added on 2026-10-25",
+    "from the production tables of that day.",
     "",
     "Each laptop's `why` field says which code path it covers. Read it before",
     "deleting a row -- that is the coverage you would be dropping."
@@ -342,6 +344,38 @@
       "storage_type": "SSD",
       "status": "active",
       "why": "bare RTX 3050 -- hits the _GPU_VARIANT_OVERRIDES 4GB pin, not the generic row"
+    },
+    {
+      "key": "s15_snapdragon",
+      "brand": "Asus",
+      "product_name": "Vivobook S15 (S5507QA)",
+      "processor_model": "Snapdragon® X Elite X1E 78 100 Processor",
+      "gpu_model": "Qualcomm® Adreno™ GPU",
+      "price_rm": 6299.0,
+      "ram_gb": 32,
+      "ssd_gb": 1024,
+      "weight_kg": 1.42,
+      "display_size_inch": 15.6,
+      "battery_wh": 70.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "Qualcomm part number matched exactly: X1E 78 100 has TWO PassMark rows (curated id 6095 and a truncated-name duplicate), and 6095 must win; GPU resolves through the normalized Snapdragon key in _INTEGRATED_GPU_BY_CPU"
+    },
+    {
+      "key": "hp15_7535hs",
+      "brand": "HP",
+      "product_name": "HP 15 15-fc1103AU",
+      "processor_model": "AMD Ryzen 5 7535HS",
+      "gpu_model": "AMD Radeon Graphics",
+      "price_rm": 2999.0,
+      "ram_gb": 8,
+      "ssd_gb": 512,
+      "weight_kg": 1.59,
+      "display_size_inch": 15.6,
+      "battery_wh": 41.0,
+      "storage_type": "SSD",
+      "status": "active",
+      "why": "anchorless 'AMD Radeon Graphics' resolved through an _INTEGRATED_GPU_BY_CPU entry added 2026-10-25 (ryzen 5 7535hs -> Radeon 660M); unresolved before that"
     }
   ],
   "cpu_benchmarks": [
@@ -352,6 +386,10 @@
     [
       "AMD Ryzen 5 7520U",
       8934
+    ],
+    [
+      "AMD Ryzen 5 7535HS",
+      17598
     ],
     [
       "AMD Ryzen 7 8845HS",
@@ -420,6 +458,14 @@
     [
       "Intel Core i9-14900HX",
       43729
+    ],
+    [
+      "Qualcomm Snapdragon X Elite - X1E-78-100",
+      22695
+    ],
+    [
+      "Snapdragon X Elite - X1E78100 - Qualcomm Or",
+      20376
     ]
   ],
   "gpu_benchmarks": [
@@ -462,6 +508,10 @@
     [
       "Intel Arc 140T GPU",
       6607
+    ],
+    [
+      "Qualcomm Adreno X1-85 GPU",
+      3068
     ],
     [
       "RTX 5000 Ada Generation Laptop GPU",
