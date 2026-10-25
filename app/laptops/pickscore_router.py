@@ -2,11 +2,13 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.common.job_model import BackgroundJob, JobAccepted, JobStatus, JobType
+from app.common.job_service import create_job, job_accepted, run_job
 from app.database import get_session
 from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.laptops.brand_model import LaptopBrand
@@ -19,7 +21,7 @@ from app.laptops.pickscore_general import (
     get_ranking_for_use_case,
 )
 from app.users.auth import get_current_admin, get_current_user
-from app.users.models import LaptopUserPreference
+from app.users.models import LaptopUserPreference, User
 from app.pickscore.engine import calculate_pick_score
 from app.pickscore.schemas import PickScoreResponse, BatchPickScoreResponse
 
@@ -208,14 +210,67 @@ def get_pick_score_status(session: Session = Depends(get_session)) -> Dict[str, 
     }
 
 
-@router.post("/pick-scores/generate-all", dependencies=[Depends(get_current_admin)])
-def generate_all_laptop_pick_scores(session: Session = Depends(get_session)) -> Dict[str, Any]:
+# One bookkeeping commit per laptop dominates; the scoring itself is
+# arithmetic. Only feeds the 202's ETA.
+_SECONDS_PER_LAPTOP = 0.3
+
+
+@router.post(
+    "/pick-scores/generate-all",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def generate_all_laptop_pick_scores(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_admin: User = Depends(get_current_admin),
+) -> JobAccepted:
     """
-    Admin: (re)compute the stored general-mode PickScores for every laptop ×
-    use case. Deterministic and fast (no LLM) — run after processor imports,
-    benchmark refreshes, or weight-profile changes.
+    Admin: (re)compute the stored general-mode PickScores for every active
+    laptop × use case. Run after processor imports, benchmark refreshes, or
+    weight-profile changes.
+
+    **Returns 202 with a job — it does not wait.** Poll `poll_url`
+    (`GET /api/v2/jobs/{job_id}`); the finished job's `result` holds
+    laptops / laptops_scored / laptops_withheld / rows_created / rows_updated.
+    The write is all-or-nothing (see generate_all_pick_scores).
+
+    409 while another generate-all is queued or running, with that job's id:
+    two runs would each rewrite every row, and the one that commits last wins
+    with no record of the other.
     """
-    return generate_all_pick_scores(session)
+    running = session.exec(
+        select(BackgroundJob)
+        .where(BackgroundJob.job_type == JobType.GENERATE_PICK_SCORES)
+        .where(BackgroundJob.status.in_(list(JobStatus.ACTIVE)))  # type: ignore[attr-defined]
+    ).first()
+    # ponytail: check-then-insert, so two clicks in the same instant could both
+    # pass. One admin, one instance; an advisory lock if that ever changes.
+    if running:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "job_running",
+                "message": "A PickScore recalculation is already running.",
+                "job_id": str(running.id),
+            },
+        )
+
+    total = session.execute(
+        select(func.count()).select_from(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)
+    ).scalar() or 0
+    job = create_job(
+        session,
+        job_type=JobType.GENERATE_PICK_SCORES,
+        total_count=total,
+        created_by=current_admin.id,
+        seconds_per_item=_SECONDS_PER_LAPTOP,
+    )
+    background_tasks.add_task(run_job, job.id, generate_all_pick_scores)
+    return job_accepted(
+        job,
+        message=f"Recalculating PickScores for {total} laptop(s) — poll the job for progress.",
+    )
 
 
 @router.post("/calculate-score", response_model=PickScoreResponse, dependencies=[Depends(get_current_user)])

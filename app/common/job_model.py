@@ -68,6 +68,7 @@ class JobType:
     BULK_SCRAPE = "scraper.bulk_scrape"
     SCRAPE_TARGETS = "scraper.scrape_targets"
     GENERATE_EMBEDDINGS = "embeddings.generate_all"
+    GENERATE_PICK_SCORES = "pickscore.generate_all"
 
     ALL = (
         PROCESS_PENDING,
@@ -75,6 +76,7 @@ class JobType:
         BULK_SCRAPE,
         SCRAPE_TARGETS,
         GENERATE_EMBEDDINGS,
+        GENERATE_PICK_SCORES,
     )
 
 

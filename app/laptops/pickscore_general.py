@@ -11,7 +11,7 @@ POST /laptops/pick-scores/generate-all after processor/benchmark runs.
 """
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlmodel import Session, select
 
@@ -23,6 +23,9 @@ from app.laptops.family_service import deduplicate_by_family
 from app.laptops.laptop_models import Laptop, LaptopPickScore, LaptopStatus  # noqa: F401
 from app.laptops.pickscore_adapter import get_scoring_data, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
+
+if TYPE_CHECKING:
+    from app.common.job_service import JobProgress
 
 # Use-case weight profiles (1-10 base-weight scale; normalized to sum 1 in
 # calculate_pick_score). Keys are the API slugs the frontend sends/receives.
@@ -58,42 +61,65 @@ USE_CASE_PRIORITIES: dict[str, dict[str, float]] = {
 }
 
 
-def generate_all_pick_scores(session: Session) -> dict:
+def generate_all_pick_scores(session: Session, progress: Optional["JobProgress"] = None) -> dict:
     """
     (Re)compute and upsert the general-mode PickScore of every laptop for
     every use-case profile. Ranges and benchmark lists are fetched once and
     reused across the whole catalog (same pattern as the batch endpoint).
+
+    All-or-nothing: every score is computed first, then every row is written
+    in ONE transaction. Scores are percentiles of the same run's ranges, so a
+    half-written table would mix two runs; if the process dies (or the job is
+    stopped) before the commit, Postgres rolls the write back and the previous
+    scores stay complete.
+
+    `progress` is the background-job handle (POST /pick-scores/generate-all);
+    direct callers such as the integration tests pass nothing.
     """
     ranges, cpu_bm, gpu_bm = get_scoring_data(session, force_refresh=True)
-
     laptops = session.exec(select(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)).all()
-    brands = session.exec(select(LaptopBrand)).all()
-    brand_map = {b.id: b.name for b in brands}
+    brand_map = {b.id: b.name for b in session.exec(select(LaptopBrand)).all()}
+    products = [(l.id, laptop_to_scorable(l, brand_map.get(l.brand_id, ""))) for l in laptops]
+    # End the read transaction: the compute loop below is pure Python plus one
+    # bookkeeping commit per laptop, and must not sit on an open transaction.
+    session.commit()
+    if progress:
+        progress.set_total(len(products))
 
-    existing_rows = session.exec(select(LaptopPickScore)).all()
-    existing = {(r.laptop_id, r.use_case): r for r in existing_rows}
+    computed = []
+    withheld = 0
+    for laptop_id, product in products:
+        results = {
+            use_case: calculate_pick_score(product, None, ranges, cpu_bm, gpu_bm, priority_override=priorities)
+            for use_case, priorities in USE_CASE_PRIORITIES.items()
+        }
+        withheld += any(r.score is None for r in results.values())
+        computed.append((laptop_id, results))
+        if progress:
+            progress.advance(item=str(laptop_id))
+            if progress.cancel_requested:
+                # Stopped before the write: nothing changed, old scores stand.
+                return {"laptops": len(products), "laptops_computed": len(computed),
+                        "rows_created": 0, "rows_updated": 0, "written": False}
 
+    existing = {(r.laptop_id, r.use_case): r for r in session.exec(select(LaptopPickScore)).all()}
     created, updated = 0, 0
-    for laptop in laptops:
-        product = laptop_to_scorable(laptop, brand_map.get(laptop.brand_id, ""))
-        for use_case, priorities in USE_CASE_PRIORITIES.items():
-            result = calculate_pick_score(
-                product, None, ranges, cpu_bm, gpu_bm, priority_override=priorities
-            )
+    now = datetime.now(timezone.utc)
+    for laptop_id, results in computed:
+        for use_case, result in results.items():
             breakdown = [fb.model_dump() for fb in result.breakdown]
-
-            row = existing.get((laptop.id, use_case))
+            row = existing.get((laptop_id, use_case))
             if row:
                 row.score = result.score
                 row.breakdown = breakdown
                 row.flags = result.flags
-                row.updated_at = datetime.now(timezone.utc)
+                row.updated_at = now
                 session.add(row)
                 updated += 1
             else:
                 session.add(
                     LaptopPickScore(
-                        laptop_id=laptop.id,
+                        laptop_id=laptop_id,
                         use_case=use_case,
                         score=result.score,
                         breakdown=breakdown,
@@ -104,10 +130,13 @@ def generate_all_pick_scores(session: Session) -> dict:
 
     session.commit()
     return {
-        "laptops": len(laptops),
+        "laptops": len(products),
+        "laptops_scored": len(products) - withheld,
+        "laptops_withheld": withheld,
         "use_cases": list(USE_CASE_PRIORITIES.keys()),
         "rows_created": created,
         "rows_updated": updated,
+        "written": True,
     }
 
 
