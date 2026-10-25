@@ -313,6 +313,15 @@ def _score_brand(product: ScorableProduct, user_pref: Optional[LaptopUserPrefere
     return 100.0 if product.brand_name.lower() in prefs else 50.0
 
 
+def _neutral_preference_note(what: str, mode: str, stated) -> Optional[str]:
+    if mode != "personalized":
+        return (f"Not scored: no {what} preference without the Needs Wizard, "
+                "so every laptop gets a neutral 50")
+    if not stated:
+        return f"No {what} preference given — scored as neutral (50)"
+    return None
+
+
 def _compute_weights(
     user_pref: Optional[LaptopUserPreference],
     mode: str,
@@ -392,6 +401,14 @@ def calculate_pick_score(
             if cpu_flags["cpu_benchmark_unresolved"]
             else None
         ),
+        # Both are a fixed 50 unless the user stated a preference. Said so,
+        # because a "50/100" bar otherwise reads as a measurement.
+        "screen_size": _neutral_preference_note(
+            "screen size", mode, user_pref and user_pref.screen_size),
+        "brand": _neutral_preference_note(
+            "brand", mode, user_pref and [
+                b for b in (user_pref.brand_preferences or []) if b.lower() != "no preference"
+            ]),
     }
 
     weights = _compute_weights(user_pref, mode, priority_override)

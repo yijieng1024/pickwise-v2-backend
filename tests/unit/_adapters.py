@@ -269,6 +269,15 @@ def score_gpu_flagged(gpu_model, ranges, cpu_model="Unknown", benchmarks=None):
     return float(score), flags
 
 
+def score_gpu_note(gpu_model, ranges, cpu_model="Unknown", benchmarks=None):
+    """The note _score_gpu attaches to the gpu factor (None for a direct mark)."""
+    return _engine._score_gpu(
+        _product(gpu_model=gpu_model, cpu_model=cpu_model),
+        _ranges_to_engine(ranges),
+        benchmarks or [],
+    )[2]
+
+
 def pick_score(cpu_model, gpu_model, ranges, cpu_benchmarks=None, gpu_benchmarks=None,
                price=5899.0):
     """The whole engine, general mode. Returns the PickScoreResponse."""

@@ -631,3 +631,28 @@ def test_the_search_result_payload_has_exactly_these_fields():
         f"added: {sorted(set(payload) - _SEARCH_RESULT_FIELDS)}  "
         f"removed: {sorted(_SEARCH_RESULT_FIELDS - set(payload))}"
     )
+
+
+def test_general_mode_chat_scores_use_the_general_use_profile(monkeypatch):
+    """Chat cards must show the details page's General Use number, so the
+    tool's general mode scores with that profile, not DEFAULT_PRIORITY."""
+    from types import SimpleNamespace
+
+    from ._adapters import USE_CASE_PRIORITIES
+
+    seen = {}
+
+    def fake_score(product, user_pref, *args, priority_override=None):
+        seen["override"] = priority_override
+        return SimpleNamespace(score=70, breakdown=[], flags={})
+
+    monkeypatch.setattr(_search_tool, "get_scoring_data", lambda session: (None, [], []))
+    monkeypatch.setattr(_search_tool, "laptop_to_scorable", lambda laptop, brand: laptop)
+    monkeypatch.setattr(_search_tool, "calculate_pick_score", fake_score)
+    laptop = SimpleNamespace(id=uuid.uuid4(), brand_id=uuid.uuid4())
+    session = SimpleNamespace(get=lambda model, key: None)
+
+    out = _search_tool._pick_scores_for([SimpleNamespace(_laptop=laptop)], session, None)
+
+    assert seen["override"] == USE_CASE_PRIORITIES["general_use"]
+    assert out[str(laptop.id)]["pick_score"] == 70

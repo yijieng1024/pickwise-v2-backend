@@ -8,6 +8,7 @@ from app.laptops.brand_model import LaptopBrand
 from app.purposes import PURPOSES, normalize_purpose
 from app.laptops.family_service import closest_to_budget, deduplicate_by_family
 from app.laptops.pickscore_adapter import get_scoring_data, laptop_to_scorable
+from app.laptops.pickscore_general import USE_CASE_PRIORITIES
 from app.pickscore.engine import calculate_pick_score
 from app.users.models import LaptopUserPreference
 from app.rag.evaluation import log_pipeline_result
@@ -74,7 +75,13 @@ def _pick_scores_for(
             brand = session.get(LaptopBrand, laptop.brand_id)
             brand_names[laptop.brand_id] = brand.name if brand else ""
         product = laptop_to_scorable(laptop, brand_names[laptop.brand_id])
-        resp = calculate_pick_score(product, user_pref, ranges, cpu_benchmarks, gpu_benchmarks)
+        # General mode scores with the General Use profile, not DEFAULT_PRIORITY,
+        # so a chat card shows the number the details page's General Use tab
+        # does. Ignored when user_pref is set (their priorities win).
+        resp = calculate_pick_score(
+            product, user_pref, ranges, cpu_benchmarks, gpu_benchmarks,
+            priority_override=USE_CASE_PRIORITIES["general_use"],
+        )
         top_factors = sorted(resp.breakdown, key=lambda f: f.contribution, reverse=True)[:3]
         if resp.flags.get("score_withheld"):
             # Explicit, not absent (ADR-0016). A missing pick_score key means
@@ -149,7 +156,8 @@ _SEARCH_LAPTOPS_DOC = """
           Each result carries pick_score (0-100 deterministic hardware/value
           score) and pick_score_top_factors (its top scoring factors).
         - score_mode: "personalized" when pick_score values are weighted by
-          the user's saved preference profile, "general" otherwise.
+          the user's saved preference profile, "general" (the General Use
+          weighting) otherwise.
         - confidence: "high" if good matches were found, "low" otherwise.
         - bottleneck: "budget" | "weight_limit" | "general" | None — only set
           when confidence is "low". Explains what's blocking a good match.

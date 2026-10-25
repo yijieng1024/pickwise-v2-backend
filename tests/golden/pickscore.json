@@ -24,7 +24,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -36,7 +36,7 @@
             },
             "gpu": {
               "contribution": 11.25,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.225
             },
@@ -60,7 +60,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -84,7 +84,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -96,7 +96,7 @@
             },
             "gpu": {
               "contribution": 13.89,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.2778
             },
@@ -120,7 +120,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -144,7 +144,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -156,7 +156,7 @@
             },
             "gpu": {
               "contribution": 2.33,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -180,7 +180,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -204,7 +204,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -216,7 +216,7 @@
             },
             "gpu": {
               "contribution": 2.5,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.05
             },
@@ -240,7 +240,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -264,7 +264,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -276,7 +276,7 @@
             },
             "gpu": {
               "contribution": 3.57,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.0714
             },
@@ -300,7 +300,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -332,7 +332,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -344,7 +344,7 @@
             },
             "gpu": {
               "contribution": 11.25,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.225
             },
@@ -368,7 +368,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -392,7 +392,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -404,7 +404,7 @@
             },
             "gpu": {
               "contribution": 13.89,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.2778
             },
@@ -428,7 +428,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -452,7 +452,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -464,7 +464,7 @@
             },
             "gpu": {
               "contribution": 2.33,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -488,7 +488,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -512,7 +512,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -524,7 +524,7 @@
             },
             "gpu": {
               "contribution": 2.5,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.05
             },
@@ -548,7 +548,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -572,7 +572,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -584,7 +584,7 @@
             },
             "gpu": {
               "contribution": 3.57,
-              "note": null,
+              "note": "GPU could not be identified \u2014 scored as neutral (50) and flagged as unverified",
               "raw_score": 50.0,
               "weight": 0.0714
             },
@@ -608,7 +608,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -640,7 +640,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -676,7 +676,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -700,7 +700,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -736,7 +736,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -760,7 +760,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -796,7 +796,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -820,7 +820,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -856,7 +856,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -880,7 +880,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -916,7 +916,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -948,7 +948,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -984,7 +984,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -1008,7 +1008,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -1044,7 +1044,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -1068,7 +1068,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -1104,7 +1104,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -1128,7 +1128,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -1164,7 +1164,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -1188,7 +1188,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -1224,7 +1224,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -1256,7 +1256,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -1268,7 +1268,7 @@
             },
             "gpu": {
               "contribution": 1.99,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 8.82,
               "weight": 0.225
             },
@@ -1292,7 +1292,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -1316,7 +1316,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -1328,7 +1328,7 @@
             },
             "gpu": {
               "contribution": 2.45,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 8.82,
               "weight": 0.2778
             },
@@ -1352,7 +1352,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -1376,7 +1376,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -1388,7 +1388,7 @@
             },
             "gpu": {
               "contribution": 0.41,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 8.82,
               "weight": 0.0465
             },
@@ -1412,7 +1412,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -1436,7 +1436,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -1448,7 +1448,7 @@
             },
             "gpu": {
               "contribution": 0.44,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 8.82,
               "weight": 0.05
             },
@@ -1472,7 +1472,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -1496,7 +1496,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -1508,7 +1508,7 @@
             },
             "gpu": {
               "contribution": 0.63,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 8.82,
               "weight": 0.0714
             },
@@ -1532,7 +1532,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -1564,7 +1564,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -1600,7 +1600,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -1624,7 +1624,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -1660,7 +1660,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -1684,7 +1684,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -1720,7 +1720,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -1744,7 +1744,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -1780,7 +1780,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -1804,7 +1804,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -1840,7 +1840,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -1872,7 +1872,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -1884,7 +1884,7 @@
             },
             "gpu": {
               "contribution": 7.28,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 32.35,
               "weight": 0.225
             },
@@ -1908,7 +1908,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -1932,7 +1932,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -1944,7 +1944,7 @@
             },
             "gpu": {
               "contribution": 8.99,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 32.35,
               "weight": 0.2778
             },
@@ -1968,7 +1968,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -1992,7 +1992,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -2004,7 +2004,7 @@
             },
             "gpu": {
               "contribution": 1.5,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 32.35,
               "weight": 0.0465
             },
@@ -2028,7 +2028,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -2052,7 +2052,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -2064,7 +2064,7 @@
             },
             "gpu": {
               "contribution": 1.62,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 32.35,
               "weight": 0.05
             },
@@ -2088,7 +2088,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -2112,7 +2112,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -2124,7 +2124,7 @@
             },
             "gpu": {
               "contribution": 2.31,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 32.35,
               "weight": 0.0714
             },
@@ -2148,7 +2148,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -2180,7 +2180,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -2192,7 +2192,7 @@
             },
             "gpu": {
               "contribution": 15.22,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 67.65,
               "weight": 0.225
             },
@@ -2216,7 +2216,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -2240,7 +2240,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -2252,7 +2252,7 @@
             },
             "gpu": {
               "contribution": 18.79,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 67.65,
               "weight": 0.2778
             },
@@ -2276,7 +2276,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -2300,7 +2300,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -2312,7 +2312,7 @@
             },
             "gpu": {
               "contribution": 3.15,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 67.65,
               "weight": 0.0465
             },
@@ -2336,7 +2336,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -2360,7 +2360,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -2372,7 +2372,7 @@
             },
             "gpu": {
               "contribution": 3.38,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 67.65,
               "weight": 0.05
             },
@@ -2396,7 +2396,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -2420,7 +2420,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -2432,7 +2432,7 @@
             },
             "gpu": {
               "contribution": 4.83,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 67.65,
               "weight": 0.0714
             },
@@ -2456,7 +2456,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -2488,7 +2488,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -2500,7 +2500,7 @@
             },
             "gpu": {
               "contribution": 19.19,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 85.29,
               "weight": 0.225
             },
@@ -2524,7 +2524,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -2548,7 +2548,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -2560,7 +2560,7 @@
             },
             "gpu": {
               "contribution": 23.69,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 85.29,
               "weight": 0.2778
             },
@@ -2584,7 +2584,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -2608,7 +2608,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -2620,7 +2620,7 @@
             },
             "gpu": {
               "contribution": 3.97,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 85.29,
               "weight": 0.0465
             },
@@ -2644,7 +2644,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -2668,7 +2668,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -2680,7 +2680,7 @@
             },
             "gpu": {
               "contribution": 4.26,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 85.29,
               "weight": 0.05
             },
@@ -2704,7 +2704,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -2728,7 +2728,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -2740,7 +2740,7 @@
             },
             "gpu": {
               "contribution": 6.09,
-              "note": null,
+              "note": "Apple Silicon GPU \u2014 PassMark has no ARM entries, so this is the closest non-Apple laptop GPU on a benchmark both have run",
               "raw_score": 85.29,
               "weight": 0.0714
             },
@@ -2764,7 +2764,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -2796,7 +2796,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -2832,7 +2832,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -2856,7 +2856,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -2892,7 +2892,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -2916,7 +2916,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -2952,7 +2952,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -2976,7 +2976,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -3012,7 +3012,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -3036,7 +3036,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -3072,7 +3072,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -3104,7 +3104,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -3140,7 +3140,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -3164,7 +3164,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -3200,7 +3200,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -3224,7 +3224,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -3260,7 +3260,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -3284,7 +3284,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -3320,7 +3320,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -3344,7 +3344,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -3380,7 +3380,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -3412,7 +3412,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -3448,7 +3448,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -3472,7 +3472,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -3508,7 +3508,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -3532,7 +3532,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -3568,7 +3568,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -3592,7 +3592,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -3628,7 +3628,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -3652,7 +3652,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -3688,7 +3688,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -3720,7 +3720,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -3756,7 +3756,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -3780,7 +3780,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -3816,7 +3816,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -3840,7 +3840,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -3876,7 +3876,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -3900,7 +3900,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -3936,7 +3936,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -3960,7 +3960,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -3996,7 +3996,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -4028,7 +4028,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -4064,7 +4064,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -4088,7 +4088,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -4124,7 +4124,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -4148,7 +4148,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -4184,7 +4184,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -4208,7 +4208,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -4244,7 +4244,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -4268,7 +4268,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -4304,7 +4304,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -4336,7 +4336,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -4348,7 +4348,7 @@
             },
             "gpu": {
               "contribution": 3.97,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.225
             },
@@ -4372,7 +4372,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -4396,7 +4396,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -4408,7 +4408,7 @@
             },
             "gpu": {
               "contribution": 4.9,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.2778
             },
@@ -4432,7 +4432,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -4456,7 +4456,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -4468,7 +4468,7 @@
             },
             "gpu": {
               "contribution": 0.82,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.0465
             },
@@ -4492,7 +4492,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -4516,7 +4516,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -4528,7 +4528,7 @@
             },
             "gpu": {
               "contribution": 0.88,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.05
             },
@@ -4552,7 +4552,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -4576,7 +4576,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -4588,7 +4588,7 @@
             },
             "gpu": {
               "contribution": 1.26,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.0714
             },
@@ -4612,7 +4612,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -4644,7 +4644,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -4680,7 +4680,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -4704,7 +4704,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -4740,7 +4740,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -4764,7 +4764,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -4800,7 +4800,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -4824,7 +4824,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -4860,7 +4860,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -4884,7 +4884,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -4920,7 +4920,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -4952,7 +4952,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -4988,7 +4988,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -5012,7 +5012,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -5048,7 +5048,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -5072,7 +5072,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -5108,7 +5108,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -5132,7 +5132,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -5168,7 +5168,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -5192,7 +5192,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -5228,7 +5228,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -5260,7 +5260,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -5272,7 +5272,7 @@
             },
             "gpu": {
               "contribution": 3.97,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.225
             },
@@ -5296,7 +5296,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -5320,7 +5320,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -5332,7 +5332,7 @@
             },
             "gpu": {
               "contribution": 4.9,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.2778
             },
@@ -5356,7 +5356,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -5380,7 +5380,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -5392,7 +5392,7 @@
             },
             "gpu": {
               "contribution": 0.82,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.0465
             },
@@ -5416,7 +5416,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -5440,7 +5440,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -5452,7 +5452,7 @@
             },
             "gpu": {
               "contribution": 0.88,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.05
             },
@@ -5476,7 +5476,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -5500,7 +5500,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -5512,7 +5512,7 @@
             },
             "gpu": {
               "contribution": 1.26,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 17.65,
               "weight": 0.0714
             },
@@ -5536,7 +5536,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -5568,7 +5568,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -5580,7 +5580,7 @@
             },
             "gpu": {
               "contribution": 7.28,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 32.35,
               "weight": 0.225
             },
@@ -5604,7 +5604,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -5628,7 +5628,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -5640,7 +5640,7 @@
             },
             "gpu": {
               "contribution": 8.99,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 32.35,
               "weight": 0.2778
             },
@@ -5664,7 +5664,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -5688,7 +5688,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -5700,7 +5700,7 @@
             },
             "gpu": {
               "contribution": 1.5,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 32.35,
               "weight": 0.0465
             },
@@ -5724,7 +5724,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -5748,7 +5748,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -5760,7 +5760,7 @@
             },
             "gpu": {
               "contribution": 1.62,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 32.35,
               "weight": 0.05
             },
@@ -5784,7 +5784,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -5808,7 +5808,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -5820,7 +5820,7 @@
             },
             "gpu": {
               "contribution": 2.31,
-              "note": null,
+              "note": "Integrated graphics \u2014 scored via the CPU's known iGPU (the GPU name carries no model number)",
               "raw_score": 32.35,
               "weight": 0.0714
             },
@@ -5844,7 +5844,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }
@@ -5876,7 +5876,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -5912,7 +5912,7 @@
             },
             "screen_size": {
               "contribution": 6.25,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.125
             }
@@ -5936,7 +5936,7 @@
             },
             "brand": {
               "contribution": 1.39,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0278
             },
@@ -5972,7 +5972,7 @@
             },
             "screen_size": {
               "contribution": 5.56,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.1111
             }
@@ -5996,7 +5996,7 @@
             },
             "brand": {
               "contribution": 2.33,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0465
             },
@@ -6032,7 +6032,7 @@
             },
             "screen_size": {
               "contribution": 4.65,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.093
             }
@@ -6056,7 +6056,7 @@
             },
             "brand": {
               "contribution": 1.25,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.025
             },
@@ -6092,7 +6092,7 @@
             },
             "screen_size": {
               "contribution": 2.5,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.05
             }
@@ -6116,7 +6116,7 @@
             },
             "brand": {
               "contribution": 1.19,
-              "note": null,
+              "note": "Not scored: no brand preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0238
             },
@@ -6152,7 +6152,7 @@
             },
             "screen_size": {
               "contribution": 4.76,
-              "note": null,
+              "note": "Not scored: no screen size preference without the Needs Wizard, so every laptop gets a neutral 50",
               "raw_score": 50.0,
               "weight": 0.0952
             }

@@ -338,14 +338,18 @@ def resolve_gpu_benchmark(
     anchorless too, so they take the same path: the CPU's iGPU is what that
     machine is at minimum known to have, and it is flagged as a proxy either
     way.
+
+    `resolution` says which path produced the mark (direct / laptop_variant /
+    apple_equivalent / integrated / unresolved); the engine's _GPU_NOTES is
+    keyed on it. Copies, never mutations: resolve_benchmark's dicts are cached.
     """
     if has_anchor_token(gpu_model):
         key = _normalize(gpu_model)
         if _LAPTOP_SUFFIX.strip() not in key:
             variant = _laptop_variant(key, benchmarks)
             if variant:
-                return resolve_benchmark(variant, benchmarks, GPU_CONFIDENCE_THRESHOLD)
-        return resolve_benchmark(gpu_model, benchmarks, GPU_CONFIDENCE_THRESHOLD)
+                return _resolved(resolve_benchmark(variant, benchmarks, GPU_CONFIDENCE_THRESHOLD), "laptop_variant")
+        return _resolved(resolve_benchmark(gpu_model, benchmarks, GPU_CONFIDENCE_THRESHOLD), "direct")
 
     apple_name = _APPLE_GPU_EQUIVALENT.get(
         _normalize(gpu_model).translate(_APPLE_KEY)
@@ -353,12 +357,17 @@ def resolve_gpu_benchmark(
     if apple_name:
         result = resolve_benchmark(apple_name, benchmarks, GPU_CONFIDENCE_THRESHOLD)
         if result["score"] is not None:
-            return {**result, "is_proxy": True}
+            return {**result, "is_proxy": True, "resolution": "apple_equivalent"}
 
     igpu_name = _integrated_gpu_for(cpu_model)
     if igpu_name:
         result = resolve_benchmark(igpu_name, benchmarks, GPU_CONFIDENCE_THRESHOLD)
         if result["score"] is not None:
-            return {**result, "is_proxy": True}
+            return {**result, "is_proxy": True, "resolution": "integrated"}
 
-    return {"score": None, "match_confidence": 0.0, "is_proxy": True}
+    return {"score": None, "match_confidence": 0.0, "is_proxy": True, "resolution": "unresolved"}
+
+
+def _resolved(result: dict, path: str) -> dict:
+    """An anchored lookup that found no mark is unresolved, whatever path it took."""
+    return {**result, "resolution": path if result["score"] is not None else "unresolved"}
