@@ -1335,7 +1335,9 @@ def pipeline_status(
                 round(irrelevant_total / reviews_total, 4) if reviews_total else 0.0
             ),
         },
-        "process": {"candidates": process_candidates},
+        # `paused` mirrors _refuse_while_paused, so the admin can disable the
+        # two buttons that would 409 instead of finding out from the error.
+        "process": {"candidates": process_candidates, "paused": settings.review_processing_paused},
         "aggregate": {
             "pending_total": summaries["total"],
             "new": sum(1 for s in summaries["items"] if s["state"] == "new"),

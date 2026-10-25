@@ -379,6 +379,26 @@ def test_the_queue_shows_matched_reviews_that_cannot_be_processed(
     assert ready.id in queue()
 
 
+@pytest.mark.parametrize("paused", [True, False])
+def test_pipeline_status_reports_the_processing_pause(session, monkeypatch, paused):
+    """The admin disables Run processing / Summarize transcript from this
+    field, so it must say exactly what _refuse_while_paused will do."""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app.reviews import router
+
+    monkeypatch.setattr(router, "settings", SimpleNamespace(review_processing_paused=paused))
+    assert router.pipeline_status(session=session, _=None)["process"]["paused"] is paused
+    if paused:
+        with pytest.raises(HTTPException) as exc:
+            router._refuse_while_paused()
+        assert exc.value.status_code == 409
+    else:
+        router._refuse_while_paused()
+
+
 def test_a_linked_laptop_cannot_be_deleted(session, family_laptops):
     from fastapi import HTTPException
 
