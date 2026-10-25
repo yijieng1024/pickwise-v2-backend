@@ -43,6 +43,18 @@ python eval/run_eval.py run --label x --ids relax_zh_003,clear_en_002  # specifi
 python eval/run_eval.py compare eval/runs/A.jsonl eval/runs/B.jsonl
 ```
 
+## Commit messages
+
+`<type>: <short summary>` — lower-case type, colon, space, then a short summary, e.g. `fix: admin edit page shows fresh data`. The type is one of:
+
+- `feat` — a new feature or behaviour
+- `fix` — a bug fix
+- `docs` — documentation only
+- `test` — tests only
+- `refactor` — code change with no behaviour change
+
+Commits pushed before this rule are never rewritten to match it.
+
 ## Environment Variables
 
 Create a `.env` file in the project root. Required variables (see `app/config.py`):
