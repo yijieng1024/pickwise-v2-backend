@@ -59,6 +59,15 @@ def sentiment(kind, r):
     return r["sentiment"]
 
 
+MAX_FAILED = 5  # --holdout: more provider failures than this and a model is not scored
+
+
+def provider_failed(kind, r):
+    """Still unavailable (429 / 5xx / timeout) after c2_collect's retries: no answer
+    to judge. A wrong answer (InvalidAnswer) is not this; it counts as wrong."""
+    return kind == "prompt" and r.get("failed", "").startswith("LLMUnavailable")
+
+
 def pct(k, n):
     return f"{k}/{n} = {100 * k / n:.0f}%" if n else "n=0"
 
@@ -88,6 +97,24 @@ def main() -> None:
     W = {w["id"]: w for w in sample["windows"]}
     lines = []
     p = lines.append
+    # --holdout: a window a model could not answer is reported as failed and left
+    # out of that model's scores; past MAX_FAILED the model is not scored at all.
+    failed_of, not_scored = {}, []
+    for run in list(runs):
+        gone = [w for w in L if provider_failed(run[3], run[4][w])] if args.holdout else []
+        failed_of[run[0]] = gone
+        if len(gone) > MAX_FAILED:
+            not_scored.append(run)
+            runs.remove(run)
+    scored = {run[0]: [w for w in L if w not in failed_of[run[0]]] for run in runs}
+    if args.holdout:
+        p("# Held-out sample: not used to write the rubric\n")
+        for key, _, name, _, _ in runs + not_scored:
+            p(f"- {name}: {len(failed_of[key])} of {len(L)} windows still failed after 3 retries"
+              + (f" ({', '.join(f'`{w}`' for w in failed_of[key])}), not scored" if failed_of[key] else ""))
+        for _, _, name, _, _ in not_scored:
+            p(f"- **{name} is NOT SCORED**: more than {MAX_FAILED} windows failed.")
+        p("")
     if args.label == "tuning":
         p("# TUNING RUN: these 40 windows were used to rewrite the rubric after seeing the "
           "model's answers, so this is not a fair test. The held-out sample is.\n")
@@ -100,13 +127,16 @@ def main() -> None:
     n = len(L)
     base = sum(L[w]["about"] == "F1" for w in L)
     p(f"Baseline, always answer F1: {pct(base, n)}\n")
-    p("| method | all | English | Chinese |\n|---|---|---|---|")
-    for _, _, name, kind, r in runs:
+    p("| method | all | English | Chinese |" + (" F1 baseline on the same windows |" if args.holdout else "")
+      + "\n|---|---|---|---|" + ("---|" if args.holdout else ""))
+    for key, _, name, kind, r in runs:
         cells = []
         for lang in (None, "en", "zh"):
-            ws = [w for w in L if lang is None or W[w]["language"] == lang]
+            ws = [w for w in scored[key] if lang is None or W[w]["language"] == lang]
             ok = sum(about_and_place(kind, r[w])[0] == L[w]["about"] for w in ws)
             cells.append(pct(ok, len(ws)))
+        if args.holdout:
+            cells.append(pct(sum(L[w]["about"] == "F1" for w in scored[key]), len(scored[key])))
         p(f"| {name} | " + " | ".join(cells) + " |")
     zh = sum(W[w]["language"] == "zh" for w in L)
     p(f"\nF1 baseline by language: English {pct(sum(L[w]['about'] == 'F1' for w in L if W[w]['language'] == 'en'), n - zh)}, "
@@ -117,15 +147,16 @@ def main() -> None:
     p(f"Only **{len(unatt_h)} of {n} windows** are labelled OTHER / SEVERAL / NONE "
       f"({dict(Counter(L[w]['about'] for w in unatt_h))}). One window moves a rate by "
       f"{100 / max(1, len(unatt_h)):.0f} points; read these as counts, not rates.\n")
-    for _, _, name, kind, r in runs:
-        bad = [w for w in unatt_h if about_and_place(kind, r[w])[1]]
-        p(f"- **{name}: {len(bad)} of {len(unatt_h)}**")
+    for key, _, name, kind, r in runs:
+        mine = [w for w in unatt_h if w in scored[key]]
+        bad = [w for w in mine if about_and_place(kind, r[w])[1]]
+        p(f"- **{name}: {len(bad)} of {len(mine)}**")
         for w in bad:
             p(f"    - {title(w)}: you {L[w]['about']}, method attached to {about_and_place(kind, r[w])[1]}")
     p("")
     p("### Wrong family: you named a linked family, the method attached it to a different one\n")
-    for _, _, name, kind, r in runs:
-        bad = [w for w in L if L[w]["about"] not in FIXED
+    for key, _, name, kind, r in runs:
+        bad = [w for w in scored[key] if L[w]["about"] not in FIXED
                and about_and_place(kind, r[w])[1] not in (None, L[w]["about"])]
         p(f"- **{name}: {len(bad)}**")
         for w in bad:
@@ -133,9 +164,10 @@ def main() -> None:
     p("")
     att_h = [w for w in L if L[w]["about"] not in FIXED]
     p(f"### Lost content: you attached it to a laptop ({len(att_h)} windows), the method left it unattached\n")
-    for _, _, name, kind, r in runs:
-        lost = [w for w in att_h if about_and_place(kind, r[w])[1] is None]
-        p(f"- **{name}: {len(lost)} of {len(att_h)}**")
+    for key, _, name, kind, r in runs:
+        mine = [w for w in att_h if w in scored[key]]
+        lost = [w for w in mine if about_and_place(kind, r[w])[1] is None]
+        p(f"- **{name}: {len(lost)} of {len(mine)}**")
         for w in lost:
             ans, _, why = about_and_place(kind, r[w])
             p(f"    - {title(w)}: you {L[w]['about']}, method {ans} ({why})")
@@ -148,23 +180,29 @@ def main() -> None:
     common, k = Counter(L[w]["sentiment"] for w in S).most_common(1)[0]
     p(f"{len(unsure)} windows labelled UNSURE are left out, so n = {len(S)}. "
       f"Baseline, always '{common}': {pct(k, len(S))}\n")
-    p("| method | all | English | Chinese |\n|---|---|---|---|")
-    for _, name, _, kind, r in runs:
+    p("| method | all | English | Chinese |"
+      + (f" '{common}' baseline on the same windows |" if args.holdout else "")
+      + "\n|---|---|---|---|" + ("---|" if args.holdout else ""))
+    for key, name, _, kind, r in runs:
+        mine = [w for w in S if w in scored[key]]
         cells = []
         for lang in (None, "en", "zh"):
-            ws = [w for w in S if lang is None or W[w]["language"] == lang]
+            ws = [w for w in mine if lang is None or W[w]["language"] == lang]
             cells.append(pct(sum(sentiment(kind, r[w]) == L[w]["sentiment"] for w in ws), len(ws)))
+        if args.holdout:
+            cells.append(pct(sum(L[w]["sentiment"] == common for w in mine), len(mine)))
         p(f"| {name} | " + " | ".join(cells) + " |")
     zs = [w for w in S if W[w]["language"] == "zh"]
     p(f"\nMost-common baseline by language: English "
       f"{pct(sum(L[w]['sentiment'] == common for w in S if W[w]['language'] == 'en'), len(S) - len(zs))}, "
       f"Chinese {pct(sum(L[w]['sentiment'] == common for w in zs), len(zs))}\n")
-    for _, name, _, kind, r in runs:
-        cols = list(SENTS) + sorted({sentiment(kind, r[w]) for w in S} - set(SENTS))
+    for key, name, _, kind, r in runs:
+        mine = [w for w in S if w in scored[key]]
+        cols = list(SENTS) + sorted({sentiment(kind, r[w]) for w in mine} - set(SENTS))
         p(f"**{name}**: rows are your label, columns the method's\n")
         p("| you \\ method | " + " | ".join(cols) + " |\n|---|" + "---|" * len(cols))
         for s in SENTS:
-            row = Counter(sentiment(kind, r[w]) for w in S if L[w]["sentiment"] == s)
+            row = Counter(sentiment(kind, r[w]) for w in mine if L[w]["sentiment"] == s)
             p(f"| {s} | " + " | ".join(str(row[c]) for c in cols) + " |")
         p("")
     if unsure:
@@ -174,7 +212,7 @@ def main() -> None:
 
     # ---------------- cost
     p("## Time per window\n")
-    for key, name, _, kind, r in runs:
+    for key, name, _, kind, r in runs + not_scored:
         if kind == "laya":
             for dev in ("cuda", "cpu"):
                 for lang in ("en", "zh"):
@@ -189,7 +227,7 @@ def main() -> None:
               "plus the 4 s pacing delay")
             if any("retries" in x for x in r.values()):
                 tally = Counter(x.get("retries", 0) for x in r.values())
-                p(f"- {name} retries (429/500/503) per window: "
+                p(f"- {name} retries (429/500/503/504) per window: "
                   + ", ".join(f"{k} retries: {v}" for k, v in sorted(tally.items())))
             failed = [w for w, x in r.items() if "failed" in x]
             if failed:

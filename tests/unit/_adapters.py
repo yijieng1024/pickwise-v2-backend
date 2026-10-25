@@ -604,6 +604,7 @@ from app.laptops import pickscore_adapter as _pickscore_adapter  # noqa: E402,F4
 # call inside each one with a probe that checks the connection pool.
 # --------------------------------------------------------------------------
 from app.reviews import processor as review_processor  # noqa: E402,F401
+from app.scripts import reprocess_reviews  # noqa: E402,F401
 from app.reviews import service as review_service  # noqa: E402,F401
 from app.reviews import router as review_router  # noqa: E402,F401
 from app.reviews import link_service as review_link_service  # noqa: E402,F401 - effective links, one rule for every reader

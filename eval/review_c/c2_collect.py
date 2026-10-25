@@ -8,11 +8,12 @@ Stops if a window's candidate list no longer matches the one on the labelling
 page (links changed since the sample was built), because the labels' ids
 would then mean different laptops.
 
-A model call that fails with 429 / 500 / 503 is retried up to 3 times (30 s,
+A model call that fails with 429 / 500 / 503 / 504 is retried up to 3 times (30 s,
 60 s, 120 s backoff); each result records `retries`. Safe only because this
 script writes nothing to the database.
 
-Writes eval/review_c/out/c2_current.json and c2_new_prompt[_<label>].json.
+Writes eval/review_c/out/c2_current.json and c2_new_prompt[_<label>].json, the
+latter after every window: re-running resumes, retrying only failed windows.
 
 Usage:
     python eval/review_c/c2_collect.py [--label tuning] [--sample sample.json]
@@ -40,12 +41,12 @@ from app.reviews import processor  # noqa: E402
 from app.scripts.reprocess_reviews import _processable  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
-_RETRYABLE = re.compile(r"\b(429|500|503)\b")
+_RETRYABLE = re.compile(r"\b(429|500|503|504)\b")
 _BACKOFF_S = (30, 60, 120)
 
 
 def analyse_with_retry(chain, cands, title, window, wid, sleep=time.sleep) -> dict:
-    """One window's result, with `retries`. Only the provider's 429 / 500 / 503
+    """One window's result, with `retries`. Only the provider's 429 / 500 / 503 / 504
     is retried, which is safe because this script writes nothing to the
     database; a bad answer (InvalidAnswer) is never retried."""
     retries = 0
@@ -118,15 +119,22 @@ def main() -> None:
         ) | llm.with_structured_output(processor._WindowAnalysis)
     else:
         chain = processor.build_chain(feature=None)
-    results = {}
+    # Written after every window, so a stopped run keeps what it did; a re-run
+    # skips windows already answered and retries the ones that failed.
+    out_file = OUT / f"c2_new_prompt{suffix}.json"
+    results = json.loads(out_file.read_text(encoding="utf-8")) if out_file.exists() else {}
     for i, (wid, title, cands, w) in enumerate(work, start=1):
+        if wid in results and "failed" not in results[wid]:
+            continue
         started = time.monotonic()
         results[wid] = analyse_with_retry(chain, cands, title, w, wid)
         results[wid]["seconds"] = round(time.monotonic() - started, 2)  # includes backoff
         results[wid]["model"] = args.model or "configured chain"
         print(f"[{i}/{len(work)}] {wid}: {results[wid].get('about', results[wid].get('failed'))}")
+        tmp = out_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(out_file)
         time.sleep(processor._INTER_REQUEST_DELAY)
-    (OUT / f"c2_new_prompt{suffix}.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"new prompt: {sum('failed' not in r for r in results.values())}/{len(results)} answered, "
           f"retries per window: {dict(sorted(Counter(r['retries'] for r in results.values()).items()))}")
 

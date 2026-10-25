@@ -7,7 +7,12 @@ swap all videos into the live tables in one transaction.
                      nothing (no claims, no embedding, no usage-log row).
     run --apply      process every window of every processable review into
                      staging. Resumable: re-running continues where it
-                     stopped. The live chunks are untouched.
+                     stopped. The live chunks are untouched. Stops before
+                     a review that would take the run past --max-windows
+                     (default 400): every window costs one embedding call,
+                     and gemini-embedding-2's free tier is 1,000 per day,
+                     shared with the agent's search. Re-run the same
+                     command the next day to continue.
     swap             DRY RUN: per video, staged vs expected windows, and what
                      the swap would move.
     swap --apply     exchange live and staged claims for every staged video in
@@ -20,7 +25,7 @@ going; it would process the same windows a second time. Targets DATABASE_URL.
 
 Usage:
     python -m app.scripts.reprocess_reviews run [--video ID ...] [--windows 8]
-    python -m app.scripts.reprocess_reviews run --apply [--max-reviews N]
+    python -m app.scripts.reprocess_reviews run --apply [--max-reviews N] [--max-windows 400]
     python -m app.scripts.reprocess_reviews swap [--apply]
 """
 import argparse
@@ -103,12 +108,23 @@ def run_dry(video_ids, max_windows: int) -> None:
     print(f"\nDRY RUN: {len(work)} windows analysed, nothing written.")
 
 
-def run_apply(video_ids, max_reviews) -> None:
+def run_apply(video_ids, max_reviews, max_windows) -> None:
     with Session(get_engine()) as session:
-        todo = [(rid, vid) for rid, vid, *_ in _processable(session, video_ids)][:max_reviews]
+        rows = _processable(session, video_ids)[:max_reviews]
+        staged = processor._saved_windows(session, [r[1] for r in rows], staging=True)
+        todo = [(rid, vid, sum(w["start"] not in staged.get(vid, set())
+                               for w in processor.windows_with_context(seg)))
+                for rid, vid, _, seg, _ in rows]
     totals = {"saved": 0, "failed": 0, "complete": 0}
+    spent = 0  # windows sent to the model this run, i.e. embedding calls at most
     started = time.monotonic()
-    for i, (rid, vid) in enumerate(todo, start=1):
+    for i, (rid, vid, remaining) in enumerate(todo, start=1):
+        if spent + remaining > max_windows:
+            left = sum(r for *_, r in todo[i - 1:])
+            print(f"\nDAILY CAP: {vid} needs {remaining} windows, {spent}/{max_windows} used. "
+                  f"Stopped; {left} windows left. Re-run the same command tomorrow.")
+            break
+        spent += remaining
         with Session(get_engine()) as session:
             try:
                 r = processor.process_raw_review(rid, session, stage_only=True)
@@ -188,6 +204,8 @@ def main() -> None:
     r.add_argument("--video", nargs="*", help="only these video ids")
     r.add_argument("--windows", type=int, default=8, help="dry run: windows to analyse")
     r.add_argument("--max-reviews", type=int, default=None, help="--apply: stop after N reviews")
+    r.add_argument("--max-windows", type=int, default=400,
+                   help="--apply: daily cap on windows (= embedding calls), stops before a review that would exceed it")
     s = sub.add_parser("swap")
     s.add_argument("--apply", action="store_true", help="swap (default: dry run)")
     args = parser.parse_args()
@@ -195,7 +213,7 @@ def main() -> None:
     if args.command == "swap":
         swap(args.apply)
     elif args.apply:
-        run_apply(args.video, args.max_reviews)
+        run_apply(args.video, args.max_reviews, args.max_windows)
     else:
         run_dry(args.video, args.windows)
 
