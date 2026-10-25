@@ -43,7 +43,8 @@ def _review(session, video_id, title):
     if not session.get(YoutubeChannel, uuid.UUID(int=1)):
         # Committed on its own: there is no relationship between the two
         # models, so one flush may insert the review before its channel.
-        session.add(YoutubeChannel(id=uuid.UUID(int=1), channel_id="UC1", channel_name="Chan"))
+        session.add(YoutubeChannel(id=uuid.UUID(int=1), channel_id="UC1", channel_name="Chan",
+                                    channel_img_url="https://yt3.ggpht.com/chan"))
         session.commit()
     session.add(RawYoutubeReview(video_id=video_id, channel_id="UC1", video_title=title, status="matched"))
     session.commit()
@@ -84,6 +85,7 @@ def test_own_and_family_scope_points_with_labels(session, world):
     assert by_text["Runs cool."]["applies_to"] == "this_configuration"
     assert by_text["Runs cool."]["video_title"] == "TUF F16 review"
     assert by_text["Runs cool."]["url"] == "https://youtube.com/watch?v=v1&t=0"
+    assert by_text["Runs cool."]["channel_img_url"] == "https://yt3.ggpht.com/chan"
     assert by_text["Hinge is solid."]["applies_to"] == "configuration_not_stated"
     assert by_text["Hinge is solid."]["tested_on_name"] is None
     assert by_text["Fans are loud."]["sentiment"] == "weakness"
@@ -98,6 +100,7 @@ def test_other_configurations_when_this_laptop_has_none(session, world):
     [p] = out["weaknesses"]
     assert p["applies_to"] == "other_configuration"
     assert (p["tested_on_laptop_id"], p["tested_on_name"]) == (world.g1.id, "Strix (RTX 4070)")
+    assert p["channel_img_url"] is None  # no registered channel: the frontend shows the initial
 
 
 def test_no_reviews_yet(session, world):

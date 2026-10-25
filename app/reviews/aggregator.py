@@ -150,6 +150,12 @@ def laptop_reviews(session: Session, laptop: Laptop) -> dict:
             RawYoutubeReview.video_id.in_({c.video_id for c in chunks})  # type: ignore[attr-defined]
         )
     ).all())
+    # By name, like _ordered_chunks' join: chunks store channel_name only.
+    avatars = dict(session.exec(
+        select(YoutubeChannel.channel_name, YoutubeChannel.channel_img_url).where(
+            YoutubeChannel.channel_name.in_({c.channel_name for c in chunks})  # type: ignore[attr-defined]
+        )
+    ).all())
     names = dict(session.exec(
         select(Laptop.id, Laptop.product_name).where(
             Laptop.id.in_({c.laptop_id for c in chunks if c.laptop_id})  # type: ignore[attr-defined]
@@ -171,6 +177,7 @@ def laptop_reviews(session: Session, laptop: Laptop) -> dict:
             "tested_on_laptop_id": c.laptop_id if other else None,
             "tested_on_name": names.get(c.laptop_id) if other else None,
             "channel_name": c.channel_name,
+            "channel_img_url": avatars.get(c.channel_name),
             "video_id": c.video_id,
             "video_title": titles.get(c.video_id),
             "timestamp_start_seconds": c.timestamp_start_seconds,

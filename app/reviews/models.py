@@ -418,6 +418,7 @@ class ReviewPointRead(SQLModel):
     tested_on_laptop_id: Optional[uuid.UUID] = None
     tested_on_name: Optional[str] = None
     channel_name: str
+    channel_img_url: Optional[str] = None  # null = show the initial instead
     video_id: str
     video_title: Optional[str] = None
     timestamp_start_seconds: int
