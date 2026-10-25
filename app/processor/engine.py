@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import re
 import time
@@ -367,6 +367,10 @@ def process_raw_laptop_data(
                 for key, value in laptop_data.items():
                     if key != "model_code":  # model_code is the lookup key — never overwrite
                         setattr(existing, key, value)
+                # The scrape confirmed a price, changed or not: that is "Last
+                # Checked". A no-price extraction confirmed nothing.
+                if variant.price_rm > 0:
+                    existing.price_checked_at = datetime.now(timezone.utc)
 
                 session.add(existing)
                 session.commit()
@@ -381,6 +385,8 @@ def process_raw_laptop_data(
                 updated_count += 1
             else:
                 new_laptop = Laptop(**laptop_data)
+                if new_laptop.price_rm > 0:
+                    new_laptop.price_checked_at = datetime.now(timezone.utc)
                 # Family: adopt the one its already-grouped siblings agree on,
                 # or stay null. laptop_data deliberately carries no family_id,
                 # so the update branch above never touches an admin's manual

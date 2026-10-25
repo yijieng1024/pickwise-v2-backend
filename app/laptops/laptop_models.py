@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pydantic import field_validator
 from sqlmodel import Relationship, SQLModel, Field
-from sqlalchemy import Column, JSON, UniqueConstraint, event
+from sqlalchemy import Column, DateTime, JSON, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
@@ -139,6 +139,13 @@ class Laptop(LaptopBase, table=True):
     __tablename__ = "laptops"  # type: ignore
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # "Last Checked" on the details page: the last time a scrape/process or an
+    # admin confirmed price_rm, changed or not. LaptopPriceHistory records only
+    # changes, so it cannot answer that. NULL means no trustworthy check date.
+    # Not on LaptopBase, so no create/update body can set it directly.
+    price_checked_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
 
     # 1. Customizations cascade
     customizations: List["LaptopCustomization"] = Relationship(
@@ -204,6 +211,13 @@ def _deactivate_unpriced(_mapper, _connection, target: "Laptop") -> None:
 class LaptopRead(LaptopBase):
     id: uuid.UUID
     created_at: datetime
+    price_checked_at: Optional[datetime] = None
+
+
+class LaptopDetailRead(LaptopRead):
+    # Marketplace search links (GET /laptops/{id} only). No prices from them.
+    shopee_search_url: str
+    lazada_search_url: str
 
 class LaptopCreate(LaptopBase):
     pass
@@ -282,6 +296,9 @@ class LaptopUpdate(SQLModel):
     product_name: Optional[str] = None
     release_year: Optional[int] = None
     price_rm: Optional[float] = None
+    # Not a column: the admin checked the price and it is still right, so bump
+    # price_checked_at without a price change. Popped before the setattr loop.
+    price_confirmed: bool = False
     status: Optional[str] = Field(
         default=None, description="'active', 'inactive', or 'suspended'"
     )

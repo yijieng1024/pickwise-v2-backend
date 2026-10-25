@@ -1,6 +1,5 @@
 import time
 from typing import Optional
-from urllib.parse import quote_plus
 
 import httpx
 from langchain_core.tools import tool
@@ -11,6 +10,7 @@ from app.config import settings
 from app.database import engine
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
+from app.laptops.marketplace import marketplace_links as _marketplace_links
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -41,14 +41,6 @@ _HISTORY_POINTS = 5
 # query → (fetched_at, listings section). Prices move slowly; credits don't.
 _CACHE_TTL_S = 6 * 3600
 _cache: dict[str, tuple[float, dict]] = {}
-
-
-def _marketplace_links(query: str) -> dict:
-    encoded = quote_plus(query)
-    return {
-        "shopee_search_url": f"https://shopee.com.my/search?keyword={encoded}",
-        "lazada_search_url": f"https://www.lazada.com.my/catalog/?q={encoded}",
-    }
 
 
 def _parse_price(raw) -> Optional[float]:

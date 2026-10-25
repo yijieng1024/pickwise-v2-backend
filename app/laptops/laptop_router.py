@@ -3,11 +3,13 @@ from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 from app.database import get_session
 from app.laptops.laptop_models import (
-    Laptop, LaptopRead, LaptopCreate, LaptopUpdate, LaptopPriceHistory, LaptopPriceHistoryRead,
-    LaptopEmbedding, LaptopStatus, HybridSearchRequest, LaptopSearchResult
+    Laptop, LaptopRead, LaptopDetailRead, LaptopCreate, LaptopUpdate, LaptopPriceHistory,
+    LaptopPriceHistoryRead, LaptopEmbedding, LaptopStatus, HybridSearchRequest, LaptopSearchResult
 )
 from app.laptops.brand_model import LaptopBrand
+from app.laptops.family_model import LaptopFamily
 from app.laptops.family_service import resolve_family_id
+from app.laptops.marketplace import marketplace_links, search_text
 from app.embeddings.service import embed_text
 from app.rag.models import ConversationLaptop
 from app.reviews.link_model import ReviewLaptopLink
@@ -24,6 +26,7 @@ from app.common.filter_service import apply_filters, apply_range, filter_query
 from app.common.pagination_service import count_total
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
+from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 from app.users.auth import get_current_admin
@@ -55,6 +58,8 @@ RAW_SCRAP_FILTERABLE_COLUMNS = {
 @router.post("/", response_model=LaptopRead, status_code=201, dependencies=[Depends(get_current_admin)])
 def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session)):
     db_laptop = Laptop.model_validate(laptop)
+    if db_laptop.price_rm:
+        db_laptop.price_checked_at = datetime.now(timezone.utc)
     if db_laptop.family_id is None:
         # Same rule the AI processor applies to an ingested row: adopt the
         # family the laptop's already-grouped siblings agree on, or leave it
@@ -214,12 +219,21 @@ def list_raw_scrap_laptops(
     )
     return list(session.exec(statement).all())
 
-@router.get("/{laptop_id}", response_model=LaptopRead)
+@router.get("/{laptop_id}", response_model=LaptopDetailRead)
 def get_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
     laptop = session.get(Laptop, laptop_id)
     if not laptop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Laptop not found")
-    return laptop
+    brand = session.get(LaptopBrand, laptop.brand_id)
+    family = session.get(LaptopFamily, laptop.family_id) if laptop.family_id else None
+    query = search_text(
+        brand.name if brand else "",
+        laptop.product_name,
+        laptop.processor_model,
+        laptop.gpu_model,
+        family.name if family else None,
+    )
+    return LaptopDetailRead.model_validate(laptop, update=marketplace_links(query))
 
 @router.put("/{laptop_id}", response_model=LaptopRead, dependencies=[Depends(get_current_admin)])
 def update_laptop(
@@ -242,16 +256,24 @@ def update_laptop(
         )
 
     update_data = laptop_update.model_dump(exclude_unset=True)
+    price_confirmed = update_data.pop("price_confirmed", False)
     price_changed = "price_rm" in update_data and update_data["price_rm"] != db_laptop.price_rm
 
     for key, value in update_data.items():
         setattr(db_laptop, key, value)
 
+    # Last Checked moves only when the price changed or the admin ticked
+    # "price confirmed" -- the admin form sends every field on every save, so
+    # price_rm merely being in the body says nothing. 0 is "price unknown".
+    if (price_changed or price_confirmed) and db_laptop.price_rm:
+        db_laptop.price_checked_at = datetime.now(timezone.utc)
+
     session.add(db_laptop)
     session.commit()
     session.refresh(db_laptop)
 
-    if price_changed:
+    # 0 is "price unknown", not a data point -- same rule as create_laptop.
+    if price_changed and db_laptop.price_rm:
         session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
         session.commit()
 
