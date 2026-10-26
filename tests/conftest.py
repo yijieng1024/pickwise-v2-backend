@@ -20,6 +20,52 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+@pytest.fixture(autouse=True)
+def _no_real_io(request, monkeypatch):
+    """Outside tests/integration: no real database, no network (tests/_io_guard.py),
+    and LLM usage logging is a no-op, so no unit test can write a usage row
+    anywhere. A blocked attempt fails the test even if the code caught it."""
+    if "integration" in request.node.path.parts:
+        yield
+        return
+
+    from tests._io_guard import IOGuard
+
+    from app.agent import monitoring_service
+    from app.common import llm_usage
+    from app.embeddings import service as embeddings_service
+
+    def _no_usage_row(*_a, **_k):
+        return None
+
+    # Every name the logger is imported under. A test that asserts on logging
+    # patches these again itself, which wins over this. A test of the logger's
+    # own failure handling opts out with @pytest.mark.real_usage_logger; it must
+    # break the logger's Session itself (the I/O guard still applies).
+    if request.node.get_closest_marker("real_usage_logger") is None:
+        for module in (llm_usage, embeddings_service, monitoring_service):
+            monkeypatch.setattr(module, "log_llm_usage", _no_usage_row)
+
+    guard = IOGuard()
+    guard.install(monkeypatch)
+    try:
+        yield
+    finally:
+        guard.uninstall()
+    if guard.violations:
+        pytest.fail(
+            "Unit test reached real I/O:\n  - " + "\n  - ".join(dict.fromkeys(guard.violations)),
+            pytrace=False,
+        )
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_usage_logger: keep the real log_llm_usage in a unit test (its Session must be broken by the test)",
+    )
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--update-golden",

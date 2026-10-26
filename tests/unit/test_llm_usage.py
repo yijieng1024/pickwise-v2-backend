@@ -1,6 +1,8 @@
 """TokenUsageHandler sums usage across generations and skips calls that report none."""
 import uuid
 
+import pytest
+
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
@@ -40,6 +42,7 @@ def test_handler_skips_calls_without_usage(monkeypatch):
     assert calls == []
 
 
+@pytest.mark.real_usage_logger
 def test_a_failed_usage_write_logs_one_line_and_never_raises(monkeypatch):
     class _Broken:
         def __init__(self, *a, **kw):

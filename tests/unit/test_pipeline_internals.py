@@ -24,6 +24,7 @@ from ._adapters import (
     _budget_penalty,
     _purpose_bonus,
     _weight_penalty,
+    _retrieval,
     _run_search,
     _search_tool,
     gate_threshold,
@@ -535,6 +536,12 @@ def _install_stubs(monkeypatch, retrieve=None, rerank=None):
     monkeypatch.setattr(_search_tool, "Session", lambda *a, **kw: _NullSession())
     monkeypatch.setattr(_search_tool, "_pick_scores_for", lambda top, session, pref: {})
     monkeypatch.setattr(_search_tool, "log_pipeline_result", lambda **kw: None)
+    # The tool prefetches the query vector before retrieval. A fake embedder,
+    # and fresh vector caches so this fake never answers a later test that
+    # breaks the embedding on purpose.
+    monkeypatch.setattr(_retrieval, "embed_text", lambda text: [0.0] * 768)
+    monkeypatch.setattr(_retrieval, "_QUERY_CACHE", {})
+    monkeypatch.setattr(_retrieval, "_FAILED_QUERIES", {})
     if retrieve is not None:
         monkeypatch.setattr(_search_tool, "retrieve_candidates", retrieve)
     if rerank is not None:
