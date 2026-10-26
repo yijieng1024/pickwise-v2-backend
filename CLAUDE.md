@@ -414,6 +414,19 @@ the fix is to make the new module-scope construction lazy — **not** to give th
 CI job the secret, which would restore exactly the illusion it was written to
 remove.
 
+**No real database and no real network outside `tests/integration`, enforced
+by `tests/_io_guard.py`** (an autouse fixture in `tests/conftest.py`). It
+blocks any non-SQLite database connection and any socket or DNS lookup to a
+non-loopback host, and makes `log_llm_usage` a no-op. Every blocked attempt is
+**recorded** and fails the test at teardown even if the code under test caught
+the error: on 2026-10-26 four unit tests reached the real Gemini embedder
+through the search tool's query-vector prefetch, and the embedding usage logger
+wrote 12 rows to production through a developer `.env`. CI never saw it,
+because with no secrets both calls failed and were swallowed. SQLite and
+loopback stay allowed (the slow-call tests use both on purpose). A test of the
+logger's own failure path opts out of the no-op with
+`@pytest.mark.real_usage_logger` and must break the logger's Session itself.
+
 **Migrations do not target production by default.** `alembic/env.py` reads
 `TEST_DATABASE_URL` and errors with setup instructions if it is unset;
 production needs `ALEMBIC_TARGET=production`, which the Dockerfile's start
