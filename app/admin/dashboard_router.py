@@ -6,8 +6,9 @@ The Dashboard answers three questions: is anything broken, does anything need
 me, is the data fresh. Dates are returned raw; the frontend applies the
 amber/red thresholds, so changing a threshold is not a backend deploy.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import cast, func, or_
@@ -17,6 +18,7 @@ from sqlmodel import Session, select
 from app.agent.monitoring_models import AgentRunLog
 from app.common.app_settings import REVIEW_PAUSE_REASON_KEY, get_setting_row
 from app.common.job_model import BackgroundJob, JobRead, JobStatus
+from app.common.llm_usage import LLMFeature, LLMUsageLog
 from app.config import settings
 from app.database import get_session
 from app.laptops.brand_model import LaptopBrand
@@ -24,7 +26,7 @@ from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopPickScore, 
 from app.reviews import funnel
 from app.reviews.models import RawYoutubeReview, ReviewStatus
 from app.reviews.link_model import ReviewLaptopLink
-from app.scraper.bulk_scraper import HTML_UPLOAD_BRANDS
+from app.scraper.bulk_scraper import HTML_UPLOAD_BRANDS, SCRAPER_BRANDS
 from app.scraper.models import RawScrapLaptop
 from app.scraper.raw_html_model import RawProductHtml
 from app.users.auth import get_current_admin
@@ -36,6 +38,19 @@ router = APIRouter(
 )
 
 _UNVERIFIED_FLAGS = ("cpu_benchmark_unresolved", "gpu_benchmark_unresolved")
+
+# Trend days are Malaysia days: the admin reads "today" as local time.
+_TREND_TZ = "Asia/Kuala_Lumpur"
+_TREND_DAYS = 14
+_FAILED_JOB_LIST = 5
+
+# The Google API calls chart: series name -> llm_usage_logs.feature values.
+_API_SERIES = {
+    "pico": (LLMFeature.AGENT,),
+    "embedding": (LLMFeature.EMBEDDING,),
+    "review_processing": (LLMFeature.REVIEW_CHUNK,),
+    "ai_cleanup": (LLMFeature.PROCESSOR_EXTRACT, LLMFeature.PROCESSOR_CATEGORIZE),
+}
 
 
 def _utc(value: Optional[datetime]) -> Optional[datetime]:
@@ -61,6 +76,19 @@ def dashboard_summary(session: Session = Depends(get_session)) -> dict:
             ),
         ).where(BackgroundJob.created_at >= week_ago)
     ).one()
+
+    failed_list = session.exec(
+        select(BackgroundJob)
+        .where(
+            BackgroundJob.created_at >= week_ago,
+            or_(
+                BackgroundJob.status == JobStatus.FAILED,
+                (BackgroundJob.status == JobStatus.COMPLETED) & (BackgroundJob.failed_count > 0),
+            ),
+        )
+        .order_by(BackgroundJob.created_at.desc(), BackgroundJob.id)  # type: ignore[attr-defined]
+        .limit(_FAILED_JOB_LIST)
+    ).all()
 
     # Laptops, not rows: one laptop has a row per use case.
     flags = cast(LaptopPickScore.flags, JSONB)
@@ -110,6 +138,9 @@ def dashboard_summary(session: Session = Depends(get_session)) -> dict:
         scrape_by_brand.append({
             "brand_id": b.id,
             "brand_name": b.name,
+            # False: no scraper exists, so a null date means "manual only",
+            # not "never scraped".
+            "has_scraper": b.name.lower() in SCRAPER_BRANDS,
             # Data arrival, not last_scraped_at: that is stamped on skipped
             # targets too. Acer is saved by hand, so its date is the upload.
             "source": "upload" if upload else "scrape",
@@ -171,6 +202,11 @@ def dashboard_summary(session: Session = Depends(get_session)) -> dict:
         "attention": {
             "failed_jobs_7d": failed_jobs,
             "jobs_with_item_failures_7d": item_failures,
+            # The newest few of those two counts, so the row can name them.
+            "failed_job_list": [
+                {"id": j.id, "job_type": j.job_type, "status": j.status, "failed_count": j.failed_count}
+                for j in failed_list
+            ],
             "review_processing": {
                 "paused": settings.review_processing_paused,
                 "reason": pause.value if pause else None,
@@ -217,4 +253,104 @@ def dashboard_summary(session: Session = Depends(get_session)) -> dict:
             "fallbacks_24h": fallbacks_24h,
             "fallbacks_7d": fallbacks_7d,
         },
+        "trends": _trends(session, now),
     }
+
+
+def _local_day(column, naive_utc: bool):
+    """The Malaysia calendar day of a timestamp column, in SQL. Naive columns
+    hold UTC, so they are tagged as UTC before the conversion."""
+    aware = func.timezone("UTC", column) if naive_utc else column
+    return func.date(func.timezone(_TREND_TZ, aware))
+
+
+def _trends(session: Session, now: datetime) -> dict:
+    """Daily series for the last 14 Malaysia days (today included), zero-filled,
+    plus active laptops per brand. Everything is a GROUP BY."""
+    today = now.astimezone(ZoneInfo(_TREND_TZ)).date()
+    days = [today - timedelta(days=i) for i in range(_TREND_DAYS - 1, -1, -1)]
+    # A day's start in UTC, as both an aware and a naive bound.
+    start = datetime.combine(days[0], datetime.min.time(), tzinfo=ZoneInfo(_TREND_TZ)).astimezone(timezone.utc)
+    start_naive = start.replace(tzinfo=None)
+
+    def series(rows) -> list[int]:
+        by_day = {d: n for d, n in rows}
+        return [by_day.get(d, 0) for d in days]
+
+    run_day = _local_day(AgentRunLog.created_at, naive_utc=True)
+    conversations = series(session.exec(
+        select(run_day, func.count(func.distinct(AgentRunLog.conversation_id)))
+        .where(AgentRunLog.created_at >= start_naive)
+        .group_by(run_day)
+    ).all())
+
+    usage_day = _local_day(LLMUsageLog.created_at, naive_utc=True)
+    usage = session.exec(
+        select(usage_day, LLMUsageLog.feature, func.count(LLMUsageLog.id))
+        .where(LLMUsageLog.created_at >= start_naive)
+        .group_by(usage_day, LLMUsageLog.feature)
+    ).all()
+    api_calls: dict[str, list[Optional[int]]] = {
+        name: series(_sum_days(usage, features)) for name, features in _API_SERIES.items()
+    }
+
+    # Embedding calls were not logged before llm_usage_logs got the feature.
+    # Days before the first logged call are null (a gap), not a false zero.
+    first_embedding = session.exec(
+        select(func.min(LLMUsageLog.created_at)).where(LLMUsageLog.feature == LLMFeature.EMBEDDING)
+    ).one()
+    embedding_since: Optional[date] = None
+    if first_embedding is not None:
+        embedding_since = (
+            first_embedding.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(_TREND_TZ)).date()
+        )
+    api_calls["embedding"] = [
+        n if embedding_since is not None and d >= embedding_since else None
+        for d, n in zip(days, api_calls["embedding"])
+    ]
+
+    job_day = _local_day(BackgroundJob.finished_at, naive_utc=False)
+    with_failures = or_(
+        BackgroundJob.status == JobStatus.FAILED,
+        (BackgroundJob.status == JobStatus.COMPLETED) & (BackgroundJob.failed_count > 0),
+    )
+    jobs = session.exec(
+        select(
+            job_day,
+            func.count(BackgroundJob.id).filter(
+                BackgroundJob.status == JobStatus.COMPLETED, BackgroundJob.failed_count == 0
+            ),
+            func.count(BackgroundJob.id).filter(with_failures),
+        )
+        .where(BackgroundJob.finished_at >= start)
+        .group_by(job_day)
+    ).all()
+    clean = series([(d, c) for d, c, _ in jobs])
+    failed = series([(d, f) for d, _, f in jobs])
+
+    brands = session.exec(
+        select(LaptopBrand.id, LaptopBrand.name, func.count(Laptop.id))
+        .join(Laptop, Laptop.brand_id == LaptopBrand.id)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)
+        .group_by(LaptopBrand.id, LaptopBrand.name)
+        .order_by(func.count(Laptop.id).desc(), LaptopBrand.name)
+    ).all()
+
+    return {
+        "days": days,
+        "pico_conversations": conversations,
+        "api_calls": api_calls,
+        "embedding_logged_since": embedding_since,
+        "jobs": {"clean": clean, "with_failures": failed},
+        "laptops_by_brand": [
+            {"brand_id": bid, "brand_name": name, "active": n} for bid, name, n in brands
+        ],
+    }
+
+
+def _sum_days(usage, features) -> list[tuple[date, int]]:
+    totals: dict[date, int] = {}
+    for d, feature, n in usage:
+        if feature in features:
+            totals[d] = totals.get(d, 0) + n
+    return list(totals.items())

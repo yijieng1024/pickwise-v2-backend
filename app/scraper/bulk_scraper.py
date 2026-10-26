@@ -40,6 +40,11 @@ from app.scraper.models import RawScrapLaptop, ScrapeStatus, ScrapeTarget
 # rather than fetched live. See app/scraper/acer_scraper.py for why.
 HTML_UPLOAD_BRANDS = {"acer"}
 
+# Every brand _dispatch_scraper routes, lowercase. The admin Dashboard uses it
+# to say "No scraper" instead of "never scraped"; tests/unit/test_scraper_brands
+# fails if the two drift.
+SCRAPER_BRANDS = frozenset({"apple", "asus", "acer", "hp"})
+
 # ---------------------------------------------------------------------------
 # Log directory (relative to the project root, created on first use)
 # ---------------------------------------------------------------------------

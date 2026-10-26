@@ -248,3 +248,86 @@ def test_updated_at_is_not_writable_through_the_api():
     from app.laptops.laptop_models import LaptopCreate, LaptopUpdate
 
     assert "updated_at" not in LaptopCreate.model_fields and "updated_at" not in LaptopUpdate.model_fields
+
+
+# --- Trends ------------------------------------------------------------------
+
+def test_trends_are_14_zero_filled_malaysia_days(admin_client, session, admin_user, brand):
+    from zoneinfo import ZoneInfo
+
+    from app.agent.monitoring_models import AgentRunLog
+    from app.common.job_model import BackgroundJob, JobStatus, JobType
+    from app.common.llm_usage import LLMFeature, LLMUsageLog
+    from app.rag.models import Conversation
+
+    now = datetime.now(timezone.utc)
+    naive = now.replace(tzinfo=None)
+    conv = [Conversation(user_id=admin_user.id, title=f"c{i}") for i in range(2)]
+    session.add_all(conv)
+    session.commit()
+    for c in (conv[0], conv[0], conv[1]):  # two turns in one conversation count once
+        session.add(AgentRunLog(conversation_id=c.id, user_id=admin_user.id, user_message="q",
+                                reply_text="a", status="success", latency_ms=1, tool_calls=[], created_at=naive))
+    for feature in (LLMFeature.AGENT, LLMFeature.REVIEW_CHUNK, LLMFeature.REVIEW_CHUNK,
+                    LLMFeature.PROCESSOR_EXTRACT, LLMFeature.PROCESSOR_CATEGORIZE, LLMFeature.EMBEDDING):
+        session.add(LLMUsageLog(feature=feature, model="m", created_at=naive))
+    session.add_all([
+        BackgroundJob(job_type=JobType.GENERATE_PICK_SCORES, status=JobStatus.COMPLETED, finished_at=now),
+        BackgroundJob(job_type=JobType.REVIEW_PROCESS_BULK, status=JobStatus.COMPLETED, failed_count=1, finished_at=now),
+        BackgroundJob(job_type=JobType.REVIEW_REMATCH, status=JobStatus.FAILED, finished_at=now),
+        BackgroundJob(job_type=JobType.REVIEW_REMATCH, status=JobStatus.PROCESSING),  # not finished: not counted
+    ])
+    other = make_laptop(brand.id)
+    session.add_all([make_laptop(brand.id), other, make_laptop(brand.id, status=LaptopStatus.SUSPENDED.value)])
+    session.commit()
+
+    t = admin_client.get(DASHBOARD).json()["trends"]
+
+    today = now.astimezone(ZoneInfo("Asia/Kuala_Lumpur")).date().isoformat()
+    assert len(t["days"]) == 14 and t["days"][-1] == today
+    assert t["pico_conversations"][-1] == 2 and t["pico_conversations"][:-1] == [0] * 13
+    calls = t["api_calls"]
+    assert (calls["pico"][-1], calls["review_processing"][-1], calls["ai_cleanup"][-1]) == (1, 2, 2)
+    # Embeddings were first logged today: earlier days are a gap, not zero.
+    assert t["embedding_logged_since"] == today
+    assert calls["embedding"] == [None] * 13 + [1]
+    assert (t["jobs"]["clean"][-1], t["jobs"]["with_failures"][-1]) == (1, 2)
+    assert t["laptops_by_brand"] == [{"brand_id": str(brand.id), "brand_name": brand.name, "active": 2}]
+
+
+def test_failed_job_list_and_scraper_flag(admin_client, session, brand):
+    from app.common.job_model import BackgroundJob, JobStatus, JobType
+    from app.laptops.brand_model import LaptopBrand
+
+    failed = BackgroundJob(job_type=JobType.REVIEW_RETRY_TRANSCRIPTS, status=JobStatus.COMPLETED, failed_count=4)
+    session.add_all([failed, BackgroundJob(job_type=JobType.GENERATE_PICK_SCORES, status=JobStatus.COMPLETED),
+                     LaptopBrand(name="Dell", base_scrape_url="https://example.invalid/dell")])
+    session.commit()
+
+    body = admin_client.get(DASHBOARD).json()
+
+    assert body["attention"]["failed_job_list"] == [
+        {"id": str(failed.id), "job_type": JobType.REVIEW_RETRY_TRANSCRIPTS, "status": "completed", "failed_count": 4}
+    ]
+    flags = {b["brand_name"]: b["has_scraper"] for b in body["freshness"]["scrape_by_brand"]}
+    assert flags["Asus"] is True and flags["Dell"] is False
+
+
+def test_candidate_windows_and_first_error(admin_client, session, brand):
+    from app.common.job_model import BackgroundJob, JobStatus, JobType
+
+    fam = _family(session, brand, "TUF F16")
+    laptop = make_laptop(brand.id, family_id=fam.id)
+    session.add(laptop)
+    session.commit()
+    partial = _review(session)  # 12 segments -> four windows
+    _link(session, partial, fam, laptop)
+    _chunk(session, partial, fam, laptop, scope="config", start=0)
+    session.add(BackgroundJob(job_type=JobType.REVIEW_RETRY_TRANSCRIPTS, status=JobStatus.COMPLETED,
+                              failed_count=1, errors=[{"item": "r1", "error": "ip_blocked"}]))
+    session.commit()
+
+    body = admin_client.get(PIPELINE).json()
+
+    assert body["process"]["candidate_windows"] == [3]
+    assert body["recent_runs"][0]["first_error"] == {"item": "r1", "error": "ip_blocked"}

@@ -1207,8 +1207,9 @@ def pipeline_status(
         )
     ).one()
 
-    # The same function /reviews/process-bulk runs.
-    process_candidates = len(processing_candidates(session))
+    # The same function /reviews/process-bulk runs, in the order it takes them.
+    candidates = processing_candidates(session)
+    process_candidates = len(candidates)
 
     # Link queue: the same predicate as GET /reviews/pending, split by whether
     # the review already holds any link.
@@ -1264,6 +1265,11 @@ def pipeline_status(
         # screen shows it only while paused.
         "process": {
             "candidates": process_candidates,
+            # Windows left per candidate, in process-bulk's order: the first N
+            # summed is what a batch of N will send to Gemma and the embedder
+            # (one call each). For a review marked for re-processing,
+            # windows_saved counts what is already staged.
+            "candidate_windows": [c["windows_expected"] - c["windows_saved"] for c in candidates],
             "paused": settings.review_processing_paused,
             "pause_reason": pause.value if pause else None,
             "pause_reason_updated_at": pause.updated_at if pause else None,
@@ -1354,6 +1360,8 @@ def _recent_review_runs(session: Session, limit: int = 10) -> list[dict]:
             "succeeded": j.succeeded_count,
             "failed": j.failed_count,
             "error_message": j.error_message,
+            # One line for the row: the first item error, or None.
+            "first_error": j.errors[0] if j.errors else None,
         }
         for j in jobs
     ]
