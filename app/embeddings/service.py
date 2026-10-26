@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     # on the job machinery it is merely reporting to.
     from app.common.job_service import JobProgress
 
+from app.common.llm_usage import LLMFeature, log_llm_usage
 from app.config import _Lazy, settings
 from app.laptops.laptop_models import Laptop, LaptopEmbedding
 from app.laptops.brand_model import LaptopBrand
@@ -24,9 +25,15 @@ from app.laptops.brand_model import LaptopBrand
 # this model live in a different embedding space than any previous model —
 # after any model change, POST /embeddings/generate-all must be re-run (and
 # review chunks re-processed) or similarity scores are garbage.
+EMBEDDING_MODEL = "gemini-embedding-2"
+# Free-tier requests per day, shared by every caller of embed_text. Not in
+# the chat models' MODEL_OPTIONS: that dict is the processor's allow-list.
+EMBEDDING_RPD = 1000
+
+
 def _build_embedder() -> GoogleGenerativeAIEmbeddings:
     embedder = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-2",
+        model=f"models/{EMBEDDING_MODEL}",
         google_api_key=settings.gemini_api_key,
         output_dimensionality=768,
     )
@@ -99,8 +106,11 @@ def embed_text(text: str) -> list[float]:
     WHY a thin wrapper:
     Centralises the embedding API call so every caller (laptop, future phone)
     uses the same model and can be swapped in one place if the model changes.
+    Each successful call is logged to llm_usage_logs for the daily quota.
     """
-    return _embedder.embed_query(text)
+    vector = _embedder.embed_query(text)
+    log_llm_usage(LLMFeature.EMBEDDING, EMBEDDING_MODEL, 0, 0)
+    return vector
 
 
 def upsert_laptop_embedding(session: Session, laptop_id: UUID, vector: list[float]) -> None:

@@ -18,6 +18,10 @@ from sqlmodel import Field, Session, SQLModel, select
 # key silently reads as "unset" and the default wins, which is invisible. The
 # model keys live in llm_config (`primary_key(use)` / `backups_key(use)`).
 
+# Why review processing is paused, shown next to the flag. The flag itself is
+# the REVIEW_PROCESSING_PAUSED env var; this is only the explanation.
+REVIEW_PAUSE_REASON_KEY = "reviews.processing_pause_reason"
+
 # Bumped on every write so in-process caches of settings (llm_config) can tell
 # their copy is stale without a query.
 _generation = 0
@@ -44,6 +48,11 @@ class AppSetting(SQLModel, table=True):
 def get_setting(session: Session, key: str, default: Optional[str] = None) -> Optional[str]:
     row = session.exec(select(AppSetting).where(AppSetting.key == key)).first()
     return row.value if row else default
+
+
+def get_setting_row(session: Session, key: str) -> Optional[AppSetting]:
+    """The row itself, for callers that also show when it was set."""
+    return session.exec(select(AppSetting).where(AppSetting.key == key)).first()
 
 
 def set_setting(session: Session, key: str, value: str) -> AppSetting:

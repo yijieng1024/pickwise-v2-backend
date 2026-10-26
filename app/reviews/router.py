@@ -11,10 +11,15 @@ from app.common.pagination_service import (
     count_total,
     paginate,
 )
-from app.common.job_model import JobAccepted, JobType
+from app.common import llm_config
+from app.common.app_settings import REVIEW_PAUSE_REASON_KEY, get_setting_row
+from app.common.job_model import BackgroundJob, JobAccepted, JobType
 from app.common.job_service import create_job, job_accepted, refuse_if_running, run_job
+from app.common.llm_config import MODEL_OPTIONS
+from app.common.llm_usage import LLMFeature, calls_by_model, quota_day
 from app.common.search_service import apply_search, search_query
 from app.database import end_transaction, get_session, held_instances
+from app.embeddings.service import EMBEDDING_MODEL, EMBEDDING_RPD
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_model import LaptopFamily
 from app.laptops.laptop_models import Laptop, LaptopStatus
@@ -22,7 +27,9 @@ from app.logger import get_logger
 from app.reviews.aggregator import aggregate_for_laptop
 from app.reviews.config_evidence import scan_config_evidence
 from app.reviews.discovery import fetch_descriptions, resolve_channel_from_url
+from app.reviews import funnel
 from app.reviews.models import (
+    SHOWN_CHUNKS,
     LaptopReviewChunk,
     LaptopReviewSummary,
     ManualMatchRequest,
@@ -30,6 +37,8 @@ from app.reviews.models import (
     RawYoutubeReviewRead,
     ReviewIrrelevantRequest,
     ReviewStatus,
+    ReviewUnattachedClaim,
+    UnattachedReason,
     YoutubeChannel,
     YoutubeChannelCreate,
     YoutubeChannelUpdate,
@@ -258,6 +267,16 @@ def list_raw_reviews(
         default=None,
         description="Filter by status: pending | matched | rejected | irrelevant",
     ),
+    step: str | None = Query(
+        default=None,
+        description="Reviews that reached a funnel step: " + " | ".join(funnel.STEPS)
+        + " (the `count` of that step in /reviews/pipeline-status)",
+    ),
+    stuck: str | None = Query(
+        default=None,
+        description="Reviews stuck for one reason: " + " | ".join(funnel.STUCK_KEYS)
+        + " (a `stuck` count in /reviews/pipeline-status)",
+    ),
     search: str | None = search_query("Matches video title"),
     pagination: PaginationParams = Depends(),
     session: Session = Depends(get_session),
@@ -270,10 +289,20 @@ def list_raw_reviews(
     Queue needs the filtered total to size its pager. It previously returned
     every row unbounded and the table sliced it client-side, so opening the
     screen downloaded the entire review table.
+
+    `step` and `stuck` open the list behind a funnel number; both come from
+    funnel.classify, the function the counts come from.
     """
+    if step is not None and step not in funnel.STEPS:
+        raise HTTPException(status_code=400, detail=f"Unknown step {step!r}. Expected one of: {', '.join(funnel.STEPS)}.")
+    if stuck is not None and stuck not in funnel.STUCK_KEYS:
+        raise HTTPException(status_code=400, detail=f"Unknown stuck reason {stuck!r}. Expected one of: {', '.join(funnel.STUCK_KEYS)}.")
     statement = select(RawYoutubeReview)
     if status:
         statement = statement.where(RawYoutubeReview.status == status)
+    if step is not None or stuck is not None:
+        ids = funnel.review_ids(session, step=step, stuck=stuck)
+        statement = statement.where(RawYoutubeReview.id.in_(ids))  # type: ignore[attr-defined]
     statement = apply_search(statement, search, [RawYoutubeReview.video_title])
 
     total = count_total(session, statement)
@@ -1205,9 +1234,8 @@ def pipeline_status(
     ).one()
     reviews_total = session.exec(select(func.count(RawYoutubeReview.id))).one()
 
-    summaries = list_pending_summaries(session=session, _=None)
-
     remaining = len([k for k in families if k not in covered])
+    pause = get_setting_row(session, REVIEW_PAUSE_REASON_KEY)
     return {
         "ingest": {
             "families_total": len(families),
@@ -1232,10 +1260,100 @@ def pipeline_status(
         },
         # `paused` mirrors _refuse_while_paused, so the admin can disable the
         # two buttons that would 409 instead of finding out from the error.
-        "process": {"candidates": process_candidates, "paused": settings.review_processing_paused},
-        "aggregate": {
-            "pending_total": summaries["total"],
-            "new": sum(1 for s in summaries["items"] if s["state"] == "new"),
-            "stale": sum(1 for s in summaries["items"] if s["state"] == "stale"),
+        # The reason is returned whether or not processing is paused; the
+        # screen shows it only while paused.
+        "process": {
+            "candidates": process_candidates,
+            "paused": settings.review_processing_paused,
+            "pause_reason": pause.value if pause else None,
+            "pause_reason_updated_at": pause.updated_at if pause else None,
+        },
+        "funnel": funnel.funnel_counts(funnel.classify(session)),
+        "claims": _claim_counts(session),
+        "coverage": funnel.coverage(session),
+        "quota": _review_quota(session),
+        "recent_runs": _recent_review_runs(session),
+    }
+
+
+def _claim_counts(session: Session) -> dict:
+    """Why a processed review can show fewer claims than it has windows."""
+    shown, hidden = session.exec(
+        select(
+            func.count(LaptopReviewChunk.id).filter(SHOWN_CHUNKS),
+            func.count(LaptopReviewChunk.id).filter(~SHOWN_CHUNKS),
+        )
+    ).one()
+    unattached = dict(
+        session.exec(
+            select(ReviewUnattachedClaim.reason, func.count(ReviewUnattachedClaim.id))
+            .group_by(ReviewUnattachedClaim.reason)
+        ).all()
+    )
+    return {
+        "shown": shown,
+        "hidden_price": hidden,
+        "unattached": {r.value: unattached.get(r.value, 0) for r in UnattachedReason},
+    }
+
+
+def _review_quota(session: Session) -> dict:
+    """Today's review-processing calls per model, against the free-tier daily
+    limit, for the Google quota day (midnight Pacific). Successful calls only:
+    a 429 writes no usage row, so `remaining` is an upper bound."""
+    start, end = quota_day()
+    used = calls_by_model(session, LLMFeature.REVIEW_CHUNK, start)
+    primary, backups = llm_config.resolve_models(llm_config.REVIEW_PROCESSOR)
+    chain = [llm_config.model_id(spec) for spec in (primary, *backups)]
+    # A model that answered today but has since left the chain still spent quota.
+    models = chain + sorted(m for m in used if m not in chain)
+
+    def row(model: str, position, calls: int, limit) -> dict:
+        return {
+            "model": model,
+            "position": position,
+            "calls_today": calls,
+            "limit_rpd": limit,
+            "remaining": max(0, limit - calls) if limit is not None else None,
+        }
+
+    embedding_calls = sum(calls_by_model(session, LLMFeature.EMBEDDING, start).values())
+    return {
+        "day_start": start,
+        "resets_at": end,
+        "models": [
+            row(
+                m,
+                chain.index(m) if m in chain else None,
+                used.get(m, 0),
+                MODEL_OPTIONS.get(m, {}).get("rpd"),
+            )
+            for m in models
+        ],
+        "embedding": {
+            **row(EMBEDDING_MODEL, None, embedding_calls, EMBEDDING_RPD),
+            "shared_with": "pico_search",
         },
     }
+
+
+def _recent_review_runs(session: Session, limit: int = 10) -> list[dict]:
+    jobs = session.exec(
+        select(BackgroundJob)
+        .where(BackgroundJob.job_type.in_(list(JobType.REVIEWS)))  # type: ignore[attr-defined]
+        .order_by(BackgroundJob.created_at.desc(), BackgroundJob.id)  # type: ignore[attr-defined]
+        .limit(limit)
+    ).all()
+    return [
+        {
+            "job_id": j.id,
+            "job_type": j.job_type,
+            "status": j.status,
+            "created_at": j.created_at,
+            "finished_at": j.finished_at,
+            "succeeded": j.succeeded_count,
+            "failed": j.failed_count,
+            "error_message": j.error_message,
+        }
+        for j in jobs
+    ]

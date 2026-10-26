@@ -14,11 +14,13 @@ best-effort, exactly like monitoring_service: a failed usage write must never
 fail the LLM call it is describing.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from langchain_core.callbacks import BaseCallbackHandler
-from sqlmodel import Field, Session, SQLModel
+from sqlalchemy import func
+from sqlmodel import Field, Session, SQLModel, select
 
 from app.database import engine
 from app.logger import get_logger
@@ -35,6 +37,11 @@ class LLMFeature:
     PROCESSOR_EXTRACT = "processor_extract"
     PROCESSOR_CATEGORIZE = "processor_categorize"
     REVIEW_CHUNK = "review_chunk"
+    # One row per embedding call, from every caller (Pico search, hybrid
+    # search, review chunks, catalog embeddings): they share one daily quota.
+    # Tokens are 0 -- the embeddings API reports none; calls are what the
+    # quota counts.
+    EMBEDDING = "embedding"
 
 
 class LLMUsageLog(SQLModel, table=True):
@@ -118,3 +125,29 @@ class TokenUsageHandler(BaseCallbackHandler):
         tokens_in, tokens_out = usage_from_response(response)
         if tokens_in or tokens_out:
             log_llm_usage(self.feature, self.model, tokens_in, tokens_out, self.user_id, self.model_position)
+
+
+# Google's free-tier daily quotas reset at midnight Pacific time, not UTC.
+_QUOTA_TZ = ZoneInfo("America/Los_Angeles")
+
+
+def quota_day(now: Optional[datetime] = None) -> tuple[datetime, datetime]:
+    """(start, end) of the current Google quota day, as aware UTC datetimes.
+    zoneinfo handles the daylight-saving shift (UTC-7 in summer, UTC-8 in winter)."""
+    now = now or datetime.now(timezone.utc)
+    local = now.astimezone(_QUOTA_TZ)
+    start = datetime.combine(local.date(), time.min, tzinfo=_QUOTA_TZ)
+    end = datetime.combine(local.date() + timedelta(days=1), time.min, tzinfo=_QUOTA_TZ)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def calls_by_model(session: Session, feature: str, since: datetime) -> dict[str, int]:
+    """Successful calls per model for one feature since `since` (aware UTC).
+    created_at is naive UTC, so the bound is compared naive."""
+    naive = since.astimezone(timezone.utc).replace(tzinfo=None)
+    rows = session.exec(
+        select(LLMUsageLog.model, func.count(LLMUsageLog.id))
+        .where(LLMUsageLog.feature == feature, LLMUsageLog.created_at >= naive)
+        .group_by(LLMUsageLog.model)
+    ).all()
+    return dict(rows)

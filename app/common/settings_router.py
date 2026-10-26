@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.common import llm_config
-from app.common.app_settings import delete_setting, set_setting
+from app.common.app_settings import REVIEW_PAUSE_REASON_KEY, delete_setting, set_setting
 from app.common.llm_config import MODEL_OPTIONS
 from app.database import get_session
 from app.logger import get_logger
@@ -362,3 +362,39 @@ def update_processor_model(
         session, llm_config.PROCESSOR, LLMUseUpdate(primary=payload.model), check_model_list=False,
     )
     return _processor_read()
+
+
+# --------------------------------------------------------------------------
+# /review-pause-reason -- the explanation shown next to REVIEW_PROCESSING_PAUSED
+# --------------------------------------------------------------------------
+_PAUSE_REASON_MAX = 500
+
+
+class ReviewPauseReasonUpdate(BaseModel):
+    # null or blank clears it.
+    reason: Optional[str] = None
+
+
+class ReviewPauseReasonRead(BaseModel):
+    reason: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+@router.put("/review-pause-reason", response_model=ReviewPauseReasonRead)
+def update_review_pause_reason(
+    payload: ReviewPauseReasonUpdate,
+    session: Session = Depends(get_session),
+) -> ReviewPauseReasonRead:
+    """Set why review processing is paused. The pause itself stays the
+    REVIEW_PROCESSING_PAUSED env var; this only explains it on the admin."""
+    reason = (payload.reason or "").strip()
+    if not reason:
+        delete_setting(session, REVIEW_PAUSE_REASON_KEY)
+        return ReviewPauseReasonRead()
+    if len(reason) > _PAUSE_REASON_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Reason must be at most {_PAUSE_REASON_MAX} characters.",
+        )
+    row = set_setting(session, REVIEW_PAUSE_REASON_KEY, reason)
+    return ReviewPauseReasonRead(reason=row.value, updated_at=row.updated_at)

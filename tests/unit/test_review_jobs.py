@@ -1,5 +1,7 @@
-"""Review background-job workers and the Laptop write event. No database:
-the workers' slow calls and reads are replaced, and the session is a stub."""
+"""Review background-job workers, the Google quota day, embedding usage
+logging and the Laptop write event. No database: the workers' slow calls and
+reads are replaced, and the session is a stub."""
+import inspect
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -8,7 +10,9 @@ from sqlalchemy import event
 
 from tests._progress import RecordingProgress
 
-from ._adapters import laptop_models, review_jobs
+from ._adapters import embeddings_service, laptop_models, llm_usage_module, reprocess_reviews, review_jobs
+
+llm_usage = llm_usage_module()
 
 
 class _Session:
@@ -88,6 +92,51 @@ def test_single_process_worker_runs_only_that_review(monkeypatch):
 
     assert seen == [rid]
     assert out["done"] == 1 and out["results"][0]["video_title"] == "TUF F16 review"
+
+
+def test_quota_day_resets_at_pacific_midnight_across_dst():
+    # Summer: midnight PDT is 07:00 UTC.
+    start, end = llm_usage.quota_day(datetime(2026, 7, 1, 6, 59, tzinfo=timezone.utc))
+    assert (start, end) == (
+        datetime(2026, 6, 30, 7, tzinfo=timezone.utc), datetime(2026, 7, 1, 7, tzinfo=timezone.utc)
+    )
+    # Winter: midnight PST is 08:00 UTC.
+    start, _ = llm_usage.quota_day(datetime(2026, 12, 1, 8, 0, tzinfo=timezone.utc))
+    assert start == datetime(2026, 12, 1, 8, tzinfo=timezone.utc)
+    # The day DST ends (2026-11-01) is 25 hours long.
+    start, end = llm_usage.quota_day(datetime(2026, 11, 1, 12, tzinfo=timezone.utc))
+    assert (end - start).total_seconds() == 25 * 3600
+
+
+def test_embed_text_logs_one_embedding_call(monkeypatch):
+    calls = []
+    monkeypatch.setattr(embeddings_service, "_embedder", SimpleNamespace(embed_query=lambda t: [0.1] * 768))
+    monkeypatch.setattr(embeddings_service, "log_llm_usage", lambda *a: calls.append(a))
+
+    embeddings_service.embed_text("tuf f16")
+
+    assert calls == [(llm_usage.LLMFeature.EMBEDDING, embeddings_service.EMBEDDING_MODEL, 0, 0)]
+
+
+def test_failed_embedding_logs_nothing(monkeypatch):
+    calls = []
+
+    def boom(_t):
+        raise TimeoutError
+
+    monkeypatch.setattr(embeddings_service, "_embedder", SimpleNamespace(embed_query=boom))
+    monkeypatch.setattr(embeddings_service, "log_llm_usage", lambda *a: calls.append(a))
+
+    try:
+        embeddings_service.embed_text("x")
+    except TimeoutError:
+        pass
+    assert calls == []
+
+
+def test_reprocess_dry_run_records_usage():
+    # The dry run writes no claims but spends real quota.
+    assert "feature=None" not in inspect.getsource(reprocess_reviews.run_dry)
 
 
 def test_laptop_write_event_stamps_updated_at_and_still_demotes_unpriced():

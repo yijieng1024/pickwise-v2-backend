@@ -89,7 +89,8 @@ def run_dry(video_ids, max_windows: int) -> None:
                 work.append((vid, title, cands, w))
     # The session is closed before the first Gemini call.
     work = work[::max(1, len(work) // max_windows)][:max_windows]  # spread across videos
-    chain = processor.build_chain(feature=None)
+    # Records usage: the dry run writes no claims but spends real quota.
+    chain = processor.build_chain()
     shown_cands = set()
     for vid, title, cands, w in work:
         if vid not in shown_cands:
