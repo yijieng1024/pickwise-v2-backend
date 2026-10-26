@@ -240,7 +240,7 @@ def generate_all_laptop_pick_scores(
     with no record of the other.
     """
     refuse_if_running(
-        session, (JobType.GENERATE_PICK_SCORES,), "A PickScore recalculation is already running."
+        session, (JobType.GENERATE_PICK_SCORES,), "A Pick Score recalculation is already running."
     )
 
     total = session.execute(
@@ -256,7 +256,7 @@ def generate_all_laptop_pick_scores(
     background_tasks.add_task(run_job, job.id, generate_all_pick_scores)
     return job_accepted(
         job,
-        message=f"Recalculating PickScores for {total} laptop(s) — poll the job for progress.",
+        message=f"Recalculating Pick Scores for {total} laptop(s) — poll the job for progress.",
     )
 
 

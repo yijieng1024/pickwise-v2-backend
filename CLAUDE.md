@@ -55,6 +55,10 @@ python eval/run_eval.py compare eval/runs/A.jsonl eval/runs/B.jsonl
 
 Commits pushed before this rule are never rewritten to match it.
 
+## Naming
+
+"Pick Score" is two words in every piece of user-visible text: anything the public site or the admin shows, anything an LLM reads (the agent's system prompt, tool descriptions and tool output, because Pico repeats them), and emails. Code identifiers stay as they are: `pickscore`, `PickScoreResponse`, `laptop_pick_scores`, `/pick-scores` routes, `pickscore.generate_all`. Swagger/OpenAPI docstrings, comments, logs and docs/ADRs are developer text and keep "PickScore".
+
 ## Environment Variables
 
 Create a `.env` file in the project root. Required variables (see `app/config.py`):

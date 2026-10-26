@@ -91,7 +91,7 @@ def _pick_scores_for(
                 "pick_score": None,
                 "pick_score_unavailable": (
                     "neither the CPU nor the GPU could be identified, so this "
-                    "laptop has no PickScore -- do not state or estimate one"
+                    "laptop has no Pick Score -- do not state or estimate one"
                 ),
             }
             continue
