@@ -60,6 +60,23 @@ def _utc(value: Optional[datetime]) -> Optional[datetime]:
     return value
 
 
+def pickscore_counts(session: Session) -> tuple[int, int, int]:
+    """(scored, generated, unverified) active laptops, shared with the Pick
+    Score page so the two pages cannot disagree. Laptops, not rows: one laptop
+    has a row per use case."""
+    flags = cast(LaptopPickScore.flags, JSONB)
+    unverified_flag = or_(*(flags[f].as_boolean() for f in _UNVERIFIED_FLAGS))
+    return session.exec(
+        select(
+            func.count(func.distinct(LaptopPickScore.laptop_id)).filter(LaptopPickScore.score.is_not(None)),  # type: ignore[union-attr]
+            func.count(func.distinct(LaptopPickScore.laptop_id)),
+            func.count(func.distinct(LaptopPickScore.laptop_id)).filter(unverified_flag),
+        )
+        .join(Laptop, Laptop.id == LaptopPickScore.laptop_id)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)
+    ).one()
+
+
 @router.get("/summary")
 def dashboard_summary(session: Session = Depends(get_session)) -> dict:
     now = datetime.now(timezone.utc)
@@ -90,18 +107,7 @@ def dashboard_summary(session: Session = Depends(get_session)) -> dict:
         .limit(_FAILED_JOB_LIST)
     ).all()
 
-    # Laptops, not rows: one laptop has a row per use case.
-    flags = cast(LaptopPickScore.flags, JSONB)
-    unverified_flag = or_(*(flags[f].as_boolean() for f in _UNVERIFIED_FLAGS))
-    scored, generated, unverified = session.exec(
-        select(
-            func.count(func.distinct(LaptopPickScore.laptop_id)).filter(LaptopPickScore.score.is_not(None)),  # type: ignore[union-attr]
-            func.count(func.distinct(LaptopPickScore.laptop_id)),
-            func.count(func.distinct(LaptopPickScore.laptop_id)).filter(unverified_flag),
-        )
-        .join(Laptop, Laptop.id == LaptopPickScore.laptop_id)
-        .where(active)
-    ).one()
+    scored, generated, unverified = pickscore_counts(session)
 
     counts = dict(session.exec(select(Laptop.status, func.count(Laptop.id)).group_by(Laptop.status)).all())
     awaiting_price = session.exec(

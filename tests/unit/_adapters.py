@@ -107,6 +107,14 @@ def resolve_gpu(gpu_model, cpu_model, benchmarks):
     return _bench.resolve_gpu_benchmark(gpu_model, cpu_model, benchmarks)
 
 
+def closest_benchmarks(model, benchmarks, threshold):
+    return _bench.closest_benchmarks(model, benchmarks, threshold)
+
+
+def gpu_diagnosis(gpu_model, cpu_model, benchmarks):
+    return _bench.gpu_diagnosis(gpu_model, cpu_model, benchmarks)
+
+
 # --------------------------------------------------------------------------
 # PickScore factors - app/pickscore/engine.py
 # --------------------------------------------------------------------------
@@ -324,6 +332,22 @@ from app.laptops.pickscore_general import USE_CASE_PRIORITIES  # noqa: E402
 
 def use_case_priorities() -> dict:
     return USE_CASE_PRIORITIES
+
+
+# --------------------------------------------------------------------------
+# Admin Pick Score summary - app/admin/pickscore_router.py
+# --------------------------------------------------------------------------
+from app.admin import pickscore_router as _admin_pickscore  # noqa: E402
+
+SCORE_BUCKETS = _admin_pickscore.BUCKETS
+
+
+def bucket_counts(scores):
+    return _admin_pickscore.bucket_counts(scores)
+
+
+def weight_shares(priorities):
+    return _admin_pickscore.weight_shares(priorities)
 
 
 # --------------------------------------------------------------------------

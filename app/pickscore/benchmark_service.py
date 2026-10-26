@@ -274,6 +274,20 @@ def _integrated_gpu_for(cpu_model: str) -> Optional[str]:
     return None
 
 
+_PLACEHOLDERS = {"unknown", "n/a", "none", "-"}
+
+
+def _is_placeholder(model_string: str) -> bool:
+    return not model_string or model_string.strip().lower() in _PLACEHOLDERS
+
+
+def _index(table_key: int, benchmarks: list[tuple[str, int]]) -> tuple[dict[str, str], dict[str, int]]:
+    if table_key not in _indexes:
+        _indexes[table_key] = ({_normalize(name): name for name, _ in benchmarks},
+                               {name: score for name, score in benchmarks})
+    return _indexes[table_key]
+
+
 def resolve_benchmark(
     model_string: str,
     benchmarks: list[tuple[str, int]],
@@ -292,7 +306,7 @@ def resolve_benchmark(
     """
     # Placeholder from the scraper, not a part name. Without this it fuzzy-matches
     # to whatever is nearest and returns a real-looking score.
-    if not model_string or model_string.strip().lower() in {"unknown", "n/a", "none", "-"}:
+    if _is_placeholder(model_string):
         return {"score": None, "match_confidence": 0.0, "is_proxy": False}
     
     key = _normalize(model_string)
@@ -320,10 +334,7 @@ def resolve_benchmark(
     # WRatio does no preprocessing, so a lowercased key was being matched
     # against mixed-case table names -- the same pair scores 95-100 with
     # consistent casing and 0.64 without. Normalize both sides and map back.
-    if table_key not in _indexes:
-        _indexes[table_key] = ({_normalize(name): name for name, _ in benchmarks},
-                               {name: score for name, score in benchmarks})
-    by_norm, score_map = _indexes[table_key]
+    by_norm, score_map = _index(table_key, benchmarks)
 
     # A Qualcomm part number is an identity, so it is matched exactly, before
     # and instead of the fuzzy match. Fuzzy cannot reach the threshold here:
@@ -430,3 +441,68 @@ def resolve_gpu_benchmark(
 def _resolved(result: dict, path: str) -> dict:
     """An anchored lookup that found no mark is unresolved, whatever path it took."""
     return {**result, "resolution": path if result["score"] is not None else "unresolved"}
+
+
+# --- Diagnosis (admin Pick Score page) ---------------------------------------
+# Read-only: nothing here feeds scoring. Same key, same index, same scorer as
+# resolve_benchmark, so the rows shown are the rows the matcher weighed; a unit
+# test holds closest[0] to the matcher's choice whenever a string resolves.
+
+def closest_benchmarks(
+    model_string: str,
+    benchmarks: list[tuple[str, int]],
+    threshold: float = CPU_CONFIDENCE_THRESHOLD,
+    limit: int = 3,
+) -> dict:
+    """The PassMark rows nearest to model_string, as resolve_benchmark sees them.
+
+    kind: "placeholder" (not a part name, no candidates), "qualcomm_part" (exact
+    part-number rows, confidence 1.0 like the matcher), "qualcomm_part_missing"
+    (no row carries the part number; fuzzy candidates follow) or "fuzzy".
+    """
+    if _is_placeholder(model_string):
+        return {"kind": "placeholder", "message": "Placeholder, not a part name",
+                "candidates": [], "threshold": threshold}
+
+    key = _normalize(model_string)
+    by_norm, score_map = _index(hash(tuple(benchmarks)), benchmarks)
+
+    def rows(choices, confidence=None):
+        return [
+            {"name": by_norm[k], "mark": score_map[by_norm[k]],
+             "confidence": confidence if confidence is not None else round(s / 100.0, 3)}
+            for k, s, _ in process.extract(key, choices, scorer=fuzz.WRatio, limit=limit)
+        ]
+
+    kind, message = "fuzzy", None
+    part = _QUALCOMM_PART.search(key)
+    if part:
+        token = re.compile(rf"\b{part.group(0)}\b")
+        same = sorted(n for n in by_norm if token.search(n))
+        if same:
+            return {"kind": "qualcomm_part", "message": None,
+                    "candidates": rows(same, 1.0), "threshold": threshold}
+        kind = "qualcomm_part_missing"
+        message = f"Exact part number {part.group(0).upper()}: no row carries it"
+
+    return {"kind": kind, "message": message, "candidates": rows(list(by_norm)), "threshold": threshold}
+
+
+def gpu_diagnosis(gpu_model: str, cpu_model: str, benchmarks: list[tuple[str, int]]) -> dict:
+    """closest_benchmarks along resolve_gpu_benchmark's own path: the laptop-
+    variant rewrite for named parts, then the Apple map, then the CPU's iGPU.
+    A GPU name with no model number has no meaningful closest rows; what is
+    missing there is a map entry."""
+    if has_anchor_token(gpu_model):
+        key = _normalize(gpu_model)
+        variant = _laptop_variant(key, benchmarks) if _LAPTOP_SUFFIX.strip() not in key else None
+        return closest_benchmarks(variant or gpu_model, benchmarks, GPU_CONFIDENCE_THRESHOLD)
+
+    apple_name = _APPLE_GPU_EQUIVALENT.get(_normalize(gpu_model).translate(_APPLE_KEY))
+    if apple_name:
+        return closest_benchmarks(apple_name, benchmarks, GPU_CONFIDENCE_THRESHOLD)
+    igpu_name = _integrated_gpu_for(cpu_model)
+    if igpu_name:
+        return closest_benchmarks(igpu_name, benchmarks, GPU_CONFIDENCE_THRESHOLD)
+    return {"kind": "no_igpu_entry", "message": f"No integrated-GPU entry for CPU {cpu_model or 'unknown'}",
+            "candidates": [], "threshold": GPU_CONFIDENCE_THRESHOLD}
