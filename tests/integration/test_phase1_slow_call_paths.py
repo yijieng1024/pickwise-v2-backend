@@ -167,14 +167,15 @@ def _raw_review(session, channel_id, **kw):
 
 
 def test_retry_transcripts_on_real_rows(session, monkeypatch):
-    from app.reviews import router
+    from app.reviews import jobs
     from app.reviews.models import RawYoutubeReview
+    from tests._progress import RecordingProgress
 
     ch = _channel(session)
     ids = [_raw_review(session, ch.channel_id, status="rejected", failure_reason="ip_blocked").id for _ in range(2)]
-    monkeypatch.setattr(router, "TranscriptFetchGuard", lambda **k: _Guard(ok=True))
+    monkeypatch.setattr(jobs, "TranscriptFetchGuard", lambda **k: _Guard(ok=True))
 
-    out = router.retry_transcripts(limit=20, delay_seconds=0, max_consecutive_blocks=3, session=session, _=None)
+    out = jobs.retry_transcripts_worker(20, 0, 3)(session, RecordingProgress())
 
     assert out["recovered"] >= 2
     rows = session.exec(select(RawYoutubeReview).where(RawYoutubeReview.id.in_(ids))).all()

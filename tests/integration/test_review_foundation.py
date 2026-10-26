@@ -5,13 +5,18 @@ reprocessing a finished review, a partial review counting as done, and
 matching overwriting a human decision.
 """
 import uuid
+from types import SimpleNamespace
 
 import pytest
+from fastapi import BackgroundTasks
 from sqlmodel import select
 
+from tests._progress import RecordingProgress
 from tests.integration.conftest import make_laptop
 
 _VEC = [0.01] * 768
+# Refused requests never reach create_job, so the admin's id is never read.
+_ADMIN = SimpleNamespace(id=None)
 
 
 @pytest.fixture
@@ -112,21 +117,22 @@ def _chunks(session, review):
 def test_a_finished_review_is_never_processed_again(session, family_laptops, fake_llm):
     from fastapi import HTTPException
 
-    from app.reviews import router
+    from app.reviews import jobs, router
     from app.reviews.processor import processing_candidates
 
     family, laptops = family_laptops
     review = _review(session)
     _link(session, review, family, laptops[0])
 
-    first = router.process_review(review.id, session=session, _=None)
+    first = jobs.process_one_worker(review.id, review.video_title)(session, RecordingProgress())["results"][0]
     assert first["complete"] and first["chunks_saved"] == 4
     assert review.id not in {c["review_id"] for c in processing_candidates(session)}
 
+    # Refused before a job exists: nothing left to process.
     with pytest.raises(HTTPException) as exc:
-        router.process_review(review.id, session=session, _=None)
+        router.process_review(review.id, background_tasks=BackgroundTasks(), session=session, admin=_ADMIN)
     assert exc.value.status_code == 409
-    assert router.process_bulk(limit=50, session=session, _=None)["candidates"] == 0
+    assert jobs.process_bulk_worker(50)(session, RecordingProgress())["candidates"] == 0
     assert len(_chunks(session, review)) == 4
 
 
@@ -141,8 +147,8 @@ def test_processing_routes_are_paused_by_default(session, family_laptops):
     family, laptops = family_laptops
     review = _review(session)
     _link(session, review, family, laptops[0])
-    for call in (lambda: router.process_review(review.id, session=session, _=None),
-                 lambda: router.process_bulk(limit=5, session=session, _=None)):
+    for call in (lambda: router.process_review(review.id, background_tasks=BackgroundTasks(), session=session, admin=_ADMIN),
+                 lambda: router.process_bulk(background_tasks=BackgroundTasks(), limit=5, session=session, admin=_ADMIN)):
         with pytest.raises(HTTPException) as exc:
             call()
         assert exc.value.status_code == 409 and "REVIEW_PROCESSING_PAUSED" in exc.value.detail
@@ -154,7 +160,7 @@ def test_processing_routes_are_paused_by_default(session, family_laptops):
 def test_a_partial_review_is_reported_and_retried_for_its_missing_windows_only(
     session, family_laptops, fake_llm
 ):
-    from app.reviews import router
+    from app.reviews import jobs
     from app.reviews.processor import process_raw_review, processing_candidates
 
     family, laptops = family_laptops
@@ -171,7 +177,7 @@ def test_a_partial_review_is_reported_and_retried_for_its_missing_windows_only(
     assert partial and (partial[0]["windows_saved"], partial[0]["windows_expected"]) == (3, 4)
 
     fake_llm["fail_at"] = set()
-    bulk = router.process_bulk(limit=50, session=session, _=None)
+    bulk = jobs.process_bulk_worker(50)(session, RecordingProgress())
     result = next(r for r in bulk["results"] if r["review_id"] == str(review.id))
     assert (result["windows_already_saved"], result["chunks_total"], result["complete"]) == (3, 1, True)
     starts = sorted(c.timestamp_start_seconds for c in _chunks(session, review))
@@ -256,7 +262,7 @@ def test_a_config_scope_chunk_must_name_its_laptop(session, family_laptops):
 # --- 3. /rematch never touches a human-linked review ------------------------
 
 def test_rematch_skips_human_linked_reviews(session, family_laptops, monkeypatch):
-    from app.reviews import router
+    from app.reviews import jobs
     from app.reviews.link_model import ReviewLaptopLink
     from app.reviews.models import RawYoutubeReview
 
@@ -264,9 +270,9 @@ def test_rematch_skips_human_linked_reviews(session, family_laptops, monkeypatch
     human = _review(session, status="pending")
     _link(session, human, family, None, source="human")
     plain = _review(session, status="pending")
-    monkeypatch.setattr(router, "match_laptop", lambda title, s: (laptops[0].id, 90.0))
+    monkeypatch.setattr(jobs, "match_laptop", lambda title, s: (laptops[0].id, 90.0))
 
-    out = router.rematch_pending(session=session, _=None)
+    out = jobs.rematch_worker()(session, RecordingProgress())
 
     assert out["skipped_human_linked"] >= 1
     session.expire_all()
@@ -283,7 +289,7 @@ def test_rematch_skips_human_linked_reviews(session, family_laptops, monkeypatch
     plain_row.status = "pending"
     session.add(plain_row)
     session.commit()
-    router.rematch_pending(session=session, _=None)
+    jobs.rematch_worker()(session, RecordingProgress())
     assert len(session.exec(select(ReviewLaptopLink).where(ReviewLaptopLink.raw_review_id == plain.id)).all()) == 1
 
 

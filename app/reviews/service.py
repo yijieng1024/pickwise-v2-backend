@@ -125,6 +125,7 @@ def ingest_bulk(
     limit: int = 5,
     skip_covered: bool = True,
     fetch_transcripts: bool = True,
+    progress=None,
 ) -> dict:
     """
     Run the discovery + transcript + match pipeline across the catalog, one
@@ -142,6 +143,9 @@ def ingest_bulk(
     the note at the `covered` computation for why "matched" and not "has any
     raw review" — it is a schema limit, not a preference.
     Chunking/embedding stays a separate step (POST /reviews/process/{id}).
+
+    `progress` (a JobProgress) advances once per family when this runs as a
+    background job.
     """
     active_channels = session.exec(
         select(YoutubeChannel).where(YoutubeChannel.active == True)  # noqa: E712
@@ -183,6 +187,8 @@ def ingest_bulk(
     # family: a block during the first family is still a block during the
     # second, and a per-family guard would forget that and keep hammering.
     guard = TranscriptFetchGuard() if fetch_transcripts else None
+    if progress is not None:
+        progress.set_total(len(todo))
 
     for key, laptop in todo:
         if guard is not None and guard.tripped:
@@ -206,6 +212,11 @@ def ingest_bulk(
             session.rollback()
             logger.error("Bulk ingest failed for family '%s': %s", key, e)
             results.append({"family": key, "queried_laptop_id": str(laptop.id), "error": str(e)})
+        if progress is not None:
+            error = results[-1].get("error")
+            progress.advance(succeeded=error is None, item=f"family:{key}", error=error)
+            if progress.cancel_requested:
+                break
 
     return {
         # A partial run is stated, not inferred from a short results list.

@@ -45,6 +45,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
 from app.common.job_model import BackgroundJob, JobAccepted, JobStatus
@@ -219,6 +220,27 @@ def create_job(
     session.commit()
     session.refresh(job)
     return job
+
+
+def refuse_if_running(session: Session, job_types: tuple[str, ...], message: str) -> None:
+    """409 with the active job's id when any of *job_types* is queued or running.
+
+    Several types share one lock when they would collide (two review jobs
+    picking the same windows, two transcript fetchers sharing one proxy's
+    rate limit), so the caller names the whole group.
+    """
+    running = session.exec(
+        select(BackgroundJob)
+        .where(BackgroundJob.job_type.in_(list(job_types)))  # type: ignore[attr-defined]
+        .where(BackgroundJob.status.in_(list(JobStatus.ACTIVE)))  # type: ignore[attr-defined]
+    ).first()
+    # ponytail: check-then-insert, so two clicks in the same instant could both
+    # pass. One admin, one instance; an advisory lock if that ever changes.
+    if running:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "job_running", "message": message, "job_id": str(running.id)},
+        )
 
 
 def job_accepted(job: BackgroundJob, message: Optional[str] = None) -> JobAccepted:

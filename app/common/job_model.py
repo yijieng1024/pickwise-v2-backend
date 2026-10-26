@@ -69,6 +69,11 @@ class JobType:
     SCRAPE_TARGETS = "scraper.scrape_targets"
     GENERATE_EMBEDDINGS = "embeddings.generate_all"
     GENERATE_PICK_SCORES = "pickscore.generate_all"
+    REVIEW_INGEST_BULK = "reviews.ingest_bulk"
+    REVIEW_RETRY_TRANSCRIPTS = "reviews.retry_transcripts"
+    REVIEW_PROCESS = "reviews.process"
+    REVIEW_PROCESS_BULK = "reviews.process_bulk"
+    REVIEW_REMATCH = "reviews.rematch"
 
     ALL = (
         PROCESS_PENDING,
@@ -77,6 +82,20 @@ class JobType:
         SCRAPE_TARGETS,
         GENERATE_EMBEDDINGS,
         GENERATE_PICK_SCORES,
+        REVIEW_INGEST_BULK,
+        REVIEW_RETRY_TRANSCRIPTS,
+        REVIEW_PROCESS,
+        REVIEW_PROCESS_BULK,
+        REVIEW_REMATCH,
+    )
+
+    # The review pipeline page's "recent runs".
+    REVIEWS = (
+        REVIEW_INGEST_BULK,
+        REVIEW_RETRY_TRANSCRIPTS,
+        REVIEW_PROCESS,
+        REVIEW_PROCESS_BULK,
+        REVIEW_REMATCH,
     )
 
 

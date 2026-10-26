@@ -1,7 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from sqlalchemy import func, or_
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
@@ -11,6 +11,8 @@ from app.common.pagination_service import (
     count_total,
     paginate,
 )
+from app.common.job_model import JobAccepted, JobType
+from app.common.job_service import create_job, job_accepted, refuse_if_running, run_job
 from app.common.search_service import apply_search, search_query
 from app.database import end_transaction, get_session, held_instances
 from app.laptops.brand_model import LaptopBrand
@@ -32,14 +34,13 @@ from app.reviews.models import (
     YoutubeChannelCreate,
     YoutubeChannelUpdate,
 )
-from app.reviews.link_model import MatchSource, ReviewLaptopLink, ReviewLinkCreate
+from app.reviews.link_model import ReviewLaptopLink, ReviewLinkCreate
 from app.reviews.link_service import (
     column_label,
     config_row,
     create_human_link,
     differing_columns,
     family_members,
-    human_linked_review_ids,
     links_by_review,
     links_for_reviews,
     mark_indistinguishable,
@@ -47,28 +48,32 @@ from app.reviews.link_service import (
     processing_laptop_id,
     resolve_family_for_laptop,
     separability,
-    write_auto_link,
 )
-from app.reviews.matcher import match_laptop
 from app.config import settings
-from app.reviews.processor import (
-    AlreadyProcessed,
-    on_links_changed,
-    process_raw_review,
-    processing_candidates,
-)
-from app.reviews.service import family_worklist, ingest_bulk, ingest_for_laptop
-from app.reviews.transcript import (
-    TERMINAL_FAILURES,
-    TranscriptFetchGuard,
+from app.reviews.processor import on_links_changed, processing_candidates
+from app.reviews.service import family_worklist, ingest_for_laptop
+from app.reviews.jobs import (
+    ingest_bulk_worker,
+    process_bulk_worker,
+    process_one_worker,
+    rematch_worker,
+    retry_candidates_query,
+    retry_transcripts_worker,
 )
 from app.users.auth import get_current_admin
+from app.users.models import User
 
 # YouTube Data API search.list costs 100 units per call, and the free daily
 # quota is 10,000. Named here rather than inlined so the pipeline screen and
 # the ingest estimate cannot disagree about the arithmetic.
 _QUOTA_UNITS_PER_SEARCH = 100
 _DAILY_QUOTA_UNITS = 10_000
+
+# Job types that refuse to run alongside each other: two transcript fetchers
+# share one proxy's rate limit, and two processing jobs could pick the same
+# windows.
+_TRANSCRIPT_JOBS = (JobType.REVIEW_INGEST_BULK, JobType.REVIEW_RETRY_TRANSCRIPTS)
+_PROCESS_JOBS = (JobType.REVIEW_PROCESS, JobType.REVIEW_PROCESS_BULK)
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 logger = get_logger(__name__)
@@ -162,8 +167,9 @@ def ingest_laptop(
     return counts
 
 
-@router.post("/ingest-bulk")
+@router.post("/ingest-bulk", status_code=202, response_model=JobAccepted)
 def ingest_bulk_endpoint(
+    background_tasks: BackgroundTasks,
     limit: int = Query(
         default=5,
         ge=1,
@@ -192,23 +198,34 @@ def ingest_bulk_endpoint(
         ),
     ),
     session: Session = Depends(get_session),
-    _: None = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ):
     """
     Bulk discovery: runs discovery + transcript + matching across the catalog,
     one YouTube search per laptop *family* (config variants collapsed — a
     reviewer covers 'TUF Gaming F15', not each RAM/SSD configuration).
     Re-run daily with skip_covered=true to walk the catalog within quota.
+
+    Runs as a background job: 202 with the job id, then poll GET /jobs/{id}.
+    The old response body is the finished job's `result`. 409 while an ingest
+    or a transcript retry is running (they share the transcript rate limit).
     """
-    try:
-        return ingest_bulk(
-            session,
-            limit=limit,
-            skip_covered=skip_covered,
-            fetch_transcripts=fetch_transcripts,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    refuse_if_running(session, _TRANSCRIPT_JOBS, "A review ingest or transcript retry is already running.")
+    active_channels = session.exec(
+        select(func.count(YoutubeChannel.id)).where(YoutubeChannel.active == True)  # noqa: E712
+    ).one()
+    if not active_channels:
+        raise HTTPException(status_code=400, detail="No active YouTube channels registered — add channels first.")
+
+    job = create_job(
+        session,
+        job_type=JobType.REVIEW_INGEST_BULK,
+        total_count=limit,
+        params={"limit": limit, "skip_covered": skip_covered, "fetch_transcripts": fetch_transcripts},
+        created_by=admin.id,
+    )
+    background_tasks.add_task(run_job, job.id, ingest_bulk_worker(limit, skip_covered, fetch_transcripts))
+    return job_accepted(job, message=f"Searching up to {limit} famil(ies) — poll the job for progress.")
 
 
 # --- Raw review management ---
@@ -414,53 +431,23 @@ def set_review_irrelevant(
     return _to_read(review, None, None)
 
 
-@router.post("/rematch")
+@router.post("/rematch", status_code=202, response_model=JobAccepted)
 def rematch_pending(
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
-    _: None = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ):
-    """Re-run auto-matching on all pending raw reviews using the current matcher config.
-
-    A review with ANY human link is never touched -- not its links, not its
-    status. A family-only human match leaves a review PENDING on purpose, and
-    this used to promote exactly those rows to MATCHED on the matcher's say-so,
-    overruling the human. A match is written as an auto link (replacing any
-    earlier auto link); a matched laptop with no family cannot be linked
-    (family_id is NOT NULL) and stays pending for a human.
-    """
+    """Re-run auto-matching on all pending raw reviews using the current matcher
+    config, as a background job (202; poll GET /jobs/{id}, the old response
+    body is the job's `result`). Human-linked reviews are never touched; see
+    jobs.rematch_worker. 409 while a rematch is running."""
+    refuse_if_running(session, (JobType.REVIEW_REMATCH,), "A rematch is already running.")
     pending = session.exec(
-        select(RawYoutubeReview).where(
-            RawYoutubeReview.status == ReviewStatus.PENDING.value
-        )
-    ).all()
-    human = human_linked_review_ids(session)
-
-    updated = skipped_human = ungrouped = 0
-    for review in pending:
-        if review.id in human:
-            skipped_human += 1
-            continue
-        laptop_id, confidence = match_laptop(review.video_title, session)
-        if not laptop_id:
-            continue
-        if not write_auto_link(session, review.id, laptop_id, confidence):
-            ungrouped += 1
-            continue
-        review.status = ReviewStatus.MATCHED.value
-        session.add(review)
-        updated += 1
-
-    session.commit()
-    logger.info(
-        "Rematch: %d of %d pending reviews matched (%d human-linked skipped, %d ungrouped)",
-        updated, len(pending), skipped_human, ungrouped,
-    )
-    return {
-        "pending_total": len(pending),
-        "newly_matched": updated,
-        "skipped_human_linked": skipped_human,
-        "matched_laptop_has_no_family": ungrouped,
-    }
+        select(func.count(RawYoutubeReview.id)).where(RawYoutubeReview.status == ReviewStatus.PENDING.value)
+    ).one()
+    job = create_job(session, job_type=JobType.REVIEW_REMATCH, total_count=pending, created_by=admin.id)
+    background_tasks.add_task(run_job, job.id, rematch_worker())
+    return job_accepted(job, message=f"Rematching {pending} pending review(s) — poll the job for progress.")
 
 
 # --- Chunking / embedding ---
@@ -477,31 +464,51 @@ def _refuse_while_paused() -> None:
         )
 
 
-@router.post("/process/{review_id}")
+@router.post("/process/{review_id}", status_code=202, response_model=JobAccepted)
 def process_review(
     review_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
-    _: None = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ):
-    """Run chunking, sentiment tagging, and embedding for a matched raw review.
+    """Run chunking, sentiment tagging, and embedding for a matched raw review
+    ("Summarize transcript"), as a background job: 202, then poll
+    GET /jobs/{id}; the per-window report is in the job's `result`.
 
     Only windows without a claim are processed, so this doubles as the retry
-    for a partial review. 409 when every window is already saved -- the
-    duplicate guard. The response carries per-window outcomes, `complete`, and
-    whether a re-processed review was swapped in (`swapped`).
+    for a partial review. Checked before any job exists: 409 while paused or
+    while a processing job runs, 404 for an unknown review, 409 when the
+    review has nothing to process (not matched, no link, no transcript, or
+    every window already saved -- the duplicate guard).
     """
     _refuse_while_paused()
-    try:
-        report = process_raw_review(review_id, session)
-    except AlreadyProcessed as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return report
+    refuse_if_running(session, _PROCESS_JOBS, "Review processing is already running.")
+    review = session.get(RawYoutubeReview, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail=f"Review {review_id} not found.")
+    candidate = next((c for c in processing_candidates(session) if c["review_id"] == review_id), None)
+    if candidate is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Review {review_id} has nothing to process (status={review.status}): it must be "
+                "matched, linked to a family and have a transcript window without a claim."
+            ),
+        )
+    job = create_job(
+        session,
+        job_type=JobType.REVIEW_PROCESS,
+        total_count=1,
+        params={"review_id": str(review_id)},
+        created_by=admin.id,
+    )
+    background_tasks.add_task(run_job, job.id, process_one_worker(review_id, candidate["video_title"]))
+    return job_accepted(job, message="Processing 1 review — poll the job for progress.")
 
 
-@router.post("/process-bulk")
+@router.post("/process-bulk", status_code=202, response_model=JobAccepted)
 def process_bulk(
+    background_tasks: BackgroundTasks,
     limit: int = Query(
         default=5,
         ge=1,
@@ -513,7 +520,7 @@ def process_bulk(
         ),
     ),
     session: Session = Depends(get_session),
-    _: None = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ):
     """
     Bulk processing: runs the /process/{review_id} step over every candidate
@@ -526,49 +533,24 @@ def process_bulk(
 
     Do not run it during the full Review C re-run
     (app/scripts/reprocess_reviews): it would process the same windows twice.
+
+    Runs as a background job: 202, then poll GET /jobs/{id}; the old response
+    body is the job's `result`, and each failed or partial review is in the
+    job's `errors`. 409 before any job exists while paused or while a
+    processing job runs.
     """
     _refuse_while_paused()
-    candidates = processing_candidates(session)[:limit]
-
-    results = []
-    chunks_total = 0
-    # `failed` counts reviews that raised outright; `partial` counts reviews
-    # that returned but lost chunks. Before per-chunk outcomes existed the
-    # second group was indistinguishable from a clean run.
-    chunks_failed = 0
-    failed = 0
-    partial = 0
-    for candidate in candidates:
-        review_id = candidate["review_id"]
-        try:
-            report = process_raw_review(review_id, session)
-            chunks_total += report["chunks_saved"]
-            chunks_failed += report["chunks_failed"]
-            if not report["complete"]:
-                partial += 1
-            results.append({
-                "review_id": str(review_id),
-                "video_title": candidate["video_title"],
-                **report,
-            })
-        except Exception as e:
-            failed += 1
-            logger.exception("Bulk processing failed for review %s", review_id)
-            results.append({
-                "review_id": str(review_id),
-                "video_title": candidate["video_title"],
-                "error": str(e),
-            })
-
-    return {
-        "candidates": len(candidates),
-        "processed": len(candidates) - failed,
-        "failed": failed,
-        "partially_processed": partial,
-        "chunks_saved": chunks_total,
-        "chunks_failed": chunks_failed,
-        "results": results,
-    }
+    refuse_if_running(session, _PROCESS_JOBS, "Review processing is already running.")
+    total = min(limit, len(processing_candidates(session)))
+    job = create_job(
+        session,
+        job_type=JobType.REVIEW_PROCESS_BULK,
+        total_count=total,
+        params={"limit": limit},
+        created_by=admin.id,
+    )
+    background_tasks.add_task(run_job, job.id, process_bulk_worker(limit))
+    return job_accepted(job, message=f"Processing {total} review(s) — poll the job for progress.")
 
 
 # --- Aggregation ---
@@ -688,8 +670,10 @@ def aggregate_laptop(
         "weaknesses": summary.aggregated_weaknesses,
     }
 
-@router.post("/retry-transcripts")
+
+@router.post("/retry-transcripts", status_code=202, response_model=JobAccepted)
 def retry_transcripts(
+    background_tasks: BackgroundTasks,
     limit: int = Query(default=20, ge=1, le=100),
     delay_seconds: float = Query(
         default=2.0,
@@ -706,7 +690,7 @@ def retry_transcripts(
         "results instead of pushing through the remaining rows.",
     ),
     session: Session = Depends(get_session),
-    _: None = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ):
     """
     Re-fetch transcripts for rejected reviews whose failure was operational
@@ -735,114 +719,25 @@ def retry_transcripts(
     produces. Those rows are not failures; they are deferred work, and this is
     the only endpoint that can reach them — a later ingest skips any existing
     non-rejected row.
+
+    Runs as a background job: 202, then poll GET /jobs/{id}; the old response
+    body is the job's `result`, and each review still failing is in `errors`
+    with its reason. 409 while an ingest or retry is running.
     """
-    terminal = {f.value for f in TERMINAL_FAILURES}
-
-    held = held_instances(session)
-    candidates = session.exec(
-        select(RawYoutubeReview)
-        .where(
-            or_(
-                # Rejected for an operational reason — the original case.
-                and_(
-                    RawYoutubeReview.status == ReviewStatus.REJECTED.value,
-                    or_(
-                        RawYoutubeReview.failure_reason.is_(None),      # type: ignore[union-attr]
-                        RawYoutubeReview.failure_reason.notin_(terminal),  # type: ignore[union-attr]
-                    ),
-                ),
-                # Never attempted at all — a discovery-only ingest run
-                # (fetch_transcripts=false) records these with
-                # transcript_attempts=0. Without this clause they would be
-                # stranded forever: a later ingest skips any existing
-                # non-rejected row, so nothing else would ever fetch them.
-                #
-                # The empty-transcript test is NOT redundant with
-                # transcript_attempts=0. Migration 8e429682f918 added that
-                # column with server_default '0', so all 28 rows that predate
-                # it read as "never attempted" while already holding a full
-                # transcript. Counting attempts alone would re-fetch every one
-                # of them and spend the rate-limit budget this endpoint exists
-                # to protect. What actually matters is whether the row has
-                # segments, so ask that directly; the attempts test then only
-                # keeps us off rows something else is already retrying.
-                #
-                # The general trap, because it will recur with every future
-                # additive column: a server_default backfill makes historical
-                # rows indistinguishable from newly-created ones. The default
-                # value is a fact about the migration, not about the row, so a
-                # predicate that treats it as a real observation will silently
-                # sweep in the entire pre-migration table. Test the thing you
-                # actually mean — here, "has no transcript".
-                and_(
-                    RawYoutubeReview.status == ReviewStatus.PENDING.value,
-                    RawYoutubeReview.transcript_attempts == 0,
-                    func.coalesce(
-                        func.jsonb_array_length(
-                            RawYoutubeReview.raw_transcript["segments"]  # type: ignore[index]
-                        ),
-                        0,
-                    )
-                    == 0,
-                ),
-            )
-        )
-        .order_by(RawYoutubeReview.created_at, RawYoutubeReview.id)  # type: ignore[arg-type]
-        .limit(limit)
-    ).all()
-    # End the read transaction before the fetch loop: each fetch is network
-    # I/O plus the guard's delay, and the transaction otherwise stayed open
-    # for the whole run. The candidates become detached snapshots;
-    # session.add() below re-attaches each one, and nothing touches the
-    # database again until the final commit.
-    end_transaction(session, candidates, held)
-
-    # The delay and the breaker live in TranscriptFetchGuard, shared with the
-    # ingest pipeline — see app/reviews/transcript.py. Two copies of a
-    # rate-limit guard is how one of them silently stops matching the other.
-    guard = TranscriptFetchGuard(
-        delay_seconds=delay_seconds,
-        max_consecutive_blocks=max_consecutive_blocks,
+    refuse_if_running(session, _TRANSCRIPT_JOBS, "A review ingest or transcript retry is already running.")
+    total = len(session.exec(retry_candidates_query(limit)).all())
+    job = create_job(
+        session,
+        job_type=JobType.REVIEW_RETRY_TRANSCRIPTS,
+        total_count=total,
+        params={"limit": limit, "delay_seconds": delay_seconds, "max_consecutive_blocks": max_consecutive_blocks},
+        created_by=admin.id,
+        seconds_per_item=delay_seconds + 2,
     )
-    recovered, still_failing = 0, {}
-
-    for review in candidates:
-        result = guard.fetch(review.video_id)
-        review.transcript_attempts += 1
-
-        if result.ok:
-            review.raw_transcript = {"segments": result.segments}
-            review.transcript_language = result.language_code
-            review.failure_reason = None
-            # deliberately NOT MATCHED: a recovered transcript says nothing
-            # about which laptop the video is about.
-            review.status = ReviewStatus.PENDING.value
-            recovered += 1
-        else:
-            review.failure_reason = result.failure.value
-            still_failing[result.failure.value] = (
-                still_failing.get(result.failure.value, 0) + 1
-            )
-        session.add(review)
-
-        if guard.tripped:
-            break
-
-    # Commit whatever was attempted. The rows we did reach have a real,
-    # updated failure_reason and attempt count; throwing that away because the
-    # run ended early would mean re-fetching them next time, which is exactly
-    # the traffic the breaker exists to avoid.
-    session.commit()
-    return {
-        "candidates": len(candidates),
-        "attempted": guard.attempted,
-        "recovered": recovered,
-        "still_failing": still_failing,
-        # Explicit partial-run marker: without it a caller cannot tell an
-        # abort from a run that simply had few candidates.
-        "aborted_on_rate_limit": guard.tripped,
-        "not_attempted": len(candidates) - guard.attempted,
-    }
+    background_tasks.add_task(
+        run_job, job.id, retry_transcripts_worker(limit, delay_seconds, max_consecutive_blocks)
+    )
+    return job_accepted(job, message=f"Retrying {total} transcript(s) — poll the job for progress.")
 
 
 # --- Human review-linking screen (ADR-0012) ---------------------------------

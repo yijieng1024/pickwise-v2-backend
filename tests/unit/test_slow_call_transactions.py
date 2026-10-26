@@ -29,6 +29,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import QueuePool
 from sqlmodel import Session
 
+from tests._progress import RecordingProgress
+
 from ._adapters import (
     _pickscore_adapter,
     _retrieval,
@@ -38,6 +40,7 @@ from ._adapters import (
     llm_module,
     Settings,
     review_processor,
+    review_jobs,
     review_router,
     review_service,
     TranscriptResult as _TranscriptResult,
@@ -241,25 +244,48 @@ def test_ingest_holds_no_connection_during_youtube_calls(db, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# reviews/router.py
+# reviews/jobs.py
 # --------------------------------------------------------------------------
 def test_retry_transcripts_holds_no_connection_during_fetches(db, monkeypatch):
     engine, session = db
     calls = []
-    rows = [
-        SimpleNamespace(video_id=f"v{i}", transcript_attempts=0, raw_transcript={},
-                        transcript_language=None, failure_reason=None, status="rejected")
-        for i in range(2)
-    ]
-    _reads(monkeypatch, session, rows)
-    monkeypatch.setattr(review_router, "TranscriptFetchGuard", lambda **k: _Guard(engine, calls))
+    ids = [uuid.uuid4(), uuid.uuid4()]
+    _reads(monkeypatch, session, [(rid, f"v{i}") for i, rid in enumerate(ids)])
 
-    out = review_router.retry_transcripts(
-        limit=20, delay_seconds=0, max_consecutive_blocks=3, session=session, _=None
-    )
+    def get(_model, rid):
+        session.connection()  # the short write transaction after each fetch
+        return SimpleNamespace(id=rid, transcript_attempts=0, raw_transcript={},
+                               transcript_language=None, failure_reason=None, status="rejected")
+
+    monkeypatch.setattr(session, "get", get)
+    monkeypatch.setattr(review_jobs, "TranscriptFetchGuard", lambda **k: _Guard(engine, calls))
+    progress = RecordingProgress()
+
+    out = review_jobs.retry_transcripts_worker(20, 0, 3)(session, progress)
 
     assert calls == ["transcript", "transcript"]
     assert out["recovered"] == 2
+    # Committed per row: one advance per review, each after its write.
+    assert [item for _, item, _ in progress.advanced] == [str(r) for r in ids]
+
+
+def test_ingest_bulk_worker_reports_per_family(db, monkeypatch):
+    """The worker turns ingest_bulk's report into done/failed/skipped, and a
+    failed family is a job error keyed by family."""
+    _engine, session = db
+    progress = RecordingProgress()
+
+    def fake_ingest_bulk(_session, **kw):
+        kw["progress"].set_total(2)
+        kw["progress"].advance(succeeded=True, item="family:tuf f16")
+        kw["progress"].advance(succeeded=False, item="family:rog 14", error="boom")
+        return {"families_attempted": 3, "results": [{"family": "tuf f16"}, {"family": "rog 14", "error": "boom"}]}
+
+    monkeypatch.setattr(review_jobs, "ingest_bulk", fake_ingest_bulk)
+    out = review_jobs.ingest_bulk_worker(3, True, True)(session, progress)
+
+    assert (out["done"], out["failed"], out["skipped"]) == (1, 1, 1)
+    assert progress.errors == [{"item": "family:rog 14", "error": "boom"}]
 
 
 def test_backfill_descriptions_holds_no_connection_during_videos_list(db, monkeypatch):

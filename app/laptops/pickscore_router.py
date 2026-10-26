@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.common.job_model import BackgroundJob, JobAccepted, JobStatus, JobType
-from app.common.job_service import create_job, job_accepted, run_job
+from app.common.job_model import JobAccepted, JobType
+from app.common.job_service import create_job, job_accepted, refuse_if_running, run_job
 from app.database import get_session
 from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.laptops.brand_model import LaptopBrand
@@ -239,22 +239,9 @@ def generate_all_laptop_pick_scores(
     two runs would each rewrite every row, and the one that commits last wins
     with no record of the other.
     """
-    running = session.exec(
-        select(BackgroundJob)
-        .where(BackgroundJob.job_type == JobType.GENERATE_PICK_SCORES)
-        .where(BackgroundJob.status.in_(list(JobStatus.ACTIVE)))  # type: ignore[attr-defined]
-    ).first()
-    # ponytail: check-then-insert, so two clicks in the same instant could both
-    # pass. One admin, one instance; an advisory lock if that ever changes.
-    if running:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "job_running",
-                "message": "A PickScore recalculation is already running.",
-                "job_id": str(running.id),
-            },
-        )
+    refuse_if_running(
+        session, (JobType.GENERATE_PICK_SCORES,), "A PickScore recalculation is already running."
+    )
 
     total = session.execute(
         select(func.count()).select_from(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)
