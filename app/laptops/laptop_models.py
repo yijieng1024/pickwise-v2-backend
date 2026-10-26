@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pydantic import field_validator
 from sqlmodel import Relationship, SQLModel, Field
-from sqlalchemy import Column, DateTime, JSON, UniqueConstraint, event
+from sqlalchemy import Column, DateTime, JSON, UniqueConstraint, event, func
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
@@ -146,6 +146,13 @@ class Laptop(LaptopBase, table=True):
     price_checked_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
+    # The Dashboard's "latest catalog change", which PickScore staleness is
+    # judged against. Set by _deactivate_unpriced on every ORM insert/update;
+    # Core UPDATEs bypass it.
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
+    )
 
     # 1. Customizations cascade
     customizations: List["LaptopCustomization"] = Relationship(
@@ -201,9 +208,14 @@ class Laptop(LaptopBase, table=True):
 # machines to go find a price for. Restoring a price does NOT re-activate --
 # that is an admin decision (an `inactive` row may be delisted for other
 # reasons), so status stays put until someone sets it.
+#
+# The same event stamps updated_at, for the same reason: every write path ends
+# here. SQLAlchemy runs before_update for any dirty Laptop, so a category or
+# family change counts as a catalog change too.
 @event.listens_for(Laptop, "before_insert")
 @event.listens_for(Laptop, "before_update")
 def _deactivate_unpriced(_mapper, _connection, target: "Laptop") -> None:
+    target.updated_at = datetime.now(timezone.utc)
     if not target.price_rm and target.status == LaptopStatus.ACTIVE.value:
         target.status = LaptopStatus.INACTIVE.value
 
