@@ -267,7 +267,7 @@ When Pico speaks first, the backend builds an internal instruction from the entr
 - Show our scrape date, not PassMark's (they update daily; our marks are only as fresh as our last scrape): one footnote under the factor list in `PickScoreBreakdown`, e.g. "CPU benchmarks last updated: Aug 2026", covering CPU and GPU. Appears on the details card and the chat/home popovers
 
 **Survey result (Jack, 2026-10-27)**
-- No site needs a browser. Apple, HP, ASUS, ROG and PassMark all work with Scrapling's plain `Fetcher`; Acer stays on manual HTML upload (Akamai refuses both `Fetcher` and `StealthyFetcher`). Once every scraper is switched, Playwright, patchright and Chromium come out of the image (about 715 MB of browser plus the `--with-deps` apt libraries), and the project depends on plain `scrapling` + `curl_cffi`, not the `[fetchers]` extra (which also needs playwright ≥1.62, against our 1.60 pin)
+- No site needs a browser. Apple, HP, ASUS, ROG and PassMark all work with Scrapling's plain `Fetcher`; Acer stays on manual HTML upload (Akamai refuses both `Fetcher` and `StealthyFetcher`). Once every scraper is switched, Playwright, patchright and Chromium come out of the image (about 715 MB of browser plus the `--with-deps` apt libraries), and the project depends on plain `scrapling` + `curl_cffi`, not the `[fetchers]` extra (which also needs playwright ≥1.62, against our 1.60 pin). *Superseded (Jack, 2026-10-28): install `scrapling[fetchers]` and keep the browser, so `StealthyFetcher` stays available; see the implementation plan below*
 - Scrapling 0.5 has no `DynamicFetcher`; only `Fetcher` and `StealthyFetcher`. Adaptive selectors are not used: their signatures live in a SQLite file in site-packages (lost on every Render deploy and Actions run), and ASUS/ROG read JSON, not DOM
 
 | Site | Discovery | Specs | Price |
@@ -289,6 +289,185 @@ When Pico speaks first, the backend builds an internal instruction from the entr
 - If no guide has a price, the price stays empty, so the existing rule keeps the laptop inactive, and Jack is notified that it needs a price by hand
 - **Chromebooks are ignored** (no longer sold)
 - **ROG guide pages have no ruled tables.** pdfplumber's table extraction finds nothing and its text strategy splits words (`RM16,999 R`, `M14,9`), so SKUs are paired with prices by word position. That extraction must be checked by hand against a few pages before it is trusted. In the consumer guide one column often lists several SKUs (colour variants) under one price
+
+**Implementation plan (drafted 2026-10-28; Phase 0 approved by Jack 2026-10-28, later phases still need approval)**
+
+Phases 0–3 in Jack's order (Phase 4 cancelled, see below). Each phase ends with a report to Jack; the next phase starts only after Jack approves it. Shared rules for every phase:
+- Nothing in this plan writes to production. Real-data checks either call the scraper functions directly (they return dicts and touch no database), or run the pipeline against the test database with `DATABASE_URL` set explicitly to `TEST_DATABASE_URL` for that one command. That override matters: the app reads `DATABASE_URL`, and a developer `.env` points it at production. Any script that touches a database refuses to start when the URL's project ref is `PRODUCTION_DB_REF`, using the same check as the integration tier
+- One small read-only tool for every phase: `python -m app.scripts.scrape_preview <brand> <url>...` runs the brand's scrape function and prints the result as JSON. No session, no database, no LLM. Acer is excluded (it reads uploaded HTML from the database)
+- Fetching uses Scrapling's `Fetcher` for every site, as the survey tested. `StealthyFetcher` (the browser) stays installed for any site that starts blocking plain HTTP later; switching one site to it is a one-line change in that site's `fetch`
+- Parsing is separated from fetching. Each scraper becomes `fetch` (Scrapling `Fetcher`, a few lines) plus a pure `parse_*(html) -> list[dict]`, so unit tests run the parser on a saved page with no network (`tests/_io_guard.py` blocks the network in the unit tier anyway). Fixtures go in `tests/unit/fixtures/scraper/`, cut down from the survey's `probe/` pages to just the part the parser reads (the `<script>` holding the Nuxt state, the spec section), so they stay small
+- Sync `Fetcher` called through `asyncio.to_thread`, not `AsyncFetcher`. The scrape functions stay `async` for their callers. This also avoids curl_cffi's async mode under Windows' Proactor event loop, which is the problem `playwright_utils.py` exists to work around today
+- "Prove the test catches the bug" means: write the test, run it green, put the old behaviour back by hand (the specific revert is listed for each test), confirm it goes red with the expected message, then restore the fix. The red output goes in the phase report
+- Bulk scraping has no delay between targets today, because the browser was slow enough on its own. Plain HTTP is not. `_process_target`'s loop gets a 1.5 s pause between live fetches (not for Acer)
+- One commit per site, so any one site can be reverted alone
+
+**Phase 0: check the dependency before writing code (done 2026-10-28, no commit)**
+- Throwaway Python 3.11 venv with our `requirements.txt`. Results: `curl_cffi 0.17.0` needs `cffi>=2.1.1` and `certifi>=2026.10.19` (we pin 2.0.0 and 2026.5.20). `from scrapling.fetchers import Fetcher` fails without patchright, because `scrapling/engines/toolbelt/convertor.py` imports `patchright.sync_api` when it loads, even for the plain HTTP `Fetcher`. `lxml==6.1.1` satisfies Scrapling (`>=6.1.1`)
+- Decided from that (Jack, 2026-10-28): install `scrapling[fetchers]` and keep the browser. A pip dry run of the Phase 1 pins below resolves (it also showed `[fetchers]` needs `anyio>=4.14.0`)
+
+**Phase 1: ASUS (www.asus.com), because it is broken now**
+
+*Changes*
+- `requirements.txt` (its own commit, first). Added: `scrapling[fetchers]==0.5`, and pins for what it pulls in (`curl_cffi==0.17.0`, `patchright==1.64.3`, `browserforge==1.2.4`, `apify_fingerprint_datapoints==0.15.0`, `msgspec==0.22.0`, `Protego==0.7.0`, `cssselect==1.6.0`, `tld==0.13.2`, `w3lib==2.5.0`, the versions the dry run chose), since the file pins every package. Bumped, with the reason:
+  - `cffi` 2.0.0 → 2.1.1: `curl_cffi 0.17.0` requires `cffi>=2.1.1`
+  - `certifi` 2026.5.20 → 2026.10.19: `curl_cffi 0.17.0` requires `certifi>=2026.10.19`
+  - `playwright` 1.60.0 → 1.64.1: `scrapling[fetchers]` requires `playwright>=1.62.0`. 1.64.1 is the survey's version, and it uses the same Chromium build (revision 1248) as `patchright 1.64.3`, so the two share one browser (see Dockerfile below)
+  - `anyio` 4.13.0 → 4.14.0: `scrapling[fetchers]` requires `anyio>=4.14.0`. FastAPI and Starlette run on anyio, so the full unit + golden + integration tiers must pass on this commit
+- `Dockerfile`: the install step stays `playwright install --with-deps chromium`, unchanged; it is **not** replaced by `scrapling install`. `scrapling install` runs the same two commands (`python -m playwright install chromium` and `playwright install-deps chromium`), then also fetches the TLD list over the network at build time and writes a marker file into site-packages, which adds nothing for us. Patchright reads the same `PLAYWRIGHT_BROWSERS_PATH` and the same folder layout, and its pinned version wants the same Chromium revision, so it reuses Playwright's build. `patchright install` is never run. Only the comment changes: Chromium is now there for Scrapling's `StealthyFetcher`, and the Playwright scrapers until Phase 2. Check, on a machine with Docker (this PC has none): build the image, and `/opt/playwright-browsers` holds exactly one `chromium-1248` (plus its `chromium_headless_shell-1248`)
+- Keeping it to one build later: a unit test reads `browsers.json` from the installed `playwright` and `patchright` packages and asserts the same Chromium revision, so a future bump of only one of them fails CI instead of quietly downloading a second ~700 MB Chromium. Revert: point the test at a copy of patchright's `browsers.json` with the revision changed → fails
+- **Cost (accepted by Jack, 2026-10-28):** the image keeps Chromium (~715 MB with its apt libraries) and gains patchright's driver (~110 MB; it ships its own Node driver, like Playwright's)
+- `app/scraper/nuxt_state.py` (new): `nuxt3_state(html)`, the `__NUXT_DATA__` reviver from the survey's `nuxt3.py`, made strict. Negative indices are devalue's special values (-1 undefined, -2 hole, -3 NaN, -4/-5 ±Infinity, -6 -0); the survey script read them as Python negative indices, so -1 returned the array's last element. Revive each index once and memoise it (shared references come back as the same object). Raise on a cycle or an unknown type tag, where the survey script quietly stopped at depth 40 and handed back the raw index. Phase 2 adds `nuxt2_state` to the same module (see "nuxt2_parse.py reuse" below)
+- `app/scraper/asus_scraper.py`:
+  - Discovery: `crawl_asus_specs_links` drops the scroll-and-click Playwright crawl and pages through `SeriesFilterResult` (`PageIndex=1..`, `PageSize=20`, until a page comes back short; a `_MAX_PAGES` ceiling like HP's). It returns each entry's `ProductURL`, normalised (absolute, no query, trailing `/`, `/techspec/` and `/spec/` removed), and drops Chromebooks. If page 1 has no `ProductList`, it **raises** instead of returning `[]`: an empty list surfaces as "No URLs found", which looks like a quiet day rather than an API change. The API URL is a constant in the module, so it is still not client-supplied. The router still requires the brand to have a `base_scrape_url`; the ASUS crawler simply doesn't use it
+  - Scrape, www branch only: fetch `…/techspec/`, `nuxt3_state`, read `pinia.pdPageStore.PDTechSpecM2List.TechSpec` (with the same fallbacks the current code tries). The per-SKU mapping (`SpecList`, `Name`, `ImageLink`, `?v=N` suffix) moves unchanged into `parse_asus_techspec(html)`
+  - Price: www pages return `"N/A"` always. The `PDPriceList` / `modelPrice` / `modelSkuPrice` lookup and its "single valid price" fallback are deleted, per Jack's 2026-10-27 decision (price comes only from the guides). The ROG branch is untouched in this phase and still runs through Playwright
+- Migration: **none**
+
+*Check before any ASUS work: the Playwright bump didn't break the scrapers still on Playwright* (no database)
+- After the `requirements.txt` commit, in a local venv with those pins and `playwright install chromium` (the 1.64.1 build): `scrape_preview asus <one ROG URL>`, `scrape_preview hp <one product URL>`, `scrape_preview apple <one Mac spec URL>`. Each must return variants with specs, as before the bump
+- PassMark can't go through `scrape_preview`: `run_cpu_list_scraper` launches the browser and writes to the database in the same function. The check is a throwaway script that runs only its browser part (launch, `goto`, `wait_for_selector`, the `evaluate` that reads `#cputable`) and prints the row count, never opening a `Session`. The same for GPU. Counts close to 6,059 CPU / 2,869 GPU
+- Any failure stops Phase 1 and is reported before the ASUS changes start
+
+*Tests* (`tests/unit/test_asus_scraper.py`, `tests/unit/test_nuxt_state.py`)
+- Real Nuxt 3 techspec fixture → the expected variant count, names, a few spec values and image URLs. Revert: point the parser back at `state.PDPage` → fails with "not found"
+- A page with no `__NUXT_DATA__` (the old Nuxt 2 shape, or a challenge page) → raises with a clear message, never `[]` reported as success. Revert: catch and return `[]` → fails
+- Reviver: a hand-written payload using -1, a shared reference and `ShallowReactive` → `None`, the same object twice, unwrapped value. Revert: copy in the survey's `d()` → the -1 case returns the last element and fails
+- Discovery parser on two saved `SeriesFilterResult` pages: URLs normalised, Chromebooks gone, ROG entries kept, and an empty `ProductList` on page 1 raises. Revert: drop the Chromebook filter → count fails
+- No www.asus.com price: a fixture whose state still carries a `PDPriceList` → every variant has `"N/A"`. Revert: put the price lookup back → fails
+
+*Check on real data (no database)*
+- `scrape_preview asus` on all 130 discovered URLs (ROG ones included, which still go through Playwright): count of successes, failures with their errors, variants per page. Hand-check 3 www pages against what the techspec page shows in a browser
+- Compare discovery with the current queue: Jack exports `GET /scraper/targets?brand_id=<asus>` from the admin as a CSV, and a script compares it with the normalised discovery list: how many URLs are new, already queued, or queued under a different spelling. This matters because the queue dedupes on exact URL. If the same product is spelled two ways, it gets scraped twice, and since the processor's upsert key is the LLM-generated `model_code`, two spellings can become two catalog rows. Also check on the test DB or with Jack: is there a separate `ROG` row in `laptop_brands`? (Dispatch knows only `asus`, so ROG has always been scraped through the ASUS brand.)
+- Optional: end to end on the test DB, with brand ASUS seeded: crawl → bulk scrape a handful of targets → `process-pending` on those (this costs Gemma quota) → look at the laptops it creates
+
+*Stop and report*: the Playwright-bump check (one result per scraper), per-page success counts, the queue comparison (new / existing / spelled differently), every failure, and the red output from each reverted test.
+
+*Risks*
+- Live site: none until an admin crawls and processes. New ASUS laptops come in with price 0, so the existing mapper rule makes them `inactive`, and they stay hidden until Phase 3 gives them a price. Existing ASUS laptops are not re-scraped (bulk scrape skips URLs already in `raw_scrap_laptops`), and if one were re-processed, a 0 never overwrites a stored price
+- Admin: the first ASUS crawl adds ROG URLs to the queue as well. Any that were queued under a different spelling become duplicates. The queue comparison above finds them before Jack crawls
+- "Waiting for a price" on the dashboard grows by however many ASUS laptops get processed before Phase 3. That's expected
+
+*Decisions from the Phase 1 report (Jack, 2026-10-29)*
+- **Series-only pages stay visible failures** (option a). Two www pages, `asus-tuf-gaming-16-2026` and `asus-expertbook-b5-g2-16-intel`, carry only `PDTechSpec`, whose `SpecList` is a list of `{Title, Content}` rather than a per-SKU dict. `parse_asus_techspec` keeps raising `SpecList is a list, expected a dict`. A bulk run records each as one failed target with that reason (`scrape_status = failed`, no raw row), and the rest of the run goes on; `test_series_only_page_is_a_failed_target_in_a_bulk_run` checks this through `_process_target`. Revert: remove the raise → the page writes a raw row and the test fails
+- **No separate ROG brand.** `laptop_brands` has no ROG row, so ROG stays under the `asus` brand and only the one ASUS crawl runs. Nothing to retire
+- Queue comparison: run on two Supabase exports of `laptop_scrape_urls` (each capped at 100 rows), 115 of the 116 ASUS rows between them, which Jack accepted as enough. Against 102 discovered URLs: 14 new, 88 already queued, 3 products also queued under another spelling (`/spec/`, `/techspec/`, `/techspec`), 22 gone (6 of them Chromebooks), 3 products already duplicated in the queue (7 rows). The crawl adds no new duplicate: each of the three already has its bare URL queued, and bulk scrape skips on `source_url LIKE url%`
+- **Hand check passed** (Jack, 2026-10-29): Vivobook 16 M1607 (2 variants), ExpertBook P5 G2 P5605CAA and ProArt P16 H7607BA match the site field for field. Two pages list two memory configurations under one model (P5605CAA: "32GB" and "32GB x 2" = 64GB; H7607BA: 128GB and 48GB). The scraper is faithful to the page, so no scraper change. How the processor handles two options in one field is a separate question (see the Phase 1 report)
+
+**Phase 1b: Docker image Python 3.11 → 3.12** (its own step, after Phase 1 is committed; not started)
+- Why: CI runs 3.12 (`ci.yml`), the image runs 3.11 (`FROM python:3.11-slim`), so the tiers pass on a Python production never runs
+- `Dockerfile`: base image `python:3.12-slim`
+- `requirements.txt`: find any pin that has no 3.12 wheel and bump it, with the reason, as in Phase 1
+- Check: the full unit + golden + integration tiers on 3.12, and `python -m app.scripts.seed_channel_fields` (dry run) now runs
+- Migration: none
+
+**Phase 2: ROG, HP, Apple, PassMark (one commit each, in that order)**
+
+Before the sites, one `refactor:` commit with no behaviour change: brand dispatch moves to one place (see "Brand dispatch" below).
+
+*2a ROG*
+- `nuxt_state.py`: add `nuxt2_state(html)`, the hardened `nuxt2_parse.py`
+- `asus_scraper.py` rog branch: fetch `…/spec/`, `nuxt2_state`, read `state.Spec.spec`. The current per-SKU mapping (specContent, mktName + skuName, `price`, skuImg) moves as it is into `parse_rog_spec(html)`. One addition: `specs["SKU"] = skuName`, so the SKU travels with the raw row (Phase 3 matches on it). `price == 0` stays `"N/A"`
+- Tests: real ROG fixture → variants with the SKU, per-SKU price (SCAR 18: G835L-WGSA478WP 30999, G835L-XGTQ284WP 32999) and 0 → "N/A" (G835L-WGSA378W). Revert: read the first variant's price for every variant → fails. Parser tests for each hardening fix (unknown identifier raises, a non-empty pre-return body raises, `\x41` decodes to `A`, a surrogate pair decodes to one character). Revert each by copying the scratchpad version back → that case fails
+- Real data: run the Playwright scraper (still installed) and the new one on the same 10 ROG URLs and diff the output dicts. Any difference other than the added `SKU` key has to be explained before the commit. The processor reads this text, so a changed value can change a live laptop on its next re-process
+
+*2b HP*
+- `hp_scraper.py`: the listing walk `?p=1..` becomes Fetcher + CSS selection of product links. Specs: the `_SPECS_JS` logic (`.product-spec-swapper`, `dl.product-spec-attribute`, section-prefixed keys) rewritten as CSS selection in `parse_hp_product(html)`. Price and part number come from the `dataLayer` push in the inline script (parsed as JSON, not executed), with the `finalPrice` node as the fallback. HP is Magento, like Acer: reuse `acer_scraper._parse_prices` (it reads `data-price-type`, ignoring the empty-type instalment node) and `_parse_image_urls` (the `mage/gallery/gallery` JSON), imported from `acer_scraper` once it's confirmed the HP pages carry the same nodes (the gallery path filter differs: HP uses `/catalog/product/`, Acer `/media/catalog/product/`). The current HP image code reads `.fotorama__img`, which exists only in the live DOM, so the gallery JSON is the source to use in raw HTML
+- Tests: product fixture → specs, price, part number, images (accessory images excluded). Revert: read the first price node instead of `finalPrice` → fails on the instalment figure. Listing fixture → product links, and pagination stops on a page with no new links
+- Real data: old against new on 10 products plus the full listing count (121 expected); explain every difference
+
+*2c Apple*
+- `apple_scraper.py`: `/my/mac/` discovery and `.techspecs-section` text via Fetcher + CSS. The risky part: Playwright's `inner_text()` follows CSS (hidden elements left out, line breaks where blocks end); Scrapling's text extraction does not. The LLM reads this text, so the diff of old against new on every Mac spec page is the gate. The fix is to normalise whitespace, or to drop the specific hidden nodes; never send the processor different text without checking it. Images: compare `img` sources, because in the raw HTML lazy images may sit in `srcset`/`data-src`. `_filter_variant_images` stays as it is
+- Tests: spec page fixture → section text that matches a snapshot taken from the old scraper's output (checked by eye once, then frozen); discovery fixture → the expected model links
+
+*2d PassMark + benchmark date*
+- `app/benchmark/cpu_scraper.py`, `gpu_scraper.py`: Fetcher + `parse_passmark_table(html, table_id)` (lxml lower-cases tags, so `<TABLE ID="cputable">` is found as `#cputable`). The upsert is unchanged. New: a **row-count floor** (CPU ≥ 5,000, GPU ≥ 2,500). Below it the run raises and writes nothing, because a challenge page returning 200 would otherwise parse as a successful refresh of 0 rows. The two files are the same apart from table and model; merge them only if it's shorter
+- Migration: **yes**. Adds `benchmark_refreshes` (`id`, `source` cpu/gpu, `refreshed_at`, `row_count`, nullable `source_updated_text`), as approved 2026-10-25. One row is written after each successful upsert, in the same transaction. Check: upgrade and downgrade on the test DB, and `alembic check` reports no further operations
+- Wire up the consumers already planned: `dashboard_router`'s `passmark_refreshed_at` reads the latest row (it is `None` today). The Pick Score response gains `benchmarks_refreshed_at {cpu, gpu}` for the `PickScoreBreakdown` footnote, a frontend change in `pickwise-v2-frontend`
+- Tests: real CPU and GPU fixtures (trimmed to a few hundred rows plus the header) → name and mark pairs, commas stripped, non-numeric marks skipped. A trimmed fixture below the floor → raises. Revert: remove the floor → fails. Integration: a successful run writes exactly one `benchmark_refreshes` row, a failed run writes none
+- Real data: parse the live pages with no DB (row counts against 6,059 CPU / 2,869 GPU). Then on the test DB: a full upsert and a refresh row
+
+*2e Remove the Playwright scraper code (last commit of Phase 2, after 2a–2d)*
+- Nothing calls it once every scraper is on `Fetcher`, so it goes. The `playwright` package, Chromium and the Dockerfile step stay, because Scrapling's `StealthyFetcher` needs them
+- Delete `app/scraper/playwright_utils.py` and every leftover Playwright code path: the `_async_*` browser functions in `asus_scraper`, `apple_scraper` and `hp_scraper` (with HP's `_SPECS_JS`), and the `sync_playwright` code in `app/benchmark/cpu_scraper.py` and `gpu_scraper.py`. Update the comment in `app/common/job_service.py` that points at `playwright_utils.py`
+- `CLAUDE.md`: remove the "Windows Playwright compatibility" section; update the `app/scraper/` and ASUS dual-path paragraphs (Scrapling `Fetcher`, Nuxt 3 / Nuxt 2 parsers) and the Acer note "`chromium` remains for Apple/ASUS" (it now stays for `StealthyFetcher`). The "Install Playwright browsers" command stays. `deploy.yml`'s comment about the Chromium layer stays true
+- Check: no file under `app/` imports `playwright` or `patchright` directly (`rg "playwright|patchright" app/` finds nothing). The full unit + golden + integration tiers stay green; a leftover import of the deleted `playwright_utils` would fail at import time there, and in production it would stop the whole API from starting, since `app.main` imports the scraper routers. Then `scrape_preview` once more for each site
+- No migration
+
+*Stop and report*: per site, the old against new diffs and how each difference was resolved, row counts, the migration up/down output, the 2e check, and the red output from each reverted test.
+
+*Risks*
+- Live site: changed raw text can change specs when a laptop is re-processed. The old against new diffs are the guard. A PassMark refresh moves marks, so after the next `generate-all` Pick Scores move as well (expected, since factors are percentiles). Run `python -m app.scripts.dump_pickscore` before and after on the test DB
+- Admin: no endpoint shapes change. Scrapes get much faster, which is why the pause between targets is added
+
+**Phase 3: product guide import and price extraction (consumer, ROG, business)**
+
+*Where the PDF goes.* The Q3 guides are **84 MB (consumer), 158 MB (ROG) and 258 MB (business)**. Storing them in Postgres (Supabase free tier: 500 MB) or uploading and parsing them on Render's free instance (512 MB RAM, a disk wiped on every deploy) isn't workable. **Decided (Jack, 2026-10-28): the PDF is stored in Google Drive and extracted in GitHub Actions.**
+1. Jack puts the PDF in Drive, either directly or from a new page in the admin. The admin upload goes from the browser straight to Drive through a resumable upload session the backend creates; the file never passes through the backend (Render has 512 MB RAM)
+2. A GitHub Actions workflow reads the PDF from Drive through a Google service account and runs `python -m app.scripts.extract_price_guide <pdf> --kind consumer|rog|business --out rows.json`. The script itself touches no database and no network. It finds the price pages by content (pages with both `RM` amounts and SKU-shaped words, as the survey overview counted), not by the hard-coded page ranges the survey scripts used. For each SKU it extracts `sku`, `price_rm` (or null), `page`, and where the page gives them, `cpu`, `ram_gb`, `ssd_gb`. It also prints a per-page summary for the hand check
+3. The extracted rows reach the admin "Price guides" page, where Jack gets the match preview and then applies it (unchanged from here on)
+4. Stored: `price_guides` (`id`, `kind`, `filename`, `pdf_sha256`, `edition_text` from the cover, `uploaded_at` = the guide's date, `uploaded_by`, `row_count`) and `price_guide_rows` (`guide_id`, `sku`, `model_code` = the part of the SKU before the hyphen, `cpu`, `ram_gb`, `ssd_gb`, `price_rm` nullable, `page`). The sha256 identifies the exact PDF a price came from, without storing the PDF itself
+- **Short survey at the start of Phase 3 (not before):**
+  - A service account may have no storage quota of its own, so uploading through it into Jack's Drive could fail; reading a file shared with it should work. Check both. If upload fails, the admin upload uses Jack's own OAuth and the service account only reads
+  - The resumable upload session: the backend creates it and hands the session URL to the browser, so a 258 MB file never goes through Render
+  - How the admin triggers the workflow (for example `workflow_dispatch` through the GitHub API) and how the extracted rows get back to the preview
+- The hand check of 3 pages per guide on each new edition stays
+
+*How a guide row is matched to a catalog row* (`app/laptops/price_guide.py`, one pure function `match(guide_rows, catalog_rows) -> MatchResult`, so the whole decision is unit-tested with no database)
+- **By SKU (ROG):** the guide's `sku` equals the laptop's `manufacturer_sku`, compared case-insensitively after trimming. A new nullable column, `laptops.manufacturer_sku`, holds it. The processor fills it **deterministically**, not through the LLM: when a raw row carries `specs["SKU"]` (Phase 2a) and its extraction produced exactly one variant, that variant gets the SKU. When there are several variants, it stays null, because which one is the SKU would be a guess. It is never overwritten on update once set
+- **By model code + specs (ASUS, and ROG rows with no SKU):** candidates are ASUS-brand laptops whose `model_code` or `product_name` contains the guide row's model code (`P1403CVA`, falling back to the base `P1403`). The CPU part number must match (`i5-13420H` against `cpu_model` "Intel Core i5-13420H", compared through the part-number normalisation added in 6b, not fuzzy), and `ram_gb` and `ssd_gb` must be equal. A guide row with no CPU, RAM or storage cannot use this path
+- **Outcomes**, each listed in the preview:
+  - `matched`: exactly one catalog row, and no other guide row gives that row a different price. Several SKUs mapping to one row at the **same** price (colour variants) count as matched
+  - `ambiguous`: more than one catalog row fits (for example, same CPU/RAM/SSD but a different GPU or panel). The candidates are listed
+  - `conflict`: one catalog row is claimed by guide rows with different prices
+  - `unmatched_guide`: no catalog row fits. The SKU is in the guide but not in the catalog, so the list is a crawl or process worklist
+  - `unpriced`: the guide row has no price
+  - Catalog ASUS rows the guide doesn't cover are listed too: the "needs a price by hand" list
+- **When a match is unclear, nothing is written.** Ambiguous and conflicting rows are shown with their candidates, and Jack sets the price by hand through the existing laptop edit (`PUT /laptops/{id}`). No best guess, no fuzzy fallback. A guessed row puts a wrong price on the live site, while an unmatched row only stays in a visible list. This is the same reasoning as family matching, where a guessed id is worse than a null one
+
+*Applying* (`POST /admin/price-guides/{id}/apply`, preview = `GET …/preview`; apply runs the same `match` and writes only `matched`)
+- Fill rule: a guide price is written when the stored price is 0, or when the stored price itself came from a guide. A ROG price from the spec page is never overwritten by a guide (Jack: spec page first). An admin-entered price is never overwritten either; it is listed as "differs from guide"
+- To know where a price came from: two nullable columns on `laptop_price_history`, `source` (`page` / `guide` / `manual`) and `price_guide_id`. The processor writes `page`, `PUT /laptops/{id}` writes `manual`, and the import writes `guide`. "Came from a guide" means the latest history row's `source = 'guide'`. Older rows stay null, which counts as "not a guide". **Decided (Jack, 2026-10-28):** a price with no recorded source is never overwritten by a guide; it is listed as "differs from guide" for Jack to decide. This is also the price source step 15 (XAI D) needs
+- Writes go through the ORM like `PUT /laptops/{id}`: a price-history row only when the price changes, `price_checked_at` set to the apply time even when unchanged ("Last Checked" means the guide confirmed it), and the mapper event and `updated_at` stamp as usual. Restoring a price does **not** make a laptop active again (existing rule). The preview lists "priced by this guide but inactive", so Jack can activate them; automatic go-live is step 11
+- One transaction per apply, run as a background job (`background_jobs`), so a failed apply writes nothing. Re-applying the same guide changes nothing; the test below checks this
+- Step 11's scheduled pipeline calls the same apply function for the latest guide of each kind after every process run, so laptops found later still get priced. That is the "looked up in the latest uploaded guide" rule, in one place
+
+*Migration*: **yes**. Adds `price_guides`, `price_guide_rows`, `laptops.manufacturer_sku` (nullable, with a partial unique index where not null), and `laptop_price_history.source` + `price_guide_id` (nullable, FK to `price_guides`). Every new `laptops` and `laptop_price_history` column is nullable with no backfill, so existing rows need no rewrite. Upgrade and downgrade on the test DB, plus `alembic check`. New table modules are imported in `alembic/env.py` (the data-loss guard)
+
+*Tests*
+- Word pairing (`pair_skus_with_prices(words)`, pure, takes pdfplumber word dicts): fixtures are word lists dumped from 3 real pages per guide kind as JSON (text and coordinates only, no PDF in the repo), with the expected SKU → price pairs **checked by hand against the printed page first**. Includes the split-word ROG case and a consumer column with several SKUs under one price. Revert: drop the same-column (x-distance) condition → a SKU takes the neighbouring column's price and the test fails
+- `match`: SKU exact; model code + specs; colour variants at one price → matched; two catalog rows that fit → ambiguous, nothing written; two guide prices for one row → conflict; a CPU differing only by suffix (`i7-13620H` against `i7-13620HX`) → not matched. Revert each by loosening the rule (accept the first candidate; compare CPU fuzzily) → the matching case fails
+- Processor `manufacturer_sku`: one variant → set; two variants → null; update → not overwritten. Revert: set it on every variant → fails
+- Apply (integration tier): the fill rule (0 filled; guide-sourced price overwritten; page and manual prices not overwritten); a history row with `source='guide'` only on change; `price_checked_at` stamped when unchanged; apply twice → the second run writes nothing; an inactive laptop stays inactive. Revert: drop the source check → the page-price case fails
+- Real data: run `extract_price_guide` on the three Q3 PDFs. Hand-check 3 pages per guide against the printed page (the 2026-10-27 survey found 162 laptop SKUs / 160 with a price in consumer + ROG, which is the baseline). Then on the **test DB**, seeded with the ASUS/ROG laptops Phases 1 and 2 produced there, upload and preview. Report the outcome counts and every ambiguous or conflict row. No apply against production in this plan
+
+*Stop and report*: hand-check results per page, preview counts per guide, the ambiguous and conflict lists, migration output, and the red output from each reverted test. Jack decides whether the matching rules are tight enough before anything is applied for real.
+
+*Risks*
+- Live site: apply writes prices that are visible right away, and a wrong match is a wrong price on a public page. Hence preview first, exact rules, nothing written when unclear, one transaction. Price factors change only after the next `generate-all`
+- Admin: a new page (frontend repo, `src/app/admin/`, in the catalog group). "Waiting for a price" drops after an apply. Prices Jack types in by hand are safe, because `manual` is never overwritten
+- The guide layout may change in the next edition: the hand check of 3 pages per guide is repeated for every new edition, and the preview's `unmatched_guide` count jumping is the visible sign
+
+**Phase 4: remove Playwright and Chromium. Cancelled (Jack, 2026-10-28): keep the browser so StealthyFetcher stays available.**
+- The one part kept, deleting `playwright_utils.py` and the leftover Playwright scraper code once nothing calls it, moved to the end of Phase 2 (2e)
+- Cost of keeping the browser: see the Phase 1 `requirements.txt` and Dockerfile notes (Chromium ~715 MB stays, patchright's driver adds ~110 MB)
+
+**Brand dispatch: one place**
+- ASUS discovery and ROG coming from `SeriesFilterResult` **does not change the brand key**: both are the `asus` brand, and the www/ROG split was already a host branch inside `asus_scraper` (dispatch has never known a "rog"). What changes is that one ASUS crawl now returns ROG URLs as well, so if a separate ROG crawl or brand row exists, it must stop being used (checked in Phase 1)
+- The three `if/elif`s (`router.py` feed-crawler and scrape-url, `bulk_scraper._dispatch_scraper`) become one dict in `bulk_scraper.py`, where `SCRAPER_BRANDS` already lives: `SCRAPERS = {"apple": (crawl, scrape), "asus": …, "acer": …, "hp": …}`, with `SCRAPER_BRANDS = frozenset(SCRAPERS)`. Each entry has the same signature: `crawl(start_url, session, brand_id) -> list[str]` and `scrape(url, brand_id, session) -> list[dict]`. Apple's single dict is wrapped once there, and brands that don't need a session ignore it. Both routes and the bulk path call `SCRAPERS.get(name)`. `None` gives the same 400 / `ValueError` as today
+- `tests/unit/test_scraper_brands.py` reads `_dispatch_scraper`'s source with a regex; that test goes away, since the dict *is* `SCRAPER_BRANDS`. Replace it with one test that a brand missing from `SCRAPERS` gets 400 from both routes. Revert: put back an `elif` in one route → that route's brand is still dispatched while the dict lacks it, and the test fails
+- Done as a `refactor:` commit at the start of Phase 2, not inside the Phase 1 fix, so the fix for the broken site stays small
+
+**`nuxt2_parse.py` reuse (from the 2026-10-27 survey scratchpad)**
+- Yes, as the basis for `nuxt_state.nuxt2_state`. It reads the `window.__NUXT__=(function(…){return …}(…))` literal without executing it, so the image needs no JavaScript runtime. It already handles the parameter/argument binding, shorthand keys, `void 0`, and `Array(n)`
+- It needs hardening before it reads production pages:
+  1. Unknown identifiers return `None` silently (`env.get(w)`); they must raise
+  2. Statements before `return` are captured and thrown away. Nuxt 2 puts assignments there (`a.b=c`) for shared values, so data can be lost silently. Raise when that part is not empty, and only add support for simple `x.y=z` if a real page needs it
+  3. `\x` escapes decode wrongly (`\x41` becomes `x41`), and a `\u` surrogate pair becomes two lone surrogates
+  4. `NaN`, `Infinity` and hex numbers aren't handled
+  5. Brace matching ignores template literals and regex literals (acceptable for Nuxt data, but a mismatch should raise rather than parse garbage)
+  6. The `__main__` block and file output go
+- Each fix gets its own case in `tests/unit/test_nuxt_state.py`, plus the real ROG fixture
 
 ### Admin portal (decided 2026-10-25)
 
