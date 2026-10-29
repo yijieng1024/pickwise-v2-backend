@@ -75,13 +75,13 @@ class Settings(BaseSettings):
     # Not covered, on purpose: the eval judge (eval/run_eval.py, fixed so runs
     # stay comparable) and embeddings (one vector space, one 0.53 threshold).
     llm_agent_model: str = "google_genai:gemma-4-31b-it"
-    llm_agent_backup_models: str = "google_genai:gemma-4-26b-it"
+    llm_agent_backup_models: str = "google_genai:gemma-4-26b-a4b-it"
     llm_review_processor_model: str = "google_genai:gemma-4-31b-it"
-    llm_review_processor_backup_models: str = "google_genai:gemma-4-26b-it"
+    llm_review_processor_backup_models: str = "google_genai:gemma-4-26b-a4b-it"
     # The processor's pre-Phase-2 overload chain, kept as its default.
     llm_processor_model: str = "google_genai:gemma-4-31b-it"
     llm_processor_backup_models: str = (
-        "google_genai:gemma-4-26b-it,google_genai:gemini-3.5-flash-lite,google_genai:gemini-3.1-flash-lite"
+        "google_genai:gemma-4-26b-a4b-it,google_genai:gemini-3.5-flash-lite,google_genai:gemini-3.1-flash-lite"
     )
 
     # The env value is the last resort for an invalid app_settings row, so it

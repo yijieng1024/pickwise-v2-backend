@@ -16,7 +16,7 @@ _REAL_READ_ROWS = llm_config._read_rows
 _LIST = [
     {"name": m, "spec": f"google_genai:{m}", "display_name": m, "input_token_limit": 1,
      "output_token_limit": 1, "thinking": None}
-    for m in ("gemma-4-31b-it", "gemma-4-26b-it", "gemini-3.5-flash")
+    for m in ("gemma-4-31b-it", "gemma-4-26b-a4b-it", "gemini-3.5-flash")
 ]
 
 
@@ -33,11 +33,11 @@ def _use(body, use):
 
 
 def test_put_switches_the_model_without_a_restart(llm_settings):
-    r = llm_settings.put("/api/v2/admin/settings/llm/agent", json={"primary": "gemma-4-26b-it"})
+    r = llm_settings.put("/api/v2/admin/settings/llm/agent", json={"primary": "gemma-4-26b-a4b-it"})
     assert r.status_code == 200, r.text
     assert r.json()["primary"] == {
-        "value": "google_genai:gemma-4-26b-it", "model": "gemma-4-26b-it", "source": "app_settings",
-        "env_default": "google_genai:gemma-4-31b-it", "stored": "google_genai:gemma-4-26b-it",
+        "value": "google_genai:gemma-4-26b-a4b-it", "model": "gemma-4-26b-a4b-it", "source": "app_settings",
+        "env_default": "google_genai:gemma-4-31b-it", "stored": "google_genai:gemma-4-26b-a4b-it",
         "error": None, "in_model_list": True,
     }
     # The env backup list is [26b], now the primary, so it is skipped: no fallback.
@@ -45,7 +45,7 @@ def test_put_switches_the_model_without_a_restart(llm_settings):
     # What the next agent turn resolves. (Building the model needs the API key,
     # which this tier deliberately leaves out of settings; the build from a
     # changed setting is covered in tests/unit/test_llm_fallback.py.)
-    assert llm_config.resolve_models("agent")[0] == "google_genai:gemma-4-26b-it"
+    assert llm_config.resolve_models("agent")[0] == "google_genai:gemma-4-26b-a4b-it"
 
     r = llm_settings.put("/api/v2/admin/settings/llm/agent", json={"primary": None})
     assert _use(llm_settings.get("/api/v2/admin/settings/llm").json(), "agent")["primary"]["source"] == "env"
@@ -54,15 +54,15 @@ def test_put_switches_the_model_without_a_restart(llm_settings):
 def test_put_sets_resets_and_clears_an_ordered_backup_list(llm_settings):
     url = "/api/v2/admin/settings/llm/agent"
 
-    r = llm_settings.put(url, json={"backups": ["gemma-4-26b-it", "google_genai:gemini-3.5-flash"]})
+    r = llm_settings.put(url, json={"backups": ["gemma-4-26b-a4b-it", "google_genai:gemini-3.5-flash"]})
     assert r.status_code == 200, r.text
     body = r.json()
     assert [(b["position"], b["value"], b["in_model_list"]) for b in body["backups"]] == [
-        (1, "google_genai:gemma-4-26b-it", True), (2, "google_genai:gemini-3.5-flash", True),
+        (1, "google_genai:gemma-4-26b-a4b-it", True), (2, "google_genai:gemini-3.5-flash", True),
     ]
     assert (body["backups_source"], body["max_backups"], body["fallback_enabled"]) == ("app_settings", 2, True)
     assert llm_config.resolve_models("agent")[1] == (
-        "google_genai:gemma-4-26b-it", "google_genai:gemini-3.5-flash",
+        "google_genai:gemma-4-26b-a4b-it", "google_genai:gemini-3.5-flash",
     )
 
     body = llm_settings.put(url, json={"backups": []}).json()  # no fallback
@@ -76,11 +76,11 @@ def test_put_sets_resets_and_clears_an_ordered_backup_list(llm_settings):
 @pytest.mark.parametrize("use, body, message", [
     ("agent", {"primary": "openai:gpt-5"}, "Unsupported provider"),
     ("agent", {"backups": ["google_genai:no-such-model"]}, "not in Gemini's models.list"),
-    ("agent", {"backups": ["gemma-4-26b-it", "gemini-3.5-flash", "gemini-x-1"]}, "at most 2 backups"),
-    ("agent", {"backups": ["gemini-3.5-flash", "gemma-4-26b-it", "gemini-x-1"]}, "at most 2 backups"),
-    ("agent", {"backups": ["gemma-4-26b-it", "google_genai:gemma-4-26b-it"]}, "listed twice"),
+    ("agent", {"backups": ["gemma-4-26b-a4b-it", "gemini-3.5-flash", "gemini-x-1"]}, "at most 2 backups"),
+    ("agent", {"backups": ["gemini-3.5-flash", "gemma-4-26b-a4b-it", "gemini-x-1"]}, "at most 2 backups"),
+    ("agent", {"backups": ["gemma-4-26b-a4b-it", "google_genai:gemma-4-26b-a4b-it"]}, "listed twice"),
     ("agent", {"backups": ["gemma-4-31b-it"]}, "is the primary"),
-    ("agent", {"primary": "gemma-4-26b-it", "backups": ["gemma-4-26b-it"]}, "is the primary"),
+    ("agent", {"primary": "gemma-4-26b-a4b-it", "backups": ["gemma-4-26b-a4b-it"]}, "is the primary"),
     # The processor's limiter has no budget for flash, as primary or backup.
     ("processor", {"primary": "gemini-3.5-flash"}, "budget"),
     ("processor", {"backups": ["gemini-3.5-flash"]}, "budget"),
@@ -96,13 +96,13 @@ def test_put_rejects_what_cannot_work(llm_settings, use, body, message):
 
 def test_a_primary_that_collides_with_the_stored_backups_is_refused(llm_settings):
     url = "/api/v2/admin/settings/llm/agent"
-    assert llm_settings.put(url, json={"backups": ["gemma-4-26b-it"]}).status_code == 200
+    assert llm_settings.put(url, json={"backups": ["gemma-4-26b-a4b-it"]}).status_code == 200
 
-    r = llm_settings.put(url, json={"primary": "gemma-4-26b-it"})
+    r = llm_settings.put(url, json={"primary": "gemma-4-26b-a4b-it"})
     assert r.status_code == 400 and "Send `backups`" in r.json()["detail"]
 
     # Both in one request is fine.
-    r = llm_settings.put(url, json={"primary": "gemma-4-26b-it", "backups": ["gemma-4-31b-it"]})
+    r = llm_settings.put(url, json={"primary": "gemma-4-26b-a4b-it", "backups": ["gemma-4-31b-it"]})
     assert r.status_code == 200, r.text
     assert llm_settings.put("/api/v2/admin/settings/llm/nope", json={}).status_code == 404
 
@@ -126,12 +126,12 @@ def test_an_invalid_stored_list_is_surfaced_and_ignored(llm_settings, session):
 
 def test_models_endpoint_shows_positions_and_flags_missing_models(llm_settings, session):
     session.add(AppSetting(key="agent.backup_models",
-                           value='["google_genai:gemma-4-26b-it", "google_genai:gemini-0-retired"]'))
+                           value='["google_genai:gemma-4-26b-a4b-it", "google_genai:gemini-0-retired"]'))
     session.commit()
 
     body = llm_settings.get("/api/v2/admin/settings/llm/models").json()
 
-    assert [m["name"] for m in body["models"]] == ["gemma-4-31b-it", "gemma-4-26b-it", "gemini-3.5-flash"]
+    assert [m["name"] for m in body["models"]] == ["gemma-4-31b-it", "gemma-4-26b-a4b-it", "gemini-3.5-flash"]
     assert "agent.primary" in body["models"][0]["configured_for"]
     assert "agent.backup[1]" in body["models"][1]["configured_for"]
     assert "gemini-0-retired (agent.backup[2])" in body["configured_missing"]
@@ -141,14 +141,14 @@ def test_models_endpoint_shows_positions_and_flags_missing_models(llm_settings, 
 def test_legacy_processor_endpoint_shares_the_row_and_shows_the_full_chain(llm_settings):
     r = llm_settings.get("/api/v2/admin/settings/processor-model")
     assert r.json()["fallback_chain"] == [
-        "gemma-4-31b-it", "gemma-4-26b-it", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+        "gemma-4-31b-it", "gemma-4-26b-a4b-it", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
     ]
-    r = llm_settings.put("/api/v2/admin/settings/processor-model", json={"model": "gemma-4-26b-it"})
+    r = llm_settings.put("/api/v2/admin/settings/processor-model", json={"model": "gemma-4-26b-a4b-it"})
     assert r.status_code == 200, r.text
-    assert r.json()["model"] == "gemma-4-26b-it"
+    assert r.json()["model"] == "gemma-4-26b-a4b-it"
     # The new primary is skipped in the env backup list rather than tried twice.
-    assert r.json()["fallback_chain"] == ["gemma-4-26b-it", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
-    assert _use(llm_settings.get("/api/v2/admin/settings/llm").json(), "processor")["primary"]["model"] == "gemma-4-26b-it"
+    assert r.json()["fallback_chain"] == ["gemma-4-26b-a4b-it", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+    assert _use(llm_settings.get("/api/v2/admin/settings/llm").json(), "processor")["primary"]["model"] == "gemma-4-26b-a4b-it"
 
 
 def test_settings_endpoints_are_admin_only(api_client):

@@ -60,7 +60,9 @@ _MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.\-]*$")
 # becomes the one doing the daily catalog runs.
 MODEL_OPTIONS: dict[str, dict[str, int]] = {
     "gemma-4-31b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
-    "gemma-4-26b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
+    # Unconfirmed for the new name: these are the retired gemma-4-26b-it's
+    # limits (2026-09-22); models.list does not report them.
+    "gemma-4-26b-a4b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
     "gemini-3.5-flash-lite": {"tpm": 250_000, "rpm": 15, "rpd": 500},
     "gemini-3.1-flash-lite": {"tpm": 250_000, "rpm": 15, "rpd": 500},
 }

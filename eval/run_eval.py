@@ -697,7 +697,7 @@ if __name__ == "__main__":
     pr.add_argument("--no-judge", action="store_true", help="skip the LLM judge, rule checks only")
     pr.add_argument(
         "--agent-model",
-        help="agent model under test, e.g. google_genai:gemma-4-26b-it "
+        help="agent model under test, e.g. google_genai:gemma-4-26b-a4b-it "
         "(default: the configured agent primary). Never falls back.",
     )
 

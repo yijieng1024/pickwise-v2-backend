@@ -403,7 +403,7 @@ _ENV = SimpleNamespace(**{
 })
 _ENV.llm_agent_backup_models = "google_genai:env-agent-b1,google_genai:env-agent-b2"
 _ENV.llm_processor_model = "google_genai:gemma-4-31b-it"
-_ENV.llm_processor_backup_models = "google_genai:gemma-4-26b-it,google_genai:gemini-3.5-flash-lite"
+_ENV.llm_processor_backup_models = "google_genai:gemma-4-26b-a4b-it,google_genai:gemini-3.5-flash-lite"
 _AGENT_ENV_BACKUPS = ("google_genai:env-agent-b1", "google_genai:env-agent-b2")
 
 
@@ -430,9 +430,9 @@ def test_env_defaults_apply_when_no_row_exists(settings_db):
 def test_a_settings_change_takes_effect_without_a_restart(settings_db, llm_settings):
     assert llm_config.resolve_models("agent")[0] == "google_genai:env-agent-model"  # now cached
 
-    app_settings_module.set_setting(settings_db, "agent.model", "google_genai:gemma-4-26b-it")
-    assert llm_config.resolve_models("agent")[0] == "google_genai:gemma-4-26b-it"
-    assert agent_graph.build_agent_llm().runnable.model == "gemma-4-26b-it"
+    app_settings_module.set_setting(settings_db, "agent.model", "google_genai:gemma-4-26b-a4b-it")
+    assert llm_config.resolve_models("agent")[0] == "google_genai:gemma-4-26b-a4b-it"
+    assert agent_graph.build_agent_llm().runnable.model == "gemma-4-26b-a4b-it"
 
     app_settings_module.delete_setting(settings_db, "agent.model")
     assert llm_config.resolve_models("agent")[0] == "google_genai:env-agent-model"
@@ -492,8 +492,8 @@ def test_a_db_failure_is_cached_and_logged_once_without_a_traceback(settings_db,
 
 def test_the_legacy_processor_row_is_read_as_is(settings_db):
     # processor.model predates this: bare model names, no provider prefix.
-    app_settings_module.set_setting(settings_db, "processor.model", "gemma-4-26b-it")
-    assert llm_config.resolve_models("processor")[0] == "google_genai:gemma-4-26b-it"
+    app_settings_module.set_setting(settings_db, "processor.model", "gemma-4-26b-a4b-it")
+    assert llm_config.resolve_models("processor")[0] == "google_genai:gemma-4-26b-a4b-it"
 
 
 def test_processor_models_need_a_rate_limit_budget(settings_db):
@@ -529,16 +529,16 @@ def test_user_facing_uses_cap_backups_at_two_and_background_uses_do_not():
 def test_processor_backups_each_need_a_budget():
     with pytest.raises(ValueError, match="backups\\[1\\].*budget"):
         llm_config.validate_backups(
-            "processor", ["gemma-4-26b-it", "gemini-3.5-flash"], "google_genai:gemma-4-31b-it",
+            "processor", ["gemma-4-26b-a4b-it", "gemini-3.5-flash"], "google_genai:gemma-4-31b-it",
         )
 
 
 def test_an_admin_primary_found_in_the_env_list_is_skipped(settings_db):
     # Env lists are checked against the env primary only; an admin primary
     # that happens to be in the env list is dropped from the chain.
-    app_settings_module.set_setting(settings_db, "processor.model", "gemma-4-26b-it")
+    app_settings_module.set_setting(settings_db, "processor.model", "gemma-4-26b-a4b-it")
     assert llm_config.resolve_models("processor") == (
-        "google_genai:gemma-4-26b-it", ("google_genai:gemini-3.5-flash-lite",),
+        "google_genai:gemma-4-26b-a4b-it", ("google_genai:gemini-3.5-flash-lite",),
     )
 
 
@@ -570,7 +570,20 @@ def test_the_default_env_chains_pass_validation(monkeypatch):
         if name.startswith("llm_") and name.endswith(("_model", "_backup_models")):
             monkeypatch.delenv(name.upper(), raising=False)
     s = Settings(_env_file=None)
-    assert s.llm_agent_backup_models == "google_genai:gemma-4-26b-it"
+    assert s.llm_agent_backup_models == "google_genai:gemma-4-26b-a4b-it"
+
+
+def test_every_default_chain_model_is_in_the_allowed_list():
+    # gemma-4-26b-it was retired while it sat in every chain: a rename has to
+    # reach MODEL_OPTIONS (the list with rate limits) too, or this goes red.
+    from ._adapters import Settings
+
+    fields = Settings.model_fields
+    for use in llm_config.USES:
+        chain = [fields[f"llm_{use}_model"].default,
+                 *llm_config.split_env_list(fields[f"llm_{use}_backup_models"].default)]
+        for spec in chain:
+            assert llm_config.model_id(spec) in llm_config.MODEL_OPTIONS, (use, spec)
 
 
 def test_the_processor_default_chain_is_the_pre_phase_2_one():
@@ -579,7 +592,7 @@ def test_the_processor_default_chain_is_the_pre_phase_2_one():
     fields = Settings.model_fields
     assert fields["llm_processor_model"].default == "google_genai:gemma-4-31b-it"
     assert llm_config.split_env_list(fields["llm_processor_backup_models"].default) == [
-        "google_genai:gemma-4-26b-it", "google_genai:gemini-3.5-flash-lite", "google_genai:gemini-3.1-flash-lite",
+        "google_genai:gemma-4-26b-a4b-it", "google_genai:gemini-3.5-flash-lite", "google_genai:gemini-3.1-flash-lite",
     ]
 
 
@@ -587,7 +600,7 @@ def test_the_processor_default_chain_is_the_pre_phase_2_one():
     ("gemma-4-31b-it", "google_genai:gemma-4-31b-it"),
     ("google_genai:gemini-3.5-flash", "google_genai:gemini-3.5-flash"),
     ("google_genai:models/gemini-3.5-flash", "google_genai:gemini-3.5-flash"),
-    (" google_genai : gemma-4-26b-it ", "google_genai:gemma-4-26b-it"),
+    (" google_genai : gemma-4-26b-a4b-it ", "google_genai:gemma-4-26b-a4b-it"),
 ])
 def test_valid_specs_normalize(value, expected):
     assert llm_config.validate_spec("agent", value) == expected
@@ -633,14 +646,14 @@ def test_the_parser_tolerates_a_missing_description_and_filters_methods():
 def test_model_list_follows_pagination_and_caches(gemini, monkeypatch):
     gemini.list_pages = [
         {"models": [_GEMMA_NO_DESCRIPTION], "nextPageToken": "1"},
-        {"models": [{"name": "models/gemma-4-26b-it", "supportedGenerationMethods": ["generateContent"]}]},
+        {"models": [{"name": "models/gemma-4-26b-a4b-it", "supportedGenerationMethods": ["generateContent"]}]},
     ]
     monkeypatch.setattr(llm_config, "_MODELS_URL", f"{gemini.url}/v1beta/models")
     monkeypatch.setattr(llm_config, "settings", SimpleNamespace(gemini_api_key="test-key"))
     monkeypatch.setattr(llm_config, "_model_list", None)
 
     models, _ = llm_config.model_list()
-    assert [m["name"] for m in models] == ["gemma-4-31b-it", "gemma-4-26b-it"]
+    assert [m["name"] for m in models] == ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
     assert len(gemini.calls) == 2
 
     llm_config.model_list()
