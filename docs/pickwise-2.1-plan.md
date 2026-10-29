@@ -35,7 +35,7 @@ Different user groups (students, people who don't understand specs, people decid
 | LLM switching | Not tied to one model. Both automatic fallback (primary fails → try the backup) and manual switching |
 | Backup model | Google's own models for now. Each use (agent, recommendation, review processor, catalog processor) has an **ordered list** of backups, tried in turn. The agent and recommendation are capped at 2 backups each (a user is waiting on both; worst case ~3 min if every model hangs); review processor and catalog processor have no cap. Catalog processor defaults restore its pre-Phase-2 chain: gemma-4-31b → gemma-4-26b → gemini-3.5-flash-lite → gemini-3.1-flash-lite. Defaults were picked by Claude Code and are evaluated **after** deploy |
 | Model construction | `build_chat_model` in `app/common/llm.py`, not `init_chat_model`: the stock class from `init_chat_model` would drop Phase 1's 60 s deadline and the error classification fallback relies on. Same `"provider:model"` format; only `google_genai` supported today |
-| Where fallback applies | Agent, recommendation, review processor. **Not** the eval judge (scores must stay comparable) and **not** embeddings (vectors and the 0.53 gating threshold are tied to one embedding model) |
+| Where fallback applies | Agent, recommendation, review processor, and (since 2026-10-29) the eval judge, which records which model judged each item. **Not** embeddings (vectors and the 0.53 gating threshold are tied to one embedding model) |
 | Where the LLM setting lives | An admin page, so the model can be switched without a redeploy. Stored in the existing `app_settings` key/value table (which already holds `processor.model`), not a new table |
 | Quota | Google's Gemini API quota is per model, so falling back to another model on a 429 is useful |
 | How fast fallback happens | Within 1 minute. The primary gets a single attempt (no retries on the same model) and a 60 s total deadline per LLM call; a 429 switches immediately. Switching only happens before the answer starts streaming to the user, never mid-stream |
@@ -108,7 +108,8 @@ Different user groups (students, people who don't understand specs, people decid
 
 **Scope**
 - Fallback on: agent, recommendation chain, review processor
-- No fallback: eval judge (must stay fixed so runs are comparable), embeddings (switching would require re-embedding the whole catalog and re-deriving the 0.53 gating threshold; the existing relational fallback covers embedding outages)
+- Eval judge: reversed 2026-10-29, it now falls back too (see the model decisions under Manufacturer scrapers Phase 1)
+- No fallback: embeddings (switching would require re-embedding the whole catalog and re-deriving the 0.53 gating threshold; the existing relational fallback covers embedding outages)
 
 **Admin page**
 - Choose the primary and backup model per use (agent / recommendation / review processor) without a redeploy
@@ -353,6 +354,27 @@ Phases 0–3 in Jack's order (Phase 4 cancelled, see below). Each phase ends wit
 - **No separate ROG brand.** `laptop_brands` has no ROG row, so ROG stays under the `asus` brand and only the one ASUS crawl runs. Nothing to retire
 - Queue comparison: run on two Supabase exports of `laptop_scrape_urls` (each capped at 100 rows), 115 of the 116 ASUS rows between them, which Jack accepted as enough. Against 102 discovered URLs: 14 new, 88 already queued, 3 products also queued under another spelling (`/spec/`, `/techspec/`, `/techspec`), 22 gone (6 of them Chromebooks), 3 products already duplicated in the queue (7 rows). The crawl adds no new duplicate: each of the three already has its bare URL queued, and bulk scrape skips on `source_url LIKE url%`
 - **Hand check passed** (Jack, 2026-10-29): Vivobook 16 M1607 (2 variants), ExpertBook P5 G2 P5605CAA and ProArt P16 H7607BA match the site field for field. Two pages list two memory configurations under one model (P5605CAA: "32GB" and "32GB x 2" = 64GB; H7607BA: 128GB and 48GB). The scraper is faithful to the page, so no scraper change. How the processor handles two options in one field is a separate question (see the Phase 1 report)
+
+*Model decisions (Jack, 2026-10-29)*
+- **Why:** Google retired `gemma-4-26b-it`. `generateContent` on it returns 404 NOT_FOUND, and `models.list` on the project key no longer has it; `gemma-4-26b-a4b-it` is the replacement. It was the first backup in all three chains, and a 404 does not fall back. So the processor chain stopped there instead of reaching its Gemini backups, and the agent and review processor had no working backup at all
+- **Replace `gemma-4-26b-it` with `gemma-4-26b-a4b-it` everywhere in code** (commit `c7b18a4`):
+  - The `agent`, `review_processor` and `processor` default chains in `app/config.py`, and `MODEL_OPTIONS` in `llm_config.py`
+  - The new name keeps the old model's limits (16k TPM / 30 RPM / 14,400 RPD), marked unconfirmed for the new name
+  - `test_every_default_chain_model_is_in_the_allowed_list` checks every model in the default chains against `MODEL_OPTIONS`. Putting `gemma-4-26b-it` back in the agent chain alone turns it red
+  - The test cannot detect a model Google retires; only `models.list` shows that
+  - Jack checks by hand in production for the old name: the LLM Settings rows (`<use>.model` / `<use>.backup_models`, `processor.model`) and any `LLM_*` env var on Render
+- **The eval judge falls back** (commit `8092f2e`). This reverses "no fallback for the eval judge":
+  - `JUDGE_MODELS` is `gemma-4-31b-it`, then `gemma-4-26b-a4b-it`, built with `build_llm`: the same code and the same retryable errors (429, 5xx, timeout) as the agent
+  - Each turn has a `judge_model` field, and each item has `judge_model`, the list of models that judged it. The summary prints how many items each judge model scored
+  - A run scored partly by the backup is not comparable with one scored only by the primary
+  - Temperature stays at 1.0, the models' own default
+- **Multi-option prompt rule, retried on the TEST database** (2026-10-29): rows split as expected, but the rule is **not committed**:
+  - P5605CAA gave 2 rows, 32GB and 64GB, `max_ram_gb` 96 on both, matching the page
+  - H7607BA gave 2 rows, 128GB and 48GB, but both have `max_ram_gb` 128. The page gives the 48GB line its own "Max Total system memory up to: 48GB"
+  - So the model copied the first option's max instead of pairing each option with its own
+  - Fallback carried both pages:
+    - P5605CAA: `gemma-4-31b-it` 500, then `gemma-4-26b-a4b-it` 504, then `gemini-3.5-flash-lite` answered
+    - H7607BA: `gemma-4-31b-it` 503 "high demand", then `gemma-4-26b-a4b-it` answered
 
 **Phase 1b: Docker image Python 3.11 → 3.12** (its own step, after Phase 1 is committed; not started)
 - Why: CI runs 3.12 (`ci.yml`), the image runs 3.11 (`FROM python:3.11-slim`), so the tiers pass on a Python production never runs
