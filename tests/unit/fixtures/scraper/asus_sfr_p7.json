@@ -1,0 +1,59 @@
+{
+ "Status": "200",
+ "Message": "Success",
+ "Result": {
+  "TotalCount": 130,
+  "ProductList": [
+   {
+    "Name": "<h2>Vivobook 17 (A1704, 13th Gen Intel)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/vivobook/vivobook-17-a1704-13th-gen-intel/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>Vivobook 14 (A1404, 12th Gen Intel)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/vivobook/vivobook-14-a1404-12th-gen-intel/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS Vivobook 15 (A1504)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/vivobook/asus-vivobook-15-a1504/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS Vivobook 16 (M1605)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/vivobook/asus-vivobook-16-m1605/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS Vivobook Go 14 (E1404F)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/vivobook/vivobook-go-14-e1404f/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS Vivobook Go 15 (E1504F)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/vivobook/vivobook-go-15-e1504f/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ROG Strix G16</h2>",
+    "ProductURL": "https://rog.asus.com/my/laptops/rog-strix/rog-strix-g16-2023-series/",
+    "isRogFlag": 1
+   },
+   {
+    "Name": "<h2>ASUS Chromebook Flip CR1 (CR1100)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-students/chromebook/asus-chromebook-flip-cr1-cr1100/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS Laptop 15 A516</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/everyday-use/a516/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS TUF Gaming A15</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-gaming/tuf-gaming/2021-asus-tuf-gaming-a15/",
+    "isRogFlag": 0
+   }
+  ]
+ }
+}

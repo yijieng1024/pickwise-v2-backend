@@ -1,0 +1,109 @@
+{
+ "Status": "200",
+ "Message": "Success",
+ "Result": {
+  "TotalCount": 130,
+  "ProductList": [
+   {
+    "Name": "<h2>ROG Zephyrus G14 (2026) GA403</h2>",
+    "ProductURL": "https://rog.asus.com/my/laptops/rog-zephyrus/rog-zephyrus-g14-2026-ga403/",
+    "isRogFlag": 1
+   },
+   {
+    "Name": "<h2>ROG Flow Z13-KJP</h2>",
+    "ProductURL": "https://rog.asus.com/my/laptops/rog-flow/ROG-Flow-Z13-KJP/",
+    "isRogFlag": 1
+   },
+   {
+    "Name": "<h2>ASUS Chromebook CM32 Detachable (CM3206)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/chromebook/asus-chromebook-cm32-detachable-cm3206/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook P3 G2 (16'' AMD)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-p3-g2-16-amd/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook P3 G2 (14'' AMD)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-p3-g2-14-amd/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook PM5 G2 (16\" AMD); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-p5-g2-16-amd/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook PM5 G2 (14\" AMD); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-p5-g2-14-amd/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook P5 G2 (16'' Intel); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-p5-g2-16-intel/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook P5 G2 (14'' Intel); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-p5-g2-14-intel/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook B3 G2 (14'' AMD); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-b3-g2-14-amd/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook B3 G2 (16\" Intel)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-b3-g2-16-intel/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook B3 G2 (16'' AMD); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-b3-g2-16-amd/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook B3 G2 (14\" Intel)</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-b3-g2-14-intel/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook B5 G2 (16\" Intel); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-b5-g2-16-intel/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook B5 G2 (14\" Intel); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-b5-g2-14-intel/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS ExpertBook Ultra; Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-work/expertbook/asus-expertbook-ultra/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS TUF Gaming A14 (2026) FA401EA</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-gaming/tuf-gaming/asus-tuf-gaming-a14-2026-fa401ea/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS Zenbook DUO (UX8407); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/zenbook/asus-zenbook-duo-ux8407/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ProArt PZ14 (HT7407); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-creators/proart/proart-pz14-ht7407/",
+    "isRogFlag": 0
+   },
+   {
+    "Name": "<h2>ASUS Zenbook A16 (UX3607); Copilot+ PC</h2>",
+    "ProductURL": "https://www.asus.com/my/laptops/for-home/zenbook/asus-zenbook-a16-ux3607/",
+    "isRogFlag": 0
+   }
+  ]
+ }
+}

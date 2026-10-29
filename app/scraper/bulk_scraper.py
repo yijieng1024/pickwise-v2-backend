@@ -20,6 +20,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -39,6 +40,10 @@ from app.scraper.models import RawScrapLaptop, ScrapeStatus, ScrapeTarget
 # Brands whose pages are uploaded by an admin and read from `raw_product_htmls`
 # rather than fetched live. See app/scraper/acer_scraper.py for why.
 HTML_UPLOAD_BRANDS = {"acer"}
+
+# Pause after every live fetch in a bulk run. A browser page load was slow
+# enough to need none; plain HTTP would hit a site back to back.
+LIVE_FETCH_PAUSE_S = 1.5
 
 # Every brand _dispatch_scraper routes, lowercase. The admin Dashboard uses it
 # to say "No scraper" instead of "never scraped"; tests/unit/test_scraper_brands
@@ -220,6 +225,9 @@ async def _process_target(
         if progress:
             progress.advance(succeeded=False, item=url, error=str(exc))
         return
+    finally:
+        if brand_name.lower() not in HTML_UPLOAD_BRANDS:
+            await asyncio.sleep(LIVE_FETCH_PAUSE_S)
 
     # Process each variant result
     url_had_failure = False
