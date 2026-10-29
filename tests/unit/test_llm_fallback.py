@@ -606,12 +606,15 @@ def test_the_default_env_chains_pass_validation(monkeypatch):
 def test_every_default_chain_model_is_in_the_allowed_list():
     # gemma-4-26b-it was retired while it sat in every chain: a rename has to
     # reach MODEL_OPTIONS (the list with rate limits) too, or this goes red.
-    from ._adapters import Settings
+    # The eval judge's chain is held to the same list.
+    from ._adapters import Settings, run_eval
 
     fields = Settings.model_fields
-    for use in llm_config.USES:
-        chain = [fields[f"llm_{use}_model"].default,
-                 *llm_config.split_env_list(fields[f"llm_{use}_backup_models"].default)]
+    chains = {use: [fields[f"llm_{use}_model"].default,
+                    *llm_config.split_env_list(fields[f"llm_{use}_backup_models"].default)]
+              for use in llm_config.USES}
+    chains["eval_judge"] = [run_eval.JUDGE_MODELS[0], *run_eval.JUDGE_MODELS[1]]
+    for use, chain in chains.items():
         for spec in chain:
             assert llm_config.model_id(spec) in llm_config.MODEL_OPTIONS, (use, spec)
 

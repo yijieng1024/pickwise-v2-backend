@@ -53,15 +53,14 @@ _MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.\-]*$")
 # rate limiter paces against TPM/RPM per model, so a model with no numbers
 # attached cannot be paced -- the processor alone is restricted to this list.
 # Read from this account's dashboard (https://aistudio.google.com/rate-limit,
-# 2026-09-22). RPD decides the list: every Gemini *flash* model is capped at 20
-# requests/day on this account, so a 100-record batch would die after 20.
+# 2026-09-22, re-checked by Jack 2026-10-29). RPD decides the list: every
+# non-Lite Gemini Flash model is capped at 20 requests/day on this account, so
+# a 100-record batch would die after 20 -- none of them goes in any chain.
 # `rpd` is advisory; nothing enforces a daily count.
 # ponytail: no RPD enforcement -- add a counter only if a 500/day model
 # becomes the one doing the daily catalog runs.
 MODEL_OPTIONS: dict[str, dict[str, int]] = {
     "gemma-4-31b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
-    # Unconfirmed for the new name: these are the retired gemma-4-26b-it's
-    # limits (2026-09-22); models.list does not report them.
     "gemma-4-26b-a4b-it": {"tpm": 16_000, "rpm": 30, "rpd": 14_400},
     "gemini-3.5-flash-lite": {"tpm": 250_000, "rpm": 15, "rpd": 500},
     "gemini-3.1-flash-lite": {"tpm": 250_000, "rpm": 15, "rpd": 500},

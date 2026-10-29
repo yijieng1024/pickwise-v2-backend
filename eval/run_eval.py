@@ -13,8 +13,8 @@ Judge API key: GEMINI_API_KEY from .env, like every other model
 ★ Run from the project root (app.config resolves .env against CWD):
   python eval/run_eval.py run --label baseline
 
-★ Quota: agent + judge both run gemma-4-31b-it (judge backup: gemma-4-26b-a4b-it;
-  free tier 15 RPM / 1500 RPD,
+★ Quota: agent + judge both run gemma-4-31b-it (judge backups: gemma-4-26b-a4b-it,
+  gemini-3.5-flash-lite; free tier 15 RPM / 1500 RPD,
   and a strict 16,000 input-TPM cap). The TPM cap, not RPM, is the binding
   limit: judge prompts carry up to ~27k chars of tool output, so two judge
   calls in one minute can 429. All LLM calls share one global rate limiter
@@ -62,7 +62,10 @@ RUNS_DIR = EVAL_DIR / "runs"
 # same build_llm fallback as the agent. A run judged partly by a backup is not
 # comparable with one judged only by the primary, so every turn and item records
 # its `judge_model` and the summary counts items per judge model.
-JUDGE_MODELS = ("google_genai:gemma-4-31b-it", ("google_genai:gemma-4-26b-a4b-it",))
+JUDGE_MODELS = (
+    "google_genai:gemma-4-31b-it",
+    ("google_genai:gemma-4-26b-a4b-it", "google_genai:gemini-3.5-flash-lite"),
+)
 # The models' own default sampling temperature (models.get), which the judge
 # ran at when it called the API without one.
 JUDGE_TEMPERATURE = 1.0
