@@ -10,10 +10,15 @@ RUN useradd --create-home appuser
 WORKDIR /app
 
 COPY requirements.txt .
-# `chromium` covers the Apple/ASUS scrapers. Acer needs no browser at all —
-# its pages are saved by hand and parsed offline from app/scraper/data/acer_html
-# (the store's WAF refuses automated requests), so the real-Chrome install that
-# used to live here is gone.
+# `chromium` is there for Scrapling's StealthyFetcher (kept for any site that
+# starts blocking plain HTTP) and for the scrapers still on Playwright until
+# step 10 Phase 2 moves them to Scrapling's Fetcher. patchright (pulled in by
+# scrapling[fetchers]) reuses this same build: it reads PLAYWRIGHT_BROWSERS_PATH
+# and its pinned version wants the same Chromium revision
+# (tests/unit/test_browser_build.py keeps the pins in step), so neither
+# `patchright install` nor `scrapling install` is run. Acer needs no browser at
+# all — its pages are saved by hand and parsed offline from
+# app/scraper/data/acer_html (the store's WAF refuses automated requests).
 RUN pip install --no-cache-dir -r requirements.txt \
     && playwright install --with-deps chromium \
     && chown -R appuser:appuser /opt/playwright-browsers
