@@ -378,7 +378,13 @@ Phases 0–3 in Jack's order (Phase 4 cancelled, see below). Each phase ends wit
   - An agent turn makes 2 model calls (median; max 6) and sends 6,977 input tokens in total (median; p90 11,189, max 32,656). Its largest single call is 4,211 tokens (median; max 8,095)
   - A judge call is 1,968 input tokens (median; p90 2,422, max 5,762)
   - The eval limiter counts requests only (7 RPM × 0.9 = 6.3/min). At about 3,000 tokens per request on average, that is about 19K tokens per minute, over Gemma's 16K TPM. So the agent's calls, not the judge's, are what 429s in a run
-  - Whether the limiter should also cap tokens is open (see the report)
+  - **Decided (Jack, 2026-10-29):** the eval limiter also caps tokens (commit `62c2323`)
+    - Every Gemma call is charged to 14,500 input tokens per rolling 60 s; other models are not charged
+    - A call is admitted on an estimate of 2 chars/token, corrected afterwards with the reported `input_tokens`
+    - Fake-clock test: three 6K calls in a row, and the third waits 60 s. With the budget removed, the test fails
+  - **The eval agent runs the production chain** (commit `62d65ce`): `gemma-4-31b-it` → `gemma-4-26b-a4b-it` through the same `build_llm`
+    - Each turn and item records `agent_model`, and the summary counts items per agent model
+    - `--agent-model` still pins one model with no fallback
 - **Multi-option prompt rule, retried on the TEST database** (2026-10-29): rows split as expected, but the rule is **not committed**:
   - P5605CAA gave 2 rows, 32GB and 64GB, `max_ram_gb` 96 on both, matching the page
   - H7607BA gave 2 rows, 128GB and 48GB, but both have `max_ram_gb` 128. The page gives the 48GB line its own "Max Total system memory up to: 48GB"
