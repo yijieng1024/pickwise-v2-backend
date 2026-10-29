@@ -72,10 +72,11 @@ def build_agent_llm(
     """Construct the agent LLM: the configured primary, falling back through
     the configured backups in order (at most 2 for the agent).
 
-    `model` pins ONE model with no fallback -- what the eval harness does, so
-    a run measures exactly one model instead of whichever answered. It also
-    passes `rate_limiter` to share one global limiter across agent + judge
-    calls; production uses a limiter per model."""
+    `model` pins ONE model with no fallback -- the eval harness's
+    `--agent-model`, to measure exactly one model; by default the eval runs
+    this same chain and records which model answered. The eval also passes
+    `rate_limiter` to share one global limiter across agent + judge calls;
+    production uses a limiter per model."""
     return build_llm(
         llm_config.AGENT,
         temperature=AGENT_TEMPERATURE,

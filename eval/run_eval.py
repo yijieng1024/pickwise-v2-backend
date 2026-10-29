@@ -69,9 +69,10 @@ JUDGE_MODELS = (
 # The models' own default sampling temperature (models.get), which the judge
 # ran at when it called the API without one.
 JUDGE_TEMPERATURE = 1.0
-# The agent model under test. None = the configured `agent` primary (app_settings
-# or env), resolved once in cmd_run. Always ONE model with no fallback, so a run
-# measures that model and not whichever answered. `--agent-model` overrides it.
+# The agent model under test. None = the production agent chain (app_settings or
+# env: primary, then backups, through the same build_llm fallback), so each turn
+# and item records its `agent_model` and the summary counts items per model.
+# `--agent-model` pins ONE model with no fallback, to measure exactly that model.
 AGENT_MODEL_SPEC = None
 
 # make `import app` work when run as `python eval/run_eval.py`
@@ -239,6 +240,7 @@ async def call_agent_turns(queries: list[str]) -> list[dict]:
         new = messages[before + 1:]  # skip the HumanMessage we just appended
 
         turn_results.append({
+            "agent_model": calls.model,  # the model that wrote the reply
             "text": _content_to_text(messages[-1].content),
             "tool_calls": [
                 tc["name"] for m in new
@@ -563,6 +565,7 @@ async def run_one(item: dict, use_judge: bool) -> dict:
         turn_entries.append({
             "query": turn["query"],
             "rule_checks": checks,
+            "agent_model": result.get("agent_model"),  # None when the agent crashed
             # None when the judge did not run or every attempt failed.
             "judge_model": judge_result.pop("judge_model", None) if judge_result else None,
             "judge": judge_result,
@@ -598,7 +601,8 @@ async def run_one(item: dict, use_judge: bool) -> dict:
         "passed": {"passed": True, "failed": False}.get(status),  # None if unscored/error
         "unscored": status == "unscored",
         "turns": turn_entries,      # full per-turn detail
-        # Every model that judged a turn: two names = partly judged by a backup.
+        # Every model that answered / judged a turn: two names = partly a backup.
+        "agent_model": sorted({te["agent_model"] for te in turn_entries} - {None}),
         "judge_model": sorted({te["judge_model"] for te in turn_entries} - {None}),
         # Legacy fields below keep cmd_run / print_summary / cmd_compare working
         # unchanged. `judge` surfaces the first non-passing turn so the terminal
@@ -621,8 +625,10 @@ async def cmd_run(args):
 
     if args.agent_model:
         AGENT_MODEL_SPEC = llm_config.validate_spec(llm_config.AGENT, args.agent_model)
+        print(f"Agent: {AGENT_MODEL_SPEC} only, no fallback")
     else:
-        AGENT_MODEL_SPEC = llm_config.resolve_models(llm_config.AGENT)[0]
+        primary, backups = llm_config.resolve_models(llm_config.AGENT)
+        print(f"Agent: {' → '.join([primary, *backups])} (production chain)")
 
     queries = yaml.safe_load((EVAL_DIR / "queries.yaml").read_text(encoding="utf-8"))
     if args.only:
@@ -707,6 +713,13 @@ def print_summary(results: list[dict]):
             judged[m] += 1
     if judged:
         print("\nScored by judge model: " + ", ".join(f"{m} {n}" for m, n in sorted(judged.items())))
+    # Items each agent model answered at least one turn of.
+    answered = defaultdict(int)
+    for r in results:
+        for m in r.get("agent_model") or ():
+            answered[m] += 1
+    if answered:
+        print("Answered by agent model: " + ", ".join(f"{m} {n}" for m, n in sorted(answered.items())))
 
     unscored = sum(1 for r in results if r["status"] == "unscored")
     errors = sum(1 for r in results if r["status"] == "error")

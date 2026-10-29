@@ -387,7 +387,8 @@ def test_eval_items_record_their_judge_models_and_the_summary_counts_them(monkey
     from ._adapters import run_eval
 
     async def agent(queries):
-        return [{"text": "a", "tool_calls": [], "tool_outputs": []} for _ in queries]
+        return [{"agent_model": "primary-model", "text": "a", "tool_calls": [], "tool_outputs": []}
+                for _ in queries]
 
     models = iter(["primary-model", "backup-model"])
 
@@ -405,8 +406,26 @@ def test_eval_items_record_their_judge_models_and_the_summary_counts_them(monkey
     assert [t["judge_model"] for t in r["turns"]] == ["primary-model", "backup-model"]
     assert r["judge_model"] == ["backup-model", "primary-model"]
     assert "judge_model" not in r["turns"][0]["judge"]
+    assert [t["agent_model"] for t in r["turns"]] == ["primary-model", "primary-model"]
+    assert r["agent_model"] == ["primary-model"]
     run_eval.print_summary([r])
-    assert "Scored by judge model: backup-model 1, primary-model 1" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Scored by judge model: backup-model 1, primary-model 1" in out
+    assert "Answered by agent model: primary-model 1" in out
+
+
+def test_the_eval_agent_runs_the_production_chain_and_says_which_model_answered(gemini, monkeypatch):
+    from ._adapters import run_eval
+
+    monkeypatch.setattr(llm_config, "resolve_models", lambda use: (_P, (_B,)))
+    monkeypatch.setattr(run_eval, "_agent", None)
+    monkeypatch.setattr(run_eval, "AGENT_MODEL_SPEC", None)
+    monkeypatch.setattr(run_eval, "_get_rate_limiter", lambda: None)
+    gemini.behaviour.update({"primary-model": "429", "backup-model": "ok"})
+
+    [turn] = asyncio.run(run_eval.call_agent_turns(["hi"]))
+    assert turn["agent_model"] == "backup-model"
+    assert turn["text"] == "answer from backup-model"
 
 
 def test_the_eval_token_budget_makes_the_third_6k_call_wait():
