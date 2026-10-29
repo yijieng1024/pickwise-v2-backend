@@ -368,6 +368,17 @@ Phases 0–3 in Jack's order (Phase 4 cancelled, see below). Each phase ends wit
   - Each turn has a `judge_model` field, and each item has `judge_model`, the list of models that judged it. The summary prints how many items each judge model scored
   - A run scored partly by the backup is not comparable with one scored only by the primary
   - Temperature stays at 1.0, the models' own default
+- **Judge chain and rate limits** (Jack, from AI Studio, 2026-10-29; commit `a584a20`):
+  - Judge chain: `gemma-4-31b-it` → `gemma-4-26b-a4b-it` → `gemini-3.5-flash-lite`
+  - Gemma 4 31B and 26B: 30 RPM / 16K TPM / 14.4K RPD, so the 26B limits are confirmed
+  - Gemini 3.5 and 3.1 Flash Lite: 15 RPM / 250K TPM / 500 RPD
+  - Every non-Lite Gemini Flash: 20 RPD, so none goes in any chain. The allowed-list test covers the judge chain too
+- **Eval token budget** (measured 2026-10-29 with Gemma `countTokens` on `2026-08-26_eval_0826.jsonl`, 51 turns):
+  - The fixed system prompt plus tool schemas: 2,773 tokens per agent call
+  - An agent turn makes 2 model calls (median; max 6) and sends 6,977 input tokens in total (median; p90 11,189, max 32,656). Its largest single call is 4,211 tokens (median; max 8,095)
+  - A judge call is 1,968 input tokens (median; p90 2,422, max 5,762)
+  - The eval limiter counts requests only (7 RPM × 0.9 = 6.3/min). At about 3,000 tokens per request on average, that is about 19K tokens per minute, over Gemma's 16K TPM. So the agent's calls, not the judge's, are what 429s in a run
+  - Whether the limiter should also cap tokens is open (see the report)
 - **Multi-option prompt rule, retried on the TEST database** (2026-10-29): rows split as expected, but the rule is **not committed**:
   - P5605CAA gave 2 rows, 32GB and 64GB, `max_ram_gb` 96 on both, matching the page
   - H7607BA gave 2 rows, 128GB and 48GB, but both have `max_ram_gb` 128. The page gives the 48GB line its own "Max Total system memory up to: 48GB"
