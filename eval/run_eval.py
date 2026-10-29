@@ -8,12 +8,13 @@ Usage:
   python eval/run_eval.py compare runs/A.jsonl runs/B.jsonl
 
 Dependencies: pip install pyyaml google-genai (already in the project venv)
-Judge API key: GOOGLE_API_KEY env var if set, else GEMINI_API_KEY from .env
+Judge API key: GEMINI_API_KEY from .env, like every other model
 
 ★ Run from the project root (app.config resolves .env against CWD):
   python eval/run_eval.py run --label baseline
 
-★ Quota: agent + judge both run gemma-4-31b-it (free tier 15 RPM / 1500 RPD,
+★ Quota: agent + judge both run gemma-4-31b-it (judge backup: gemma-4-26b-a4b-it;
+  free tier 15 RPM / 1500 RPD,
   and a strict 16,000 input-TPM cap). The TPM cap, not RPM, is the binding
   limit: judge prompts carry up to ~27k chars of tool output, so two judge
   calls in one minute can 429. All LLM calls share one global rate limiter
@@ -46,7 +47,6 @@ v4 changes:
 import argparse
 import asyncio
 import json
-import os
 import re
 import sys
 import time
@@ -58,9 +58,14 @@ import yaml
 
 EVAL_DIR = Path(__file__).parent
 RUNS_DIR = EVAL_DIR / "runs"
-# Fixed on purpose and never behind a fallback: a judge that switched models
-# would make two runs incomparable.
-JUDGE_MODEL = "gemma-4-31b-it"
+# The judge chain: primary, then backups on a 429 / 5xx / timeout, through the
+# same build_llm fallback as the agent. A run judged partly by a backup is not
+# comparable with one judged only by the primary, so every turn and item records
+# its `judge_model` and the summary counts items per judge model.
+JUDGE_MODELS = ("google_genai:gemma-4-31b-it", ("google_genai:gemma-4-26b-a4b-it",))
+# The models' own default sampling temperature (models.get), which the judge
+# ran at when it called the API without one.
+JUDGE_TEMPERATURE = 1.0
 # The agent model under test. None = the configured `agent` primary (app_settings
 # or env), resolved once in cmd_run. Always ONE model with no fallback, so a run
 # measures that model and not whichever answered. `--agent-model` overrides it.
@@ -366,31 +371,43 @@ Output ONLY JSON, no other text, in this format:
 """
 
 
-def _judge_api_key() -> str:
-    key = os.environ.get("GOOGLE_API_KEY")
-    if key:
-        return key
-    from app.config import settings
+_judge_llm = None
 
-    return settings.gemini_api_key
+
+def _get_judge_llm():
+    """Built once. Every model in the chain shares the global limiter (the
+    quota pool the agent draws on) and production's timeout, single attempt
+    and total deadline; judge_with_retry owns the retry loop."""
+    global _judge_llm
+    if _judge_llm is None:
+        from app.common.llm import build_llm
+
+        _judge_llm = build_llm(
+            "eval_judge", temperature=JUDGE_TEMPERATURE, models=JUDGE_MODELS,
+            rate_limiter_for=lambda _spec: _get_rate_limiter(),
+        )
+    return _judge_llm
+
+
+def _judge_chain_answerer():
+    """A callback recording the chain position of the last model started,
+    which is the one that answered when the call succeeds."""
+    from langchain_core.callbacks import AsyncCallbackHandler
+
+    from app.common.llm import position_from_tags
+
+    class Seen(AsyncCallbackHandler):
+        position = None
+
+        async def on_chat_model_start(self, serialized, messages, *, tags=None, **kwargs):
+            self.position = position_from_tags(tags)
+
+    return Seen()
 
 
 async def judge(query: str, rubric: str, result: dict) -> dict:
-    from google import genai
-    from google.genai.types import HttpOptions, HttpRetryOptions
+    from app.common.llm_config import model_id
 
-    from app.config import settings
-
-    await _get_rate_limiter().aacquire()  # shares the quota pool with the agent
-    # Same timeout as production chat models; one attempt per call because
-    # judge_with_retry already owns the retry loop (and its backoff).
-    client = genai.Client(
-        api_key=_judge_api_key(),
-        http_options=HttpOptions(
-            timeout=int(settings.llm_timeout_s * 1000),
-            retry_options=HttpRetryOptions(attempts=1),
-        ),
-    )
     # Truncate each output individually, not the head of the joined blob —
     # otherwise evidence in later tool calls is invisible to the judge and
     # grounded responses get falsely flagged as fabrication. 4,500 per output
@@ -408,19 +425,19 @@ async def judge(query: str, rubric: str, result: dict) -> dict:
         response=result["text"][:6000],
         rubric=rubric,
     )
-    # Same total deadline as production chat models (the httpx timeout above is
-    # per read); a timeout is retried by judge_with_retry like any other error.
-    resp = await asyncio.wait_for(
-        client.aio.models.generate_content(model=JUDGE_MODEL, contents=prompt),
-        settings.llm_total_deadline_s,
-    )
-    raw = resp.text.strip()
+    seen = _judge_chain_answerer()
+    resp = await _get_judge_llm().ainvoke(prompt, config={"callbacks": [seen]})
+    primary, backups = JUDGE_MODELS
+    judge_model = model_id([primary, *backups][seen.position or 0])
+    raw = _content_to_text(resp.content).strip()
     raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
     try:
         parsed = json.loads(raw)
-        return {"passed": bool(parsed["pass"]), "reason": parsed.get("reason", "")}
+        return {"passed": bool(parsed["pass"]), "reason": parsed.get("reason", ""),
+                "judge_model": judge_model}
     except (json.JSONDecodeError, KeyError):
-        return {"passed": None, "reason": f"unparseable judge output: {raw[:200]}"}
+        return {"passed": None, "reason": f"unparseable judge output: {raw[:200]}",
+                "judge_model": judge_model}
 
 
 async def judge_with_retry(query: str, rubric: str, result: dict, attempts: int = 3) -> dict:
@@ -478,6 +495,8 @@ async def run_one(item: dict, use_judge: bool) -> dict:
         turn_entries.append({
             "query": turn["query"],
             "rule_checks": checks,
+            # None when the judge did not run or every attempt failed.
+            "judge_model": judge_result.pop("judge_model", None) if judge_result else None,
             "judge": judge_result,
             "tool_calls": result["tool_calls"],
             "tool_outputs": result["tool_outputs"],
@@ -511,6 +530,8 @@ async def run_one(item: dict, use_judge: bool) -> dict:
         "passed": {"passed": True, "failed": False}.get(status),  # None if unscored/error
         "unscored": status == "unscored",
         "turns": turn_entries,      # full per-turn detail
+        # Every model that judged a turn: two names = partly judged by a backup.
+        "judge_model": sorted({te["judge_model"] for te in turn_entries} - {None}),
         # Legacy fields below keep cmd_run / print_summary / cmd_compare working
         # unchanged. `judge` surfaces the first non-passing turn so the terminal
         # line points at the turn that actually broke; falls back to the last.
@@ -608,6 +629,16 @@ def print_summary(results: list[dict]):
             p, n, excluded = tally(rs)
             note = f"  (+{excluded} unscored/error)" if excluded else ""
             print(f"  {lang:<8}{p}/{n}{note}")
+
+    # Items each judge model gave a verdict on; a run whose backup scored any
+    # is not comparable with one scored only by the primary.
+    judged = defaultdict(int)
+    for r in results:
+        for m in {t.get("judge_model") for t in r.get("turns", [])
+                  if t.get("judge") and t["judge"]["passed"] is not None} - {None}:
+            judged[m] += 1
+    if judged:
+        print("\nScored by judge model: " + ", ".join(f"{m} {n}" for m, n in sorted(judged.items())))
 
     unscored = sum(1 for r in results if r["status"] == "unscored")
     errors = sum(1 for r in results if r["status"] == "error")

@@ -72,8 +72,8 @@ class Settings(BaseSettings):
     # `<use>.backup_models`) wins, and an invalid override falls back to these
     # (app/common/llm_config.py). Backups are tried in order when a model 429s,
     # times out or 5xxs; the agent allows at most 2.
-    # Not covered, on purpose: the eval judge (eval/run_eval.py, fixed so runs
-    # stay comparable) and embeddings (one vector space, one 0.53 threshold).
+    # Not covered, on purpose: embeddings (one vector space, one 0.53
+    # threshold). The eval judge has its own fixed chain (eval/run_eval.py).
     llm_agent_model: str = "google_genai:gemma-4-31b-it"
     llm_agent_backup_models: str = "google_genai:gemma-4-26b-a4b-it"
     llm_review_processor_model: str = "google_genai:gemma-4-31b-it"

@@ -367,16 +367,46 @@ def test_eval_pins_one_agent_model_with_no_fallback(llm_settings):
     assert llm.model == "primary-model"
 
 
-def test_the_eval_judge_has_no_fallback():
-    import inspect
-
+@pytest.mark.parametrize("primary, judged_by", [("ok", "primary-model"), ("429", "backup-model")])
+def test_the_eval_judge_falls_back_and_says_which_model_judged(gemini, monkeypatch, primary, judged_by):
     from ._adapters import run_eval
 
-    src = inspect.getsource(run_eval.judge)
-    assert "model=JUDGE_MODEL" in src
-    for marker in ("build_llm", "with_fallbacks", "resolve_models", "build_agent_llm"):
-        assert marker not in src, f"judge must stay on one fixed model ({marker})"
-    assert run_eval.JUDGE_MODEL == "gemma-4-31b-it"
+    monkeypatch.setattr(run_eval, "JUDGE_MODELS", (_P, (_B,)))
+    monkeypatch.setattr(run_eval, "_judge_llm", None)
+    monkeypatch.setattr(run_eval, "_get_rate_limiter", lambda: None)
+    verdict = {"candidates": [{"content": {"parts": [{"text": '{"pass": true, "reason": "ok"}'}],
+                                           "role": "model"}, "finishReason": "STOP"}]}
+    monkeypatch.setattr(gemini, "reply", lambda model: verdict)
+    gemini.behaviour.update({"primary-model": primary, "backup-model": "ok"})
+
+    out = asyncio.run(run_eval.judge("q", "rubric", {"tool_calls": [], "text": "answer"}))
+    assert out == {"passed": True, "reason": "ok", "judge_model": judged_by}
+
+
+def test_eval_items_record_their_judge_models_and_the_summary_counts_them(monkeypatch, capsys):
+    from ._adapters import run_eval
+
+    async def agent(queries):
+        return [{"text": "a", "tool_calls": [], "tool_outputs": []} for _ in queries]
+
+    models = iter(["primary-model", "backup-model"])
+
+    async def judge(query, rubric, result):
+        return {"passed": True, "reason": "", "judge_model": next(models)}
+
+    monkeypatch.setattr(run_eval, "call_agent_turns_with_retry", agent)
+    monkeypatch.setattr(run_eval, "judge_with_retry", judge)
+    monkeypatch.setattr(run_eval, "rule_checks", lambda *a: [{"name": "x", "passed": True}])
+    item = {"id": "t", "category": "c", "turns": [
+        {"query": "q1", "expect": {"rubric": "r"}}, {"query": "q2", "expect": {"rubric": "r"}},
+    ]}
+    r = asyncio.run(run_eval.run_one(item, use_judge=True))
+
+    assert [t["judge_model"] for t in r["turns"]] == ["primary-model", "backup-model"]
+    assert r["judge_model"] == ["backup-model", "primary-model"]
+    assert "judge_model" not in r["turns"][0]["judge"]
+    run_eval.print_summary([r])
+    assert "Scored by judge model: backup-model 1, primary-model 1" in capsys.readouterr().out
 
 
 def test_embeddings_have_no_fallback():
