@@ -99,6 +99,88 @@ def _get_rate_limiter():
     return _rate_limiter
 
 
+# The limiter above counts requests; Gemma's binding free-tier limit is 16K
+# input tokens per minute, and at ~3K tokens per request 6.3 requests/min is
+# ~19K (measured 2026-10-29, docs/pickwise-2.1-plan.md). So every Gemma call
+# is also charged to a rolling 60 s token budget. Other models (flash-lite:
+# 250K TPM) are not charged.
+GEMMA_TOKENS_PER_WINDOW = 14_500
+# Admission estimate from the prompt's characters, deliberately low: tool JSON
+# measured ~2.0 chars/token, Chinese ~1.7, English prose ~3.2. Overcounting
+# only delays the one call; the real input_tokens replace it once it returns.
+_CHARS_PER_TOKEN_ESTIMATE = 2.0
+
+
+class TokenBudget:
+    """Input tokens spent per rolling window. `acquire` waits until the
+    window has room, then records the call and returns its entry, a mutable
+    [time, tokens] the caller may correct. A call bigger than the whole budget
+    waits for an empty window and then goes, rather than never."""
+
+    def __init__(self, budget: int = GEMMA_TOKENS_PER_WINDOW, window_s: float = 60.0,
+                 clock=time.monotonic, sleep=asyncio.sleep):
+        self.budget, self.window_s, self.clock, self.sleep = budget, window_s, clock, sleep
+        self._spent: list[list] = []
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, tokens: int) -> list:
+        async with self._lock:
+            while True:
+                now = self.clock()
+                self._spent = [e for e in self._spent if now - e[0] < self.window_s]
+                if not self._spent or sum(e[1] for e in self._spent) + tokens <= self.budget:
+                    entry = [now, tokens]
+                    self._spent.append(entry)
+                    return entry
+                await self.sleep(self._spent[0][0] + self.window_s - now)
+
+
+_token_budget = None
+
+
+def _get_token_budget() -> TokenBudget:
+    global _token_budget
+    if _token_budget is None:
+        _token_budget = TokenBudget()
+    return _token_budget
+
+
+def _model_calls():
+    """A callback for one agent turn or judge call: charges each Gemma call
+    to the token budget before it is sent, corrects the charge with the
+    reported input tokens when it returns, and keeps the model of the last
+    call started, which is the one that answered when the call succeeds."""
+    from langchain_core.callbacks import AsyncCallbackHandler
+
+    class ModelCalls(AsyncCallbackHandler):
+        model = None
+
+        def __init__(self):
+            self._charged = {}
+
+        async def on_chat_model_start(self, serialized, messages, *, run_id, metadata=None, **kwargs):
+            self.model = ((metadata or {}).get("ls_model_name") or "unknown").removeprefix("models/")
+            if self.model.startswith("gemma-"):
+                chars = len(str(kwargs.get("invocation_params") or "")) + sum(
+                    len(str(m.content)) + len(str(getattr(m, "tool_calls", "") or ""))
+                    for batch in messages for m in batch
+                )
+                self._charged[run_id] = await _get_token_budget().acquire(
+                    int(chars / _CHARS_PER_TOKEN_ESTIMATE) + 1
+                )
+
+        async def on_llm_end(self, response, *, run_id, **kwargs):
+            entry = self._charged.pop(run_id, None)
+            try:
+                real = response.generations[0][0].message.usage_metadata["input_tokens"]
+            except (AttributeError, IndexError, KeyError, TypeError):
+                return  # no usage reported: the estimate stands
+            if entry is not None and real:
+                entry[1] = real
+
+    return ModelCalls()
+
+
 # ─────────────────────────────────────────────────────────────
 # 1. Agent adapter (in-process)
 # ─────────────────────────────────────────────────────────────
@@ -148,8 +230,10 @@ async def call_agent_turns(queries: list[str]) -> list[dict]:
 
     for q in queries:
         before = len(messages)
+        calls = _model_calls()
         result = await agent.ainvoke(
-            {"messages": messages + [HumanMessage(content=q)]}
+            {"messages": messages + [HumanMessage(content=q)]},
+            config={"callbacks": [calls]},
         )
         messages = result["messages"]
         new = messages[before + 1:]  # skip the HumanMessage we just appended
@@ -392,25 +476,7 @@ def _get_judge_llm():
     return _judge_llm
 
 
-def _judge_chain_answerer():
-    """A callback recording the chain position of the last model started,
-    which is the one that answered when the call succeeds."""
-    from langchain_core.callbacks import AsyncCallbackHandler
-
-    from app.common.llm import position_from_tags
-
-    class Seen(AsyncCallbackHandler):
-        position = None
-
-        async def on_chat_model_start(self, serialized, messages, *, tags=None, **kwargs):
-            self.position = position_from_tags(tags)
-
-    return Seen()
-
-
 async def judge(query: str, rubric: str, result: dict) -> dict:
-    from app.common.llm_config import model_id
-
     # Truncate each output individually, not the head of the joined blob —
     # otherwise evidence in later tool calls is invisible to the judge and
     # grounded responses get falsely flagged as fabrication. 4,500 per output
@@ -428,10 +494,9 @@ async def judge(query: str, rubric: str, result: dict) -> dict:
         response=result["text"][:6000],
         rubric=rubric,
     )
-    seen = _judge_chain_answerer()
-    resp = await _get_judge_llm().ainvoke(prompt, config={"callbacks": [seen]})
-    primary, backups = JUDGE_MODELS
-    judge_model = model_id([primary, *backups][seen.position or 0])
+    calls = _model_calls()
+    resp = await _get_judge_llm().ainvoke(prompt, config={"callbacks": [calls]})
+    judge_model = calls.model
     raw = _content_to_text(resp.content).strip()
     raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
     try:

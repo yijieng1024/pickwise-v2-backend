@@ -409,6 +409,48 @@ def test_eval_items_record_their_judge_models_and_the_summary_counts_them(monkey
     assert "Scored by judge model: backup-model 1, primary-model 1" in capsys.readouterr().out
 
 
+def test_the_eval_token_budget_makes_the_third_6k_call_wait():
+    from ._adapters import run_eval
+
+    now, slept = [0.0], []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+        now[0] += seconds
+
+    budget = run_eval.TokenBudget(clock=lambda: now[0], sleep=sleep)  # 14.5K per 60 s
+
+    async def three_calls():
+        return [(await budget.acquire(6_000))[0] for _ in range(3)]
+
+    assert asyncio.run(three_calls()) == [0.0, 0.0, 60.0]
+    assert slept == [60.0]
+
+
+def test_only_gemma_calls_are_charged_and_the_real_count_replaces_the_estimate(monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    from ._adapters import run_eval
+
+    budget = run_eval.TokenBudget()
+    monkeypatch.setattr(run_eval, "_token_budget", budget)
+    calls = run_eval._model_calls()
+    prompt = [[HumanMessage(content="x" * 2_000)]]
+
+    async def call(run_id, model):
+        await calls.on_chat_model_start({}, prompt, run_id=run_id, metadata={"ls_model_name": model})
+        usage = {"input_tokens": 700, "output_tokens": 1, "total_tokens": 701}
+        await calls.on_llm_end(LLMResult(generations=[[ChatGeneration(
+            message=AIMessage(content="", usage_metadata=usage))]]), run_id=run_id)
+
+    asyncio.run(call("lite", "gemini-3.5-flash-lite"))
+    assert budget._spent == []
+    asyncio.run(call("gemma", "models/gemma-4-31b-it"))
+    assert [e[1] for e in budget._spent] == [700]  # estimated 1,001, then corrected
+    assert calls.model == "gemma-4-31b-it"
+
+
 def test_embeddings_have_no_fallback():
     import inspect
 
