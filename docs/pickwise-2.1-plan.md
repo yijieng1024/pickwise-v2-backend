@@ -276,7 +276,7 @@ When Pico speaks first, the backend builds an internal instruction from the entr
 
 | Site | Discovery | Specs | Price |
 |---|---|---|---|
-| Apple | `/my/mac/` page (whole line, no pagination) | spec page, `.techspecs-section` | none today |
+| Apple | `/my/mac/` page (whole line, no pagination) | spec page, `.techspecs-section` | in the spec text, filled from `/my/shop/mcm/product-price` (corrected 2026-11-01, was "none today") |
 | HP | listing `?p=1..9` (121 products, 15 a page) | product page `.product-spec-swapper` | product page (`dataLayer` / `finalPrice`) |
 | ASUS | `SeriesFilterResult` JSON API | techspec page, Nuxt 3 `__NUXT_DATA__` JSON (`pinia.pdPageStore.PDTechSpecM2List`) | guide PDF only |
 | ROG | same `SeriesFilterResult` API | spec page, Nuxt 2 `window.__NUXT__` literal read by a static parser (never executed) | spec page per-SKU `price`; guide PDF when it is 0 |
@@ -407,7 +407,7 @@ Phases 0–3 in Jack's order (Phase 4 cancelled, see below). Each phase ends wit
 - Migration: none
 - Result: no pin needed a bump (all 139 install as Linux 3.12 wheels). On 3.12.13: 561 unit + golden passed, 192 integration passed. `seed_channel_fields` ran its dry path on the test database with no writes
 
-**Phase 2: ROG, HP, Apple, PassMark (one commit each, in that order)**
+**Phase 2: ROG, HP, Apple, PassMark (one commit each, in that order)** (done 2026-11-01)
 
 Before the sites, one `refactor:` commit with no behaviour change: brand dispatch moves to one place (see "Brand dispatch" below).
 
@@ -441,6 +441,14 @@ Before the sites, one `refactor:` commit with no behaviour change: brand dispatc
 - No migration
 
 *Stop and report*: per site, the old against new diffs and how each difference was resolved, row counts, the migration up/down output, the 2e check, and the red output from each reverted test.
+
+*Phase 2 result (2026-11-01)*
+- Commits: `447f62b` brand dispatch, `a924b15` 2a ROG, `a5901db` 2b HP, `de2fb9e` 2c Apple, `ac8fb7d` 2d PassMark, `5f52b07` 2e remove the Playwright code. Frontend: `5da9466` Pick Score benchmark date footnote
+- **Apple prices come from `/my/shop/mcm/product-price`.** `raw_prices_list` is empty, but the prices reach the processor inside the spec text, and the raw HTML holds only empty slots (`data-pricing-product`). The scraper fetches that JSON too, mapping slots to parts with the page's `ac:pricing-alias` metas. A failed price call fails the page, so prices are never dropped silently
+- **Nuxt 2 statements before `return` are applied, not rejected.** Every real ROG page has them. `x.y=z` and `x[n]={...}` are supported, and anything else raises
+- **HP's name and price are a JavaScript object, not JSON.** They come from `pagePropertiesData.mainSKU`, read without executing it. `dataLayer` is built in the browser and is not in the raw HTML
+- The two PassMark scrapers are one file, `passmark_scraper.py`
+- **A PassMark run holds one database connection for about 12 minutes** (measured on the test database: 6,063 CPU + 2,871 GPU rows, upserted one at a time). That is a reason to move it to GitHub Actions in step 11
 
 *Risks*
 - Live site: changed raw text can change specs when a laptop is re-processed. The old against new diffs are the guard. A PassMark refresh moves marks, so after the next `generate-all` Pick Scores move as well (expected, since factors are percentiles). Run `python -m app.scripts.dump_pickscore` before and after on the test DB
@@ -637,6 +645,7 @@ A laptop that fails stays inactive, and the notification says which condition fa
 - Every long admin process runs as a background job instead of a request that waits: scrape, process (Gemini), embeddings, PickScore `generate-all`, review `process-bulk`, transcripts, and the benchmark refresh once it exists
 - Each job is recorded in a table: what it is, who or what started it (admin button or schedule), start and end time, status (queued, running, succeeded, failed), progress, result summary and error. The admin shows this list, so a run can be checked without reading Render logs
 - Why: today these are plain requests (curl or admin buttons). Long ones time out, show no progress, and a failure is only visible in the logs
+- PassMark belongs in GitHub Actions too: a run holds one database connection for about 12 minutes (measured 2026-11-01)
 - Where a job runs: short jobs (e.g. `generate-all`, minutes) can run on Render. Long ones (scraping every site, multi-day review runs) run in GitHub Actions, because Render's free tier kills running work on every deploy and when the service sleeps. Both write to the same job table
 - A job killed mid-run must show as failed or interrupted, never stay "running" forever
 - Survey first: how each process is started today, how long it takes, and whether the admin already has a job or result table to build on
