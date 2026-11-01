@@ -395,13 +395,17 @@ Phases 0–3 in Jack's order (Phase 4 cancelled, see below). Each phase ends wit
   - Fallback carried both pages:
     - P5605CAA: `gemma-4-31b-it` 500, then `gemma-4-26b-a4b-it` 504, then `gemini-3.5-flash-lite` answered
     - H7607BA: `gemma-4-31b-it` 503 "high demand", then `gemma-4-26b-a4b-it` answered
+- **Multi-option prompt rule, committed** (2026-11-01, commit `61e3fd4`): H7607BA re-run on the TEST database gave 128GB with `max_ram_gb` 128 and 48GB with `max_ram_gb` 48, as expected
+  - It passed on `gemini-3.5-flash-lite`: `gemma-4-31b-it` returned 503, `gemma-4-26b-a4b-it` returned 504, and the fallback carried the page
+  - **Not yet confirmed on the Gemma models.** The wrong `max_ram_gb` above came from `gemma-4-26b-a4b-it`, and they are first in the processor chain
 
-**Phase 1b: Docker image Python 3.11 → 3.12** (its own step, after Phase 1 is committed; not started)
+**Phase 1b: Docker image Python 3.11 → 3.12** (done 2026-11-01, commit `0a51f96`)
 - Why: CI runs 3.12 (`ci.yml`), the image runs 3.11 (`FROM python:3.11-slim`), so the tiers pass on a Python production never runs
 - `Dockerfile`: base image `python:3.12-slim`
 - `requirements.txt`: find any pin that has no 3.12 wheel and bump it, with the reason, as in Phase 1
 - Check: the full unit + golden + integration tiers on 3.12, and `python -m app.scripts.seed_channel_fields` (dry run) now runs
 - Migration: none
+- Result: no pin needed a bump (all 139 install as Linux 3.12 wheels). On 3.12.13: 561 unit + golden passed, 192 integration passed. `seed_channel_fields` ran its dry path on the test database with no writes
 
 **Phase 2: ROG, HP, Apple, PassMark (one commit each, in that order)**
 
