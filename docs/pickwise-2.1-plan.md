@@ -488,6 +488,7 @@ Before the sites, one `refactor:` commit with no behaviour change: brand dispatc
 
 *Applying* (`POST /admin/price-guides/{id}/apply`, preview = `GET …/preview`; apply runs the same `match` and writes only `matched`)
 - Fill rule: a guide price is written when the stored price is 0, or when the stored price itself came from a guide. A ROG price from the spec page is never overwritten by a guide (Jack: spec page first). An admin-entered price is never overwritten either; it is listed as "differs from guide"
+- **Decided (Jack, 2026-11-01):** the "differs from guide" list gets a "Use guide price" action, for one laptop or several selected at once (`POST /admin/price-guides/{id}/use-guide-price`). It writes through the same path as apply: one transaction, a history row with `source='guide'` and `price_guide_id`, `price_checked_at` stamped, so a later guide can update it. A laptop not selected keeps its price
 - To know where a price came from: two nullable columns on `laptop_price_history`, `source` (`page` / `guide` / `manual`) and `price_guide_id`. The processor writes `page`, `PUT /laptops/{id}` writes `manual`, and the import writes `guide`. "Came from a guide" means the latest history row's `source = 'guide'`. Older rows stay null, which counts as "not a guide". **Decided (Jack, 2026-10-28):** a price with no recorded source is never overwritten by a guide; it is listed as "differs from guide" for Jack to decide. This is also the price source step 15 (XAI D) needs
 - Writes go through the ORM like `PUT /laptops/{id}`: a price-history row only when the price changes, `price_checked_at` set to the apply time even when unchanged ("Last Checked" means the guide confirmed it), and the mapper event and `updated_at` stamp as usual. Restoring a price does **not** make a laptop active again (existing rule). The preview lists "priced by this guide but inactive", so Jack can activate them; automatic go-live is step 11
 - One transaction per apply, run as a background job (`background_jobs`), so a failed apply writes nothing. Re-applying the same guide changes nothing; the test below checks this
@@ -503,6 +504,23 @@ Before the sites, one `refactor:` commit with no behaviour change: brand dispatc
 - Real data: run `extract_price_guide` on the three Q3 PDFs. Hand-check 3 pages per guide against the printed page (the 2026-10-27 survey found 162 laptop SKUs / 160 with a price in consumer + ROG, which is the baseline). Then on the **test DB**, seeded with the ASUS/ROG laptops Phases 1 and 2 produced there, upload and preview. Report the outcome counts and every ambiguous or conflict row. No apply against production in this plan
 
 *Stop and report*: hand-check results per page, preview counts per guide, the ambiguous and conflict lists, migration output, and the red output from each reverted test. Jack decides whether the matching rules are tight enough before anything is applied for real.
+
+*Decided (Jack, 2026-11-01)*
+- The workflow runs only on `workflow_dispatch`, never on `pull_request`, so forks never get the secret. `extract_price_guide` stays database-free. The write step checks the database like the alembic guard and logs only the host
+- The workflow uses the full-permission `DATABASE_URL`, no restricted role. The code-level guard (writes only `price_guides` and `price_guide_rows`) and its tests stay
+- "Use guide price" on the differs list, see Applying
+
+*Results (2026-11-02, stopped here: nothing applied to real prices, nothing pushed)*
+- Extraction, Q3 guides: consumer 97 of 97 SKUs priced, ROG 65 of 65, business 43 of 43. Nine pages hand-checked against the print (consumer 77, 84, 86; ROG 75, 79, 83; business 6, 8, 10). The survey's 160 of 162 was wrong: page 77 prints a bare `7499`, so it is 162 of 162. The guide's printed typo `A1407C-AY147WS` is kept
+- Preview, **a sample only**: test DB, real crawl (102 pages, 184 raw rows), processed all 39 ROG rows and 30 `www.asus.com` rows, giving 106 laptops. Per guide (matched / ambiguous / conflict / unmatched_guide / unpriced / differs): consumer 9 / 0 / 0 / 83 / 0 / 0, ROG 18 / 5 / 3 / 34 / 0 / 0, business 6 / 0 / 0 / 37 / 0 / 0. `unmatched_guide` is inflated by the sample. Across all three guides, 64 laptops had no guide and 63 of them have price 0
+- By path: 17 laptops by SKU, 16 by model code + specs, 33 of 106 in all. Every SKU match with a page price agreed with the guide (11 of 11)
+- The misses have two causes. `W` and `WP` SKU endings differ between guide and page (11 catalog rows, e.g. page `GU606A-RTB128WP`, guide `GU606A-RTB128W`, same RM 23,999). And the model code path compares no GPU, and looks at rows that already have their own SKU. All 5 ambiguous and all 3 conflict rows come from these. An offline replay with folded `W`/`WP`, no spec path for rows with a SKU, and the letter after the hyphen checked against the catalog code gave 0 ambiguous, 0 conflict and 38 laptops (a floor: the replay kept only one of a `W`/`WP` pair). Not built
+- Tests: the price guide integration files pass (42), 56 reverts red across the phase (7 of them on "Use guide price"), the migration runs up, check, down, up clean, and the full integration tier passed 249 at `300e263`, before "Use guide price"
+
+*Open*
+- The rule changes above, for Jack to decide. The full catalog preview then needs the other 115 raw rows processed, about 2 min each
+- Secrets: `DATABASE_URL` and `GOOGLE_SERVICE_ACCOUNT_KEY` on GitHub, `GITHUB_DISPATCH_TOKEN` on Render. `uploaded_by` is nullable, because a hand run has no admin
+- The workflow cannot run until it is on `main`. The largest PDF's download through the service account is untested, because only one guide is shared with it so far
 
 *Risks*
 - Live site: apply writes prices that are visible right away, and a wrong match is a wrong price on a public page. Hence preview first, exact rules, nothing written when unclear, one transaction. Price factors change only after the next `generate-all`
