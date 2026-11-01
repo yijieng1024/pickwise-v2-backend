@@ -11,7 +11,7 @@ from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.common.job_model import JobAccepted, JobType
@@ -19,7 +19,7 @@ from app.common.job_service import create_job, job_accepted, refuse_if_running, 
 from app.config import settings
 from app.database import get_session
 from app.laptops.price_guide_model import PriceGuide, PriceGuideKind
-from app.laptops.price_guide_service import apply_guide, preview
+from app.laptops.price_guide_service import NotDiffering, apply_guide, preview, use_guide_price
 from app.logger import get_logger
 from app.users.auth import get_current_admin
 from app.users.models import User
@@ -45,6 +45,10 @@ class ExtractStarted(BaseModel):
     drive_file_id: str
     kind: PriceGuideKind
     message: str
+
+
+class UseGuidePriceRequest(BaseModel):
+    laptop_ids: List[uuid.UUID] = Field(min_length=1)
 
 
 def _drive_file_id(link: str) -> str:
@@ -129,3 +133,23 @@ def apply_price_guide(
 
     background_tasks.add_task(run_job, job.id, worker)
     return job_accepted(job, message=f"Applying {guide.filename} in the background.")
+
+
+@router.post("/{guide_id}/use-guide-price")
+def use_price_from_guide(
+    guide_id: uuid.UUID,
+    body: UseGuidePriceRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    "Use guide price" on the differs list, for one laptop or a selection. Writes as an
+    apply does, so a later guide can update these prices; a laptop not selected keeps
+    its price. All or nothing: 409 if any id is no longer on the list, or while an apply
+    is running.
+    """
+    guide = _guide_or_404(session, guide_id)
+    refuse_if_running(session, (JobType.PRICE_GUIDE_APPLY,), "A price guide apply is already running.")
+    try:
+        return use_guide_price(session, guide, set(body.laptop_ids))
+    except NotDiffering as error:
+        raise HTTPException(status_code=409, detail=str(error))

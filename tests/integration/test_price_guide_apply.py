@@ -229,6 +229,74 @@ def test_a_second_apply_while_one_runs_is_refused(admin_client, session, brand):
     assert admin_client.post(f"/api/v2/admin/price-guides/{guide.id}/apply").status_code == 409
 
 
+def _use(admin_client, guide, *laptops):
+    return admin_client.post(
+        f"/api/v2/admin/price-guides/{guide.id}/use-guide-price", json={"laptop_ids": [str(l.id) for l in laptops]},
+    )
+
+
+def _differing(session, brand):
+    """Three page-priced laptops the guide disagrees with."""
+    laptops = [
+        _laptop(session, brand, sku=f"G835L-{name}", price=30000.0, source=PriceSource.PAGE.value, checked=OLD)
+        for name in ("AAAAA", "BBBBB", "CCCCC")
+    ]
+    return laptops, _guide(session, ("G835L-AAAAA", 31000.0), ("G835L-BBBBB", 32000.0), ("G835L-CCCCC", 33000.0))
+
+
+def test_use_guide_price_changes_the_selected_laptops_only(admin_client, session, brand):
+    (first, second, unselected), guide = _differing(session, brand)
+
+    response = _use(admin_client, guide, first, second)
+
+    assert response.status_code == 200
+    assert response.json()["updated"] == 2
+    session.expire_all()
+    for laptop, price in ((first, 31000.0), (second, 32000.0)):
+        assert laptop.price_rm == price
+        assert laptop.price_checked_at > OLD
+        [_, row] = _history(session, laptop.id)
+        assert (row.price_rm, row.source, row.price_guide_id) == (price, PriceSource.GUIDE.value, guide.id)
+    assert unselected.price_rm == 30000.0
+    assert unselected.price_checked_at == OLD
+    assert len(_history(session, unselected.id)) == 1
+
+
+def test_a_later_guide_updates_a_price_taken_with_use_guide_price(admin_client, session, brand):
+    (first, _, _), guide = _differing(session, brand)
+    _use(admin_client, guide, first)
+
+    _apply(session, _guide(session, ("G835L-AAAAA", 29999.0), sha="d" * 64))
+
+    session.expire_all()
+    assert first.price_rm == 29999.0
+
+
+def test_a_selection_with_a_laptop_off_the_list_writes_nothing(admin_client, session, brand):
+    (first, *_), guide = _differing(session, brand)
+    not_in_guide = _laptop(session, brand, sku="G835L-ZZZZZ", price=30000.0, source=PriceSource.PAGE.value)
+
+    response = _use(admin_client, guide, first, not_in_guide)
+
+    assert response.status_code == 409
+    assert str(not_in_guide.id) in response.json()["detail"]
+    session.expire_all()
+    assert first.price_rm == 30000.0
+    assert len(_history(session, first.id)) == 1
+
+
+def test_use_guide_price_waits_for_a_running_apply(admin_client, session, brand):
+    (first, *_), guide = _differing(session, brand)
+    session.add(BackgroundJob(job_type=JobType.PRICE_GUIDE_APPLY, status=JobStatus.PROCESSING, params={}, total_count=1))
+    session.commit()
+
+    assert _use(admin_client, guide, first).status_code == 409
+
+
+def test_use_guide_price_needs_a_selection(admin_client, session, brand):
+    assert _use(admin_client, _guide(session, (SKU, 1.0))).status_code == 422
+
+
 def test_the_preview_reads_only(admin_client, session, brand):
     laptop = _laptop(session, brand)
     guide = _guide(session, (SKU, 32999.0), ("G835L-NOTINCATALOG", 100.0), ("G835L-NOPRICE", None))
@@ -249,6 +317,8 @@ def test_an_unknown_guide_is_404(admin_client):
     missing = "00000000-0000-0000-0000-000000000000"
     assert admin_client.get(f"/api/v2/admin/price-guides/{missing}/preview").status_code == 404
     assert admin_client.post(f"/api/v2/admin/price-guides/{missing}/apply").status_code == 404
+    guide = PriceGuide(id=missing, kind="rog", filename="", pdf_sha256="", row_count=0)
+    assert _use(admin_client, guide, guide).status_code == 404
 
 
 def test_the_routes_are_admin_only(api_client, session):
@@ -257,6 +327,7 @@ def test_the_routes_are_admin_only(api_client, session):
     assert api_client.get("/api/v2/admin/price-guides").status_code == 403
     assert api_client.get(f"/api/v2/admin/price-guides/{guide.id}/preview").status_code == 403
     assert api_client.post(f"/api/v2/admin/price-guides/{guide.id}/apply").status_code == 403
+    assert _use(api_client, guide, guide).status_code == 403
 
 
 class _Dispatch:
