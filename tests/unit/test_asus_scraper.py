@@ -1,4 +1,5 @@
 """ASUS www techspec parser and listing discovery, on saved real pages."""
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -133,3 +134,66 @@ def test_series_only_page_is_a_failed_target_in_a_bulk_run(monkeypatch):
     assert report.results[0].status == "failed"
     assert "SpecList is a list" in report.results[0].error
     assert target.scrape_status == bulk_scraper.ScrapeStatus.FAILED
+
+
+# --------------------------------------------------------------------------
+# rog.asus.com /spec/ (Nuxt 2)
+# --------------------------------------------------------------------------
+
+
+def test_rog_spec_page_gives_every_sku_with_its_own_price():
+    variants = asus_scraper.parse_rog_spec(_read("rog_spec_scar18.html"))
+
+    assert [(v["specs"]["SKU"], v["specs"]["Price"]) for v in variants] == [
+        ("G835L-WGSA478WP", "RM30,999.00"),
+        ("G835L-XGTQ284WP", "RM32,999.00"),
+        ("G835L-WGSA378W", "N/A"),  # 0 on the page means unknown
+        ("G835L-WGSA378WP", "N/A"),
+    ]
+    assert [v["source_url_suffix"] for v in variants] == ["?v=1", "?v=2", "?v=3", "?v=4"]
+    assert all(v["status"] == "success" for v in variants)
+    assert variants[0]["product_name"].endswith("(G835L-WGSA478WP)")
+    assert len(variants[0]["specs"]) == 26  # 24 page specs + Price + SKU
+    assert variants[0]["image_urls"][0].startswith("https://")
+
+
+def test_rog_spec_text_has_real_line_breaks():
+    # descriptionText holds a literal backslash-n, which the old mapping converted
+    variants = asus_scraper.parse_rog_spec(_read("rog_spec_scar18.html"))
+    backslash_n = chr(92) + "n"
+    assert not any(backslash_n in value for value in variants[0]["specs"].values())
+    assert any(chr(10) in value for value in variants[0]["specs"].values())
+
+
+@pytest.mark.parametrize("html, message", [
+    ("<html><body>Just a moment...</body></html>", "no window.__NUXT__"),
+    ("<script>window.__NUXT__=(function(a){return {state:{}}}(1));</script>", "empty or not found"),
+    ("<script>window.__NUXT__=(function(a){return {state:{Spec:{spec:[]}}}}(1));</script>", "empty or not found"),
+])
+def test_rog_page_with_no_skus_raises(html, message):
+    with pytest.raises(ValueError, match=message):
+        asus_scraper.parse_rog_spec(html)
+
+
+def test_a_rog_url_goes_through_the_fetcher_and_keeps_the_raw_row_shape(monkeypatch):
+    fetched = []
+    html = _read("rog_spec_scar18.html")
+
+    def fetch(url):
+        fetched.append(url)
+        return html
+
+    monkeypatch.setattr(asus_scraper, "_fetch", fetch)
+    url = "https://rog.asus.com/my/laptops/rog-strix/rog-strix-scar-18-2026/"
+    results = asyncio.run(asus_scraper.scrape_asus_laptop_specs(url, None))
+
+    assert fetched == [url + "spec/"]
+    assert results[0]["raw_prices_list"] == [{"price": "RM30,999.00"}]
+    assert results[0]["raw_specs"]["SKU"] == "G835L-WGSA478WP"
+
+
+def test_a_rog_page_that_fails_is_a_failed_result_not_an_exception(monkeypatch):
+    monkeypatch.setattr(asus_scraper, "_fetch", lambda url: "<html>challenge</html>")
+    results = asyncio.run(asus_scraper.scrape_asus_laptop_specs("https://rog.asus.com/my/x/", None))
+    assert [r["status"] for r in results] == ["failed"]
+    assert "no window.__NUXT__" in results[0]["error"]

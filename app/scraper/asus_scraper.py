@@ -6,8 +6,9 @@ ASUS Malaysia scraper: www.asus.com and rog.asus.com, one brand (`asus`).
 - www.asus.com spec pages (Nuxt 3): fetched with Scrapling's `Fetcher` and read
   from the `__NUXT_DATA__` payload (`pinia.pdPageStore`) by `parse_asus_techspec`.
   No price: www prices come only from the product guides (step 10, Phase 3).
-- rog.asus.com spec pages (Nuxt 2): still Playwright, reading
-  `window.__NUXT__.state.Spec.spec`, until step 10 Phase 2a moves them over.
+- rog.asus.com spec pages (Nuxt 2): fetched the same way and read from the
+  `window.__NUXT__` literal (`state.Spec.spec`) by `parse_rog_spec`. Each SKU
+  carries its own price; 0 means unknown.
 """
 import asyncio
 import json
@@ -17,7 +18,7 @@ from typing import Callable
 from playwright.async_api import async_playwright
 from scrapling.fetchers import Fetcher
 
-from .nuxt_state import nuxt3_state
+from .nuxt_state import nuxt2_state, nuxt3_state
 from .playwright_utils import run_async_playwright
 
 # Listing API behind https://www.asus.com/my/laptops/all-products/ -- a module
@@ -185,8 +186,72 @@ def parse_asus_techspec(html: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# rog.asus.com spec page (Playwright until step 10 Phase 2a; runs inside the
-# worker thread, via run_async_playwright)
+# rog.asus.com spec page
+# ---------------------------------------------------------------------------
+
+
+def parse_rog_spec(html: str) -> list[dict]:
+    """
+    Every SKU on a rog.asus.com /spec/ page, from its Nuxt 2 state.
+
+    Returns { status, product_name, specs, image_urls, source_url_suffix } per
+    SKU, with the SKU itself in specs["SKU"] for the product guide match.
+    Raises when the page has no state or no SKUs, so a changed page can never
+    come back as an empty success.
+    """
+    state = nuxt2_state(html).get("state")
+    spec = state.get("Spec") if isinstance(state, dict) else None
+    spec_list = spec.get("spec") if isinstance(spec, dict) else None
+    if not spec_list:
+        raise ValueError("window.__NUXT__.state.Spec.spec is empty or not found")
+
+    num_variants = len(spec_list)
+    results: list[dict] = []
+
+    for idx, sku in enumerate(spec_list):
+        # Specs: specContent[].displayField / descriptionText
+        specs: dict = {}
+        for item in sku.get("specContent") or []:
+            field = (item.get("displayField") or "").strip()
+            value = (item.get("descriptionText") or "").strip()
+            if field and value:
+                # descriptionText uses literal \\n: convert to readable
+                specs[field] = value.replace("\\n", "\n").strip()
+
+        # Price: stored as a number, e.g. 9099.0 becomes "RM9,099.00"; 0 is unknown
+        raw_price = sku.get("price")
+        try:
+            price_val = float(raw_price) if raw_price is not None else 0
+            price_str = f"RM{price_val:,.2f}" if price_val > 0 else "N/A"
+        except (TypeError, ValueError):
+            price_str = "N/A"
+        specs["Price"] = price_str
+
+        mkt_name = (sku.get("mktName") or "").strip()
+        sku_name = (sku.get("skuName") or "").strip()
+        specs["SKU"] = sku_name
+        product_name = f"{mkt_name} ({sku_name})" if sku_name else mkt_name
+
+        # skuImg is the per-SKU hero image
+        sku_img = sku.get("skuImg") or ""
+        image_urls = [sku_img] if sku_img.startswith("http") else []
+
+        suffix = f"?v={idx + 1}" if num_variants > 1 else ""
+
+        results.append({
+            "status": "success",
+            "product_name": product_name,
+            "specs": specs,
+            "image_urls": image_urls,
+            "source_url_suffix": suffix,
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# The old ROG path, removed in step 10 Phase 2e once every scraper has moved.
+# Runs inside the worker thread, via run_async_playwright.
 # ---------------------------------------------------------------------------
 
 
@@ -316,16 +381,13 @@ async def scrape_asus_laptop_specs(url: str, brand_id) -> list[dict]:
     is_rog = "rog.asus.com" in clean_url
 
     # The spec/techspec subpage holds the full Nuxt spec data
-    if is_rog:
-        raw_list: list[dict] = await run_async_playwright(
-            _async_scrape_rog_specs(base_url + "spec/", base_url)
-        )
-    else:
-        try:
-            html = await asyncio.to_thread(_fetch, base_url + "techspec/")
-            raw_list = parse_asus_techspec(html)
-        except Exception as e:
-            raw_list = [{"status": "failed", "error": str(e)}]
+    page, parse = (
+        (base_url + "spec/", parse_rog_spec) if is_rog else (base_url + "techspec/", parse_asus_techspec)
+    )
+    try:
+        raw_list: list[dict] = parse(await asyncio.to_thread(_fetch, page))
+    except Exception as e:
+        raw_list = [{"status": "failed", "error": str(e)}]
 
     results: list[dict] = []
     for raw in raw_list:
