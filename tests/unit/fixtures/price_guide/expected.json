@@ -1,0 +1,458 @@
+{
+"consumer_p77": {
+"UX3407N-AQD881WS": [
+7499.0,
+"Snapdragon X2 Elite X2E88100",
+32,
+1024
+],
+"UX3407Q-ASB555WSP": [
+5699.0,
+"Snapdragon X X1 26 100 Processor",
+16,
+512
+],
+"UX3405C-AQL248WS": [
+4999.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"UM3406G-AQD165WS": [
+6299.0,
+"AMD Ryzen AI 7 445 Processor",
+32,
+512
+],
+"UX3407N-AQD882WS": [
+7499.0,
+"Snapdragon X2 Elite X2E88100",
+32,
+1024
+],
+"UX3407Q-ASB556WSP": [
+5699.0,
+"Snapdragon X X1 26 100 Processor",
+16,
+512
+],
+"UX3405C-AQL246WS": [
+4999.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+]
+},
+"consumer_p84": {
+"A1504V-ABQ268WS": [
+4199.0,
+"Intel Core 5 Processor 120U",
+16,
+512
+],
+"A1504V-ABQ269WS": [
+4199.0,
+"Intel Core 5 Processor 120U",
+16,
+512
+],
+"A1504V-ABQ169WSP": [
+3499.0,
+"Intel Core 5 Processor 120U",
+8,
+512
+],
+"A1407C-ALY145WS": [
+4399.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"A1407C-ALY146WS": [
+4399.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"A1504V-ABQ170WSP": [
+4199.0,
+"Intel Core 5 Processor 120U",
+8,
+512
+],
+"A1504V-ABQ270WS": [
+4199.0,
+"Intel Core 5 Processor 120U",
+16,
+512
+],
+"A1504V-ABQ168WS": [
+3499.0,
+"Intel Core 5 Processor 120U",
+8,
+512
+],
+"A1407C-AY147WS": [
+4399.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+]
+},
+"consumer_p86": {
+"E1504F-ABQ030WS": [
+2799.0,
+"AMD Ryzen 3 30 Processor",
+8,
+512
+],
+"E1504F-ABQ031WS": [
+2799.0,
+"AMD Ryzen 3 30 Processor",
+8,
+512
+],
+"E1404F-AEB150WS": [
+3699.0,
+"AMD Ryzen 5 40 Processor",
+16,
+512
+],
+"E1404F-AEB151WS": [
+3699.0,
+"AMD Ryzen 5 40 Processor",
+16,
+512
+],
+"E1404F-AEB060WS": [
+3199.0,
+"AMD Ryzen 5 40 Processor",
+16,
+256
+],
+"E1404F-AEB130WS": [
+2799.0,
+"AMD Ryzen 3 30 Processor",
+8,
+512
+],
+"E1404F-AEB131WS": [
+2799.0,
+"AMD Ryzen 3 30 Processor",
+8,
+512
+],
+"E1504F-ABQ032WS": [
+2799.0,
+"AMD Ryzen 3 30 Processor",
+8,
+512
+],
+"E1404F-AEB152WS": [
+3699.0,
+"AMD Ryzen 5 40 Processor",
+16,
+512
+],
+"E1404F-AEB062WS": [
+3199.0,
+"AMD Ryzen 5 40 Processor",
+16,
+256
+],
+"E1404F-AEB132WS": [
+2799.0,
+"AMD Ryzen 3 30 Processor",
+8,
+512
+]
+},
+"rog_p75": {
+"GU405A-WSY066W": [
+26999.0,
+"Intel Core Ultra 9 Processor 386H",
+64,
+2048
+],
+"GU405A-RSY016W": [
+17999.0,
+"Intel Core Ultra 9 Processor 386H",
+32,
+1024
+],
+"GA403G-MSY018W": [
+13999.0,
+"AMD Ryzen AI 9 465 Processor",
+16,
+1024
+],
+"G835L-XGTQ284WP": [
+32999.0,
+"Intel Core Ultra 9 Processor 290HX Plus",
+64,
+2048
+],
+"G835L-WGSA378WP": [
+27999.0,
+"Intel Core Ultra 9 Processor 290HX Plus",
+64,
+2048
+],
+"G635L-XRW165W": [
+22299.0,
+"Intel Core Ultra 9 Processor 275HX",
+32,
+2048
+]
+},
+"rog_p79": {
+"GZ302E-ARU007W": [
+12999.0,
+"AMD Ryzen AI MAX+ 395 Processor",
+32,
+1024
+]
+},
+"rog_p83": {
+"FA608U-HITU066WP": [
+6299.0,
+"AMD Ryzen 7 260 Processor",
+16,
+512
+],
+"FA608U-HRV068W": [
+5999.0,
+"AMD Ryzen 7 260 Processor",
+16,
+512
+],
+"FA607N-UQRL888WS": [
+5299.0,
+"AMD Ryzen 7 170 Processor",
+16,
+512
+],
+"FA607N-UQRL788WS": [
+5099.0,
+"AMD Ryzen 7 170 Processor",
+8,
+512
+],
+"FA607N-UGRL068W": [
+4399.0,
+"AMD Ryzen 7 7445HS Processor",
+16,
+512
+]
+},
+"business_p6": {
+"B9406CAA-TG5151WS": [
+8599.0,
+"Intel Core Ultra 5 Processor 325",
+16,
+512
+],
+"B9406CAA-TG5150WS": [
+8599.0,
+"Intel Core Ultra 5 Processor 325",
+16,
+512
+],
+"B9406CAA-TH1142WS": [
+12499.0,
+"Intel Core Ultra X7 Processor 358H",
+32,
+1024
+],
+"B9406CAA-TH1140WS": [
+12499.0,
+"Intel Core Ultra X7 Processor 358H",
+32,
+1024
+],
+"B9406CAA-TH1139X": [
+16999.0,
+"Intel Core Ultra X7 Processor 358H",
+32,
+1024
+],
+"B9406CAA-TH1362X": [
+23499.0,
+"Intel Core Ultra X7 Processor 358H",
+64,
+2048
+],
+"B9406CAA-TH1138X": [
+23499.0,
+"Intel Core Ultra X7 Processor 358H",
+64,
+2048
+]
+},
+"business_p8": {
+"B3405CCA-LY0442X": [
+8499.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"B3405CCA-LY0562X": [
+7399.0,
+"Intel Core Ultra 7 Processor 255H",
+16,
+512
+],
+"B3406CCA-LY0062X": [
+8499.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"B3406CCA-LY0063X": [
+9199.0,
+"Intel Core Ultra 7 Processor 255H",
+16,
+512
+],
+"B3605CCA-MB0985X": [
+8399.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"B3605CCA-MB2197X": [
+9099.0,
+"Intel Core Ultra 7 Processor 255H",
+16,
+512
+],
+"B3606CCA-MB5150X": [
+8499.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"B3606CCA-MB7150X": [
+9199.0,
+"Intel Core Ultra 7 Processor 255H",
+16,
+512
+],
+"BM3406CGA-LY0051X": [
+8799.0,
+"AMD Ryzen AI 7 445",
+16,
+512
+],
+"BM3406CGA-LY0132X": [
+8299.0,
+"AMD Ryzen AI 5 430",
+16,
+512
+],
+"B1403CVA-S65075W": [
+5599.0,
+"Intel Core 5 Processor 120U",
+8,
+512
+],
+"B1403CVA-S63727X": [
+7399.0,
+"Intel Core 5 Processor 120U",
+16,
+512
+],
+"B1403CVA-S63728X": [
+8099.0,
+"Intel Core 7 Processor 150U",
+16,
+512
+],
+"B1503CVA-S73380X": [
+7399.0,
+"Intel Core 5 Processor 120U",
+16,
+512
+],
+"B1503CVA-S73381X": [
+8099.0,
+"Intel Core 7 Processor 150U",
+16,
+512
+],
+"BM1403CDA-S61806X": [
+6699.0,
+"AMD Ryzen 7 170",
+16,
+512
+],
+"BM1403CDA-S61803X": [
+5999.0,
+"AMD Ryzen 5 150",
+16,
+512
+]
+},
+"business_p10": {
+"P3406CCAP-LY5150WS": [
+5999.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"P3406CCAP-LY7150WS": [
+6499.0,
+"Intel Core Ultra 7 Processor 255H",
+16,
+512
+],
+"P3606CCA-MB5150WS": [
+6099.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"P3606CCAP-MB5150WS": [
+5999.0,
+"Intel Core Ultra 5 Processor 225H",
+16,
+512
+],
+"P3606CCAP-MB7150WS": [
+6499.0,
+"Intel Core Ultra 7 Processor 255H",
+16,
+512
+],
+"PM3406CHAP-LY0268WS": [
+4599.0,
+"AMD Ryzen 7 8840HS",
+16,
+512
+],
+"PM3606CHAP-MB0164WS": [
+4599.0,
+"AMD Ryzen 7 8840HS",
+16,
+512
+],
+"P1403CVA-S61159X": [
+4399.0,
+"Intel Core i5-13420H",
+8,
+512
+],
+"P1503CVA-S72874WS": [
+4099.0,
+"Intel Core 5 Processor 210H",
+16,
+512
+],
+"PM1503CDA-S70516WS": [
+3999.0,
+"AMD Ryzen 5 150",
+16,
+512
+]
+}
+}

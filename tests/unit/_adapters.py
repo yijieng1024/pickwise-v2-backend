@@ -663,3 +663,4 @@ from app.config import Settings  # noqa: E402,F401 - class only; reading default
 from app.config import _Lazy  # noqa: E402,F401 - the deferred-construction proxy behind app.database.engine
 from app.reviews import discovery as review_discovery  # noqa: E402,F401 - search.list title handling
 from app.laptops import marketplace  # noqa: E402,F401 - Shopee/Lazada search text for the details page
+from app.scripts import extract_price_guide  # noqa: E402,F401
