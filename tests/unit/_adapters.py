@@ -644,6 +644,7 @@ from app.reviews import jobs as review_jobs  # noqa: E402,F401 - background-job 
 from app.laptops import laptop_models  # noqa: E402,F401 - the Laptop write event
 from app.scraper import bulk_scraper  # noqa: E402,F401 - which brands have a scraper
 from app.scraper import router as scraper_router  # noqa: E402,F401
+from app.scraper import hp_scraper  # noqa: E402,F401
 from app.scraper import asus_scraper  # noqa: E402,F401 - parsers only; fixtures, no network
 from app.scraper import nuxt_state  # noqa: E402,F401 - the Nuxt 3 payload reviver
 from app.reviews import link_service as review_link_service  # noqa: E402,F401 - effective links, one rule for every reader

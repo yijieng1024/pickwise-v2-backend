@@ -69,6 +69,18 @@ def nuxt2_state(html: str) -> dict:
     return root
 
 
+def read_js_object(source: str) -> dict:
+    """The object literal at the start of *source*, which may run on past it.
+    For inline scripts that hold data as JavaScript rather than JSON (single
+    quotes, bare keys). Never executed; an identifier raises."""
+    try:
+        return _Literal(source, {}).value()
+    except NuxtStateError:
+        raise
+    except (IndexError, ValueError, KeyError, TypeError) as exc:
+        raise NuxtStateError(f"object literal could not be read: {exc!r}") from exc
+
+
 def _read_nuxt2(source: str) -> object:
     outer = _Literal(source, {})
     for token in ("(", "function", "("):

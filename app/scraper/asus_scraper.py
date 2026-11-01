@@ -16,8 +16,7 @@ import re
 from typing import Callable
 
 from playwright.async_api import async_playwright
-from scrapling.fetchers import Fetcher
-
+from .fetch import fetch_html as _fetch
 from .nuxt_state import nuxt2_state, nuxt3_state
 from .playwright_utils import run_async_playwright
 
@@ -31,14 +30,6 @@ _SERIES_API = (
 _PAGE_SIZE = 20
 # ~7 pages today (130 products); hitting this means the paging stopped working
 _MAX_PAGES = 30
-
-
-def _fetch(url: str) -> str:
-    """One plain HTTP GET (sync: callers run it through asyncio.to_thread)."""
-    page = Fetcher.get(url, impersonate="chrome", stealthy_headers=True, timeout=30)
-    if page.status != 200:
-        raise RuntimeError(f"HTTP {page.status} from {url}")
-    return page.body.decode("utf-8", "replace")
 
 
 # ---------------------------------------------------------------------------

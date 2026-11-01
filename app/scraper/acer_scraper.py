@@ -189,6 +189,35 @@ def _parse_prices(doc) -> dict[str, str]:
 _CDN_PRODUCT_PATH = "/media/catalog/product/"
 
 
+def _gallery_urls(doc) -> list[str]:
+    """Every photo in Magento's `mage/gallery/gallery` block, unfiltered. HP
+    reads this too; it is the one source that holds only this product's own."""
+    urls: list[str] = []
+
+    for script in doc.xpath("//script[@type='text/x-magento-init']"):
+        text = script.text or ""
+        if "mage/gallery/gallery" not in text:
+            continue
+        try:
+            config = json.loads(text)
+        except ValueError:
+            continue
+
+        for components in config.values():
+            if not isinstance(components, dict):
+                continue
+            gallery = components.get("mage/gallery/gallery") or {}
+            for entry in gallery.get("data") or []:
+                if not isinstance(entry, dict):
+                    continue
+                # Video entries carry a null `full`
+                full = entry.get("full") or entry.get("img") or entry.get("thumb")
+                if isinstance(full, str):
+                    urls.append(full)
+
+    return urls
+
+
 def _parse_image_urls(doc) -> list[str]:
     """
     Product photos.
@@ -220,28 +249,7 @@ def _parse_image_urls(doc) -> list[str]:
     filtering, so a source returning only junk (a save-rewritten local path,
     say) counted as a hit and suppressed the sources that would have worked.
     """
-    candidates: list[str] = []
-
-    for script in doc.xpath("//script[@type='text/x-magento-init']"):
-        text = script.text or ""
-        if "mage/gallery/gallery" not in text:
-            continue
-        try:
-            config = json.loads(text)
-        except ValueError:
-            continue
-
-        for components in config.values():
-            if not isinstance(components, dict):
-                continue
-            gallery = components.get("mage/gallery/gallery") or {}
-            for entry in gallery.get("data") or []:
-                if not isinstance(entry, dict):
-                    continue
-                # Video entries carry a null `full`
-                full = entry.get("full") or entry.get("img") or entry.get("thumb")
-                if isinstance(full, str):
-                    candidates.append(full)
+    candidates = _gallery_urls(doc)
 
     candidates.extend(doc.xpath("//meta[@property='og:image']/@content"))
     candidates.extend(doc.xpath("//meta[@name='twitter:image']/@content"))
