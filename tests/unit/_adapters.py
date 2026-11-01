@@ -664,3 +664,7 @@ from app.config import _Lazy  # noqa: E402,F401 - the deferred-construction prox
 from app.reviews import discovery as review_discovery  # noqa: E402,F401 - search.list title handling
 from app.laptops import marketplace  # noqa: E402,F401 - Shopee/Lazada search text for the details page
 from app.scripts import extract_price_guide  # noqa: E402,F401
+from app.scripts import fetch_guide_pdf, write_price_guide  # noqa: E402,F401
+from app.laptops import price_guide  # noqa: E402,F401 - the match decision, pure
+from app.common import db_target  # noqa: E402,F401
+from app.processor import engine as processor_engine  # noqa: E402,F401

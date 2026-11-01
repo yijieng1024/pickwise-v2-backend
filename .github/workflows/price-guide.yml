@@ -1,0 +1,74 @@
+name: Price guide
+
+# Reads one product guide PDF from Drive, extracts its rows and stores them in the
+# staging tables (price_guides, price_guide_rows). It never writes to laptops or
+# laptop_price_history: prices reach those only through the admin preview and apply.
+#
+# workflow_dispatch ONLY, never pull_request. This workflow holds the production
+# DATABASE_URL, and a pull_request trigger would run a fork's edited copy of it.
+# Each step sees only the secret it needs, and extraction sees none.
+#
+# Started by POST /admin/price-guides/extract, or by hand from the Actions tab.
+
+on:
+  workflow_dispatch:
+    inputs:
+      drive_file_id:
+        description: The PDF's Drive file id (in a folder shared with the service account)
+        required: true
+        type: string
+      kind:
+        description: Which guide
+        required: true
+        type: choice
+        options: [consumer, rog, business]
+      uploaded_by:
+        description: The admin's user id (empty when started by hand)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: price-guide
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Download the PDF
+        id: fetch
+        env:
+          SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          DRIVE_FILE_ID: ${{ inputs.drive_file_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export GOOGLE_SERVICE_ACCOUNT_KEY_FILE="$RUNNER_TEMP/service-account.json"
+          trap 'rm -f "$GOOGLE_SERVICE_ACCOUNT_KEY_FILE"' EXIT
+          printf '%s' "$SERVICE_ACCOUNT_KEY" > "$GOOGLE_SERVICE_ACCOUNT_KEY_FILE"
+          pdf=$(python -m app.scripts.fetch_guide_pdf "$DRIVE_FILE_ID" --out-dir "$RUNNER_TEMP/guide" | tail -n 1)
+          echo "pdf=$pdf" >> "$GITHUB_OUTPUT"
+
+      - name: Extract the rows
+        env:
+          PDF: ${{ steps.fetch.outputs.pdf }}
+          KIND: ${{ inputs.kind }}
+        run: python -m app.scripts.extract_price_guide "$PDF" --kind "$KIND" --out "$RUNNER_TEMP/rows.json"
+
+      - name: Write to the staging tables
+        env:
+          PRICE_GUIDE_TARGET: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PRODUCTION_DB_REF: ${{ secrets.PRODUCTION_DB_REF }}
+          UPLOADED_BY: ${{ inputs.uploaded_by }}
+        run: python -m app.scripts.write_price_guide "$RUNNER_TEMP/rows.json" --uploaded-by "$UPLOADED_BY"

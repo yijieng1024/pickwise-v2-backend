@@ -1,7 +1,9 @@
 """The SKU a scraper leaves in a raw row."""
 import pytest
 
-from app.processor.engine import raw_sku
+from ._adapters import processor_engine
+
+raw_sku = processor_engine.raw_sku
 
 
 @pytest.mark.parametrize("dump, expected", [

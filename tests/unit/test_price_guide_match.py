@@ -1,7 +1,10 @@
 """The decision of which catalog row a guide row prices. Nothing unclear is written."""
 import pytest
 
-from app.laptops.price_guide import CatalogRow, GuideRow, cpu_part, match
+from ._adapters import price_guide
+
+CatalogRow, GuideRow = price_guide.CatalogRow, price_guide.GuideRow
+cpu_part, match = price_guide.cpu_part, price_guide.match
 
 
 def guide(sku="P1403CVA-S61159X", price=4399.0, cpu="Intel Core i5-13420H", ram=8, ssd=512, model_code=None):

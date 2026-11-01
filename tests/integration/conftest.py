@@ -26,13 +26,14 @@ fixture rolls back).
 
 import contextlib
 import os
-import re
 import uuid
 
 import pytest
 from dotenv import load_dotenv
 from sqlalchemy import MetaData, text
 from sqlmodel import Session, SQLModel, create_engine
+
+from app.common.db_target import project_ref  # noqa: F401 - test_migrations imports it from here
 
 load_dotenv(".env")
 
@@ -78,26 +79,6 @@ _SKIP_REASON = (
     "or install Docker so testcontainers can start pgvector/pgvector itself.\n"
     "This tier is skipped rather than passed on purpose — it has run nothing."
 )
-
-
-# Supabase project ref, from either connection style:
-#   direct  postgresql://postgres:pw@db.<ref>.supabase.co:5432/postgres
-#   pooler  postgresql://postgres.<ref>:pw@aws-0-<region>.pooler.supabase.com:5432/postgres
-# The pooler puts the ref in the USERNAME, not the host, so one pattern is not
-# enough and matching on the host alone silently fails on the pooler URL.
-_DIRECT_REF = re.compile(r"(?:^|@|\.)db\.([a-z0-9]{16,})\.supabase\.co", re.I)
-_POOLER_REF = re.compile(r"//postgres\.([a-z0-9]{16,})[:@]", re.I)
-
-
-def project_ref(url: str) -> str | None:
-    """The Supabase project ref in `url`, or None if it is not a Supabase URL."""
-    if not url:
-        return None
-    for pattern in (_POOLER_REF, _DIRECT_REF):
-        match = pattern.search(url)
-        if match:
-            return match.group(1).lower()
-    return None
 
 
 def assert_not_production(url: str) -> None:
