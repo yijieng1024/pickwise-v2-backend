@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
@@ -37,6 +38,9 @@ class PickScoreResponse(BaseModel):
     mode: str
     breakdown: List[FactorBreakdown]
     flags: Dict[str, Any]
+    # {"cpu": ..., "gpu": ...}, for the footnote under the factor list. Set by
+    # the route: the engine stays free of database reads.
+    benchmarks_refreshed_at: Optional[Dict[str, Optional[datetime]]] = None
 
 
 class BatchPickScoreResponse(BaseModel):

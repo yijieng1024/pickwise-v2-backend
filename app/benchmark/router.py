@@ -3,8 +3,7 @@ from sqlmodel import Session, select
 from typing import List, Optional
 from uuid import UUID
 
-from app.benchmark.cpu_scraper import run_cpu_list_scraper
-from app.benchmark.gpu_scraper import run_gpu_list_scraper
+from app.benchmark.passmark_scraper import run_cpu_list_scraper, run_gpu_list_scraper
 from app.common.pagination_service import PaginationParams, count_total, paginate
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query

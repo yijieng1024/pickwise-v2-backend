@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Session, select
 
 from app.agent.monitoring_models import AgentRunLog
+from app.benchmark.model import latest_refreshes
 from app.common.app_settings import REVIEW_PAUSE_REASON_KEY, get_setting_row
 from app.common.job_model import BackgroundJob, JobRead, JobStatus
 from app.common.llm_usage import LLMFeature, LLMUsageLog
@@ -51,6 +52,11 @@ _API_SERIES = {
     "review_processing": (LLMFeature.REVIEW_CHUNK,),
     "ai_cleanup": (LLMFeature.PROCESSOR_EXTRACT, LLMFeature.PROCESSOR_CATEGORIZE),
 }
+
+
+def _latest_passmark_refresh(session: Session) -> Optional[datetime]:
+    """The newer of the two lists' refreshes; None until one has run."""
+    return max(filter(None, latest_refreshes(session).values()), default=None)
 
 
 def _utc(value: Optional[datetime]) -> Optional[datetime]:
@@ -228,8 +234,7 @@ def dashboard_summary(session: Session = Depends(get_session)) -> dict:
         },
         "freshness": {
             "scrape_by_brand": scrape_by_brand,
-            # No record of a PassMark refresh exists until step 10 adds one.
-            "passmark_refreshed_at": None,
+            "passmark_refreshed_at": _latest_passmark_refresh(session),
             "pickscore_recalculated_at": _utc(pickscore_at),
             # Amber when pickscore_recalculated_at is older than this.
             "catalog_changed_at": _utc(catalog_changed_at),

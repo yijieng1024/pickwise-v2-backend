@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.benchmark.model import latest_refreshes
 from app.common.job_model import JobAccepted, JobType
 from app.common.job_service import create_job, job_accepted, refuse_if_running, run_job
 from app.database import get_session
@@ -72,6 +73,7 @@ class UseCasePickScore(BaseModel):
 class LaptopPickScoresResponse(BaseModel):
     laptop_id: uuid.UUID
     scores: List[UseCasePickScore]
+    benchmarks_refreshed_at: Dict[str, Optional[datetime]]
 
 
 @router.get("/{laptop_id}/pick-scores", response_model=LaptopPickScoresResponse)
@@ -109,6 +111,7 @@ def get_laptop_pick_scores(
             )
             for r in sorted(rows, key=lambda r: list(USE_CASE_PRIORITIES).index(r.use_case))
         ],
+        benchmarks_refreshed_at=latest_refreshes(session),
     )
 
 
@@ -268,7 +271,9 @@ def calculate_score(
     laptop, brand_name = _resolve_laptop(session, body.laptop_id)
     ranges, cpu_bm, gpu_bm, user_pref = _fetch_shared_data(session, body.user_id)
     product = laptop_to_scorable(laptop, brand_name)
-    return calculate_pick_score(product, user_pref, ranges, cpu_bm, gpu_bm)
+    score = calculate_pick_score(product, user_pref, ranges, cpu_bm, gpu_bm)
+    score.benchmarks_refreshed_at = latest_refreshes(session)
+    return score
 
 
 @router.post("/calculate-score/batch", response_model=BatchPickScoreResponse, dependencies=[Depends(get_current_user)])
@@ -281,10 +286,13 @@ def calculate_score_batch(
 
     ranges, cpu_bm, gpu_bm, user_pref = _fetch_shared_data(session, body.user_id)
 
+    refreshed_at = latest_refreshes(session)
     results = []
     for laptop_id in body.laptop_ids:
         laptop, brand_name = _resolve_laptop(session, laptop_id)
         product = laptop_to_scorable(laptop, brand_name)
-        results.append(calculate_pick_score(product, user_pref, ranges, cpu_bm, gpu_bm))
+        score = calculate_pick_score(product, user_pref, ranges, cpu_bm, gpu_bm)
+        score.benchmarks_refreshed_at = refreshed_at
+        results.append(score)
 
     return BatchPickScoreResponse(results=results)
