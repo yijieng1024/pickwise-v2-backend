@@ -41,6 +41,8 @@ Different user groups (students, people who don't understand specs, people decid
 | How fast fallback happens | Within 1 minute. The primary gets a single attempt (no retries on the same model) and a 60 s total deadline per LLM call; a 429 switches immediately. Switching only happens before the answer starts streaming to the user, never mid-stream |
 | Fallback within an agent turn (decided 2026-11-01) | **Sticky.** Once a step of a turn is answered at chain position k, every later step of that turn starts at k, and only ever moves further down. Each new user message starts at the primary again. Decided after run b6471466: the primary never succeeded, every step waited for it to fail before a backup answered, so 5 steps took 242 s, and mixing models across steps ended in a 400 `thought_signature` error. The stream rule is unchanged: no switch after the first token |
 | Recording an agent turn's model calls (decided 2026-11-01) | One row per model call in a new `agent_model_calls` table, failed calls included, listed in the Chatbot Monitoring run detail. The same investigation could not say which model made which step, because `agent_run_logs` is per turn and `llm_usage_logs` is per model and only sees calls that succeeded. `fallback_triggered` now means "a backup answered at least one step", not "a backup was started"; rows written before this keep the old meaning |
+| Pick Scores after a PassMark refresh (decided 2026-11-01) | A successful refresh queues a Pick Score `generate-all` job by itself and records it in the PassMark job's `result`. A failed or cancelled refresh queues nothing |
+| Migrations check in CI (decided 2026-11-01) | Compares the whole push (`github.event.before..HEAD`), with a fallback for a new branch, instead of `HEAD^..HEAD`. Push `3133099` added a migration and ended on a docs commit, so the job was skipped |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
 | Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs |
 | Writing scraped data | Processed results are written straight into the catalog (no approval queue) |
@@ -451,20 +453,25 @@ Before the sites, one `refactor:` commit with no behaviour change: brand dispatc
 - **A PassMark run holds one database connection for about 12 minutes** (measured on the test database: 6,063 CPU + 2,871 GPU rows, upserted one at a time). That is a reason to move it to GitHub Actions in step 11
 
 *Risks*
-- Live site: changed raw text can change specs when a laptop is re-processed. The old against new diffs are the guard. A PassMark refresh moves marks, so after the next `generate-all` Pick Scores move as well (expected, since factors are percentiles). Run `python -m app.scripts.dump_pickscore` before and after on the test DB
+- Live site: changed raw text can change specs when a laptop is re-processed. The old against new diffs are the guard. A PassMark refresh moves marks, and since 2026-11-01 it queues `generate-all` itself, so Pick Scores move right after it (expected, since factors are percentiles). Run `python -m app.scripts.dump_pickscore` before and after on the test DB
 - Admin: no endpoint shapes change. Scrapes get much faster, which is why the pause between targets is added
 
 **Phase 3: product guide import and price extraction (consumer, ROG, business)**
 
 *Where the PDF goes.* The Q3 guides are **84 MB (consumer), 158 MB (ROG) and 258 MB (business)**. Storing them in Postgres (Supabase free tier: 500 MB) or uploading and parsing them on Render's free instance (512 MB RAM, a disk wiped on every deploy) isn't workable. **Decided (Jack, 2026-10-28): the PDF is stored in Google Drive and extracted in GitHub Actions.**
-1. Jack puts the PDF in Drive, either directly or from a new page in the admin. The admin upload goes from the browser straight to Drive through a resumable upload session the backend creates; the file never passes through the backend (Render has 512 MB RAM)
+*Decided (Jack, 2026-11-01); these replace the browser upload and the POST-endpoint option.*
+- **Upload path:** Jack puts the PDF in a Drive folder shared with the service account and pastes its link on the admin page. No browser upload for now
+- **Rows path:** the GitHub Actions workflow writes the extracted rows straight into the staging tables (`price_guides`, `price_guide_rows`) in the production database, using a `DATABASE_URL` secret. It never writes to `laptops` or `laptop_price_history`; the admin preview and apply stay as planned. The workflow runs only on `workflow_dispatch`, never on `pull_request`, so forks never get the secret. `extract_price_guide` stays database-free, and a separate small step writes its output. The write step checks the database it is about to touch, the same way the alembic guard does, and logs only the host
+- **Blocker:** Jack creates the service account and the test Drive folder. No Drive code until then
+
+1. Jack puts the PDF in the shared Drive folder and pastes its link on the admin page
 2. A GitHub Actions workflow reads the PDF from Drive through a Google service account and runs `python -m app.scripts.extract_price_guide <pdf> --kind consumer|rog|business --out rows.json`. The script itself touches no database and no network. It finds the price pages by content (pages with both `RM` amounts and SKU-shaped words, as the survey overview counted), not by the hard-coded page ranges the survey scripts used. For each SKU it extracts `sku`, `price_rm` (or null), `page`, and where the page gives them, `cpu`, `ram_gb`, `ssd_gb`. It also prints a per-page summary for the hand check
-3. The extracted rows reach the admin "Price guides" page, where Jack gets the match preview and then applies it (unchanged from here on)
+3. A separate workflow step writes `rows.json` into `price_guides` and `price_guide_rows`. The admin "Price guides" page reads them, and Jack gets the match preview and then applies it (unchanged from here on)
 4. Stored: `price_guides` (`id`, `kind`, `filename`, `pdf_sha256`, `edition_text` from the cover, `uploaded_at` = the guide's date, `uploaded_by`, `row_count`) and `price_guide_rows` (`guide_id`, `sku`, `model_code` = the part of the SKU before the hyphen, `cpu`, `ram_gb`, `ssd_gb`, `price_rm` nullable, `page`). The sha256 identifies the exact PDF a price came from, without storing the PDF itself
 - **Short survey at the start of Phase 3 (not before):**
-  - A service account may have no storage quota of its own, so uploading through it into Jack's Drive could fail; reading a file shared with it should work. Check both. If upload fails, the admin upload uses Jack's own OAuth and the service account only reads
-  - The resumable upload session: the backend creates it and hands the session URL to the browser, so a 258 MB file never goes through Render
-  - How the admin triggers the workflow (for example `workflow_dispatch` through the GitHub API) and how the extracted rows get back to the preview
+  - Reading a file shared with the service account works, on a 258 MB PDF
+  - How the admin page triggers the workflow with the pasted link (for example `workflow_dispatch` through the GitHub API)
+  - `price_guides.uploaded_by`: the workflow has no logged-in user, so the column is nullable or the admin page passes the id as a workflow input
 - The hand check of 3 pages per guide on each new edition stays
 
 *How a guide row is matched to a catalog row* (`app/laptops/price_guide.py`, one pure function `match(guide_rows, catalog_rows) -> MatchResult`, so the whole decision is unit-tested with no database)
