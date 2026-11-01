@@ -39,6 +39,8 @@ Different user groups (students, people who don't understand specs, people decid
 | Where the LLM setting lives | An admin page, so the model can be switched without a redeploy. Stored in the existing `app_settings` key/value table (which already holds `processor.model`), not a new table |
 | Quota | Google's Gemini API quota is per model, so falling back to another model on a 429 is useful |
 | How fast fallback happens | Within 1 minute. The primary gets a single attempt (no retries on the same model) and a 60 s total deadline per LLM call; a 429 switches immediately. Switching only happens before the answer starts streaming to the user, never mid-stream |
+| Fallback within an agent turn (decided 2026-11-01) | **Sticky.** Once a step of a turn is answered at chain position k, every later step of that turn starts at k, and only ever moves further down. Each new user message starts at the primary again. Decided after run b6471466: the primary never succeeded, every step waited for it to fail before a backup answered, so 5 steps took 242 s, and mixing models across steps ended in a 400 `thought_signature` error. The stream rule is unchanged: no switch after the first token |
+| Recording an agent turn's model calls (decided 2026-11-01) | One row per model call in a new `agent_model_calls` table, failed calls included, listed in the Chatbot Monitoring run detail. The same investigation could not say which model made which step, because `agent_run_logs` is per turn and `llm_usage_logs` is per model and only sees calls that succeeded. `fallback_triggered` now means "a backup answered at least one step", not "a backup was started"; rows written before this keep the old meaning |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
 | Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs |
 | Writing scraped data | Processed results are written straight into the catalog (no approval queue) |
@@ -122,6 +124,7 @@ Different user groups (students, people who don't understand specs, people decid
 
 **Observability**
 - Record which model actually answered (primary or backup) in `agent_run_logs` and show it on the monitoring page
+- Record every model call of an agent turn, failed ones included, in `agent_model_calls` (see Decisions made)
 
 **Before trusting a backup model**
 - Run the eval harness against it: tool calling must work, and the `PRICE CLAIMS` / `SCOPE ENFORCEMENT` prompt blocks were tuned for Gemma, so behaviour may differ
