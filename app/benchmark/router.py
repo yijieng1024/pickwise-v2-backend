@@ -3,12 +3,15 @@ from sqlmodel import Session, select
 from typing import List, Optional
 from uuid import UUID
 
-from app.benchmark.passmark_scraper import run_cpu_list_scraper, run_gpu_list_scraper
+from app.benchmark.passmark_scraper import SOURCES, refresh_worker
+from app.common.job_model import JobAccepted, JobType
+from app.common.job_service import create_job, job_accepted, refuse_if_running, run_job
 from app.common.pagination_service import PaginationParams, count_total, paginate
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
 from app.database import get_session
 from app.users.auth import get_current_admin
+from app.users.models import User
 from app.benchmark.model import (
     CPUBenchmark, CPUBenchmarkCreate, CPUBenchmarkUpdate, CPUBenchmarkRead,
     GPUBenchmark, GPUBenchmarkCreate, GPUBenchmarkUpdate, GPUBenchmarkRead
@@ -19,6 +22,28 @@ router = APIRouter(prefix="/benchmarks", tags=["Benchmarks"])
 # Allow-lists for ?sort_by= — see app.common.sorting_service.
 CPU_SORTABLE_COLUMNS = {"cpu_name": CPUBenchmark.cpu_name, "cpu_mark": CPUBenchmark.cpu_mark}
 GPU_SORTABLE_COLUMNS = {"gpu_name": GPUBenchmark.gpu_name, "gpu_mark": GPUBenchmark.gpu_mark}
+
+# Measured: 8,934 rows in about 12 minutes, one upsert at a time. Only feeds the
+# 202's ETA; the job's real progress comes from its row counts.
+_SECONDS_PER_ROW = 0.08
+
+
+def _start_refresh(
+    source: str, job_type: str, background_tasks: BackgroundTasks, session: Session, admin: User
+) -> JobAccepted:
+    """One PassMark refresh as a background job. 409 while either list is running."""
+    refuse_if_running(session, JobType.PASSMARK, "A PassMark refresh is already running.")
+    job = create_job(
+        session,
+        job_type=job_type,
+        total_count=SOURCES[source].min_rows,  # corrected once the list is fetched
+        params={"source": source},
+        created_by=admin.id,
+        seconds_per_item=_SECONDS_PER_ROW,
+    )
+    background_tasks.add_task(run_job, job.id, refresh_worker(source))
+    return job_accepted(job, message=f"Refreshing PassMark {source.upper()} marks in the background.")
+
 
 # CPU BENCHMARK ENDPOINTS
 
@@ -93,24 +118,19 @@ def delete_cpu_benchmark(
     db.commit()
     return
 
-@router.post("/scrape/cpu", status_code=status.HTTP_200_OK, dependencies=[Depends(get_current_admin)])
+@router.post("/scrape/cpu", response_model=JobAccepted, status_code=status.HTTP_202_ACCEPTED)
 def trigger_cpu_scraper(
     background_tasks: BackgroundTasks,
-    admin: dict = Depends(get_current_admin)
-):
+    session: Session = Depends(get_session),
+    admin: User = Depends(get_current_admin),
+) -> JobAccepted:
     """
-    Admin protected route to run the PassMark scraper pipeline.
-    Dispatched via FastAPI BackgroundTasks to keep response execution non-blocking.
+    Refresh the PassMark CPU list. **Returns 202 with a job.** Poll `poll_url`; the
+    finished job's `result` holds `rows_written`. A list below the row floor fails
+    the job with the reason. 409 while either PassMark refresh is running.
     """
-    try:
-        # Offload the execution to background tasks so your API worker doesn't time out
-        background_tasks.add_task(run_cpu_list_scraper)
-        return {"status": "success", "message": "PassMark CPU list scraper pipeline initialized in background."}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"Failed to initialize scraper flow: {str(e)}"
-        )
+    return _start_refresh("cpu", JobType.PASSMARK_CPU, background_tasks, session, admin)
+
     
 
 # GPU BENCHMARK ENDPOINTS
@@ -186,21 +206,15 @@ def delete_gpu_benchmark(
     db.commit()
     return
 
-@router.post("/scrape/gpu", status_code=status.HTTP_200_OK, dependencies=[Depends(get_current_admin)])
+@router.post("/scrape/gpu", response_model=JobAccepted, status_code=status.HTTP_202_ACCEPTED)
 def trigger_gpu_scraper(
     background_tasks: BackgroundTasks,
-    admin: dict = Depends(get_current_admin)
-):
+    session: Session = Depends(get_session),
+    admin: User = Depends(get_current_admin),
+) -> JobAccepted:
     """
-    Admin protected route to run the PassMark Video Card list scraper pipeline.
-    Dispatched via FastAPI BackgroundTasks to keep response execution non-blocking.
+    Refresh the PassMark Video Card list. **Returns 202 with a job.** Poll `poll_url`; the
+    finished job's `result` holds `rows_written`. A list below the row floor fails
+    the job with the reason. 409 while either PassMark refresh is running.
     """
-    try:
-        # Offload the execution to background tasks so your API worker doesn't time out
-        background_tasks.add_task(run_gpu_list_scraper)
-        return {"status": "success", "message": "PassMark GPU list scraper pipeline initialized in background."}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"Failed to initialize scraper flow: {str(e)}"
-        )
+    return _start_refresh("gpu", JobType.PASSMARK_GPU, background_tasks, session, admin)

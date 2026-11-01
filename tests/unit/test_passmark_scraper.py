@@ -49,15 +49,15 @@ def test_the_header_row_is_not_a_row():
 @pytest.mark.parametrize("source, fixture", [("cpu", "passmark_cpu.html"), ("gpu", "passmark_gpu.html")])
 def test_a_list_below_the_floor_raises_and_never_reaches_the_database(monkeypatch, source, fixture):
     monkeypatch.setattr(passmark_scraper, "fetch_html", lambda url: _read(fixture))
-    # Any database use is blocked and recorded in this tier, so reaching it fails too
+    # No session and no progress to reach: going past the floor is an AttributeError
     with pytest.raises(ValueError, match="below the floor"):
-        passmark_scraper.refresh(source)
+        passmark_scraper.refresh(source, None, None)
 
 
 def test_a_challenge_page_returning_200_raises(monkeypatch):
     monkeypatch.setattr(passmark_scraper, "fetch_html", lambda url: "<html>Just a moment...</html>")
     with pytest.raises(ValueError, match="has 0 rows"):
-        passmark_scraper.refresh("cpu")
+        passmark_scraper.refresh("cpu", None, None)
 
 
 def test_passmarks_own_date_is_read_when_the_page_gives_one():

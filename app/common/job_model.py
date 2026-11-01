@@ -74,6 +74,8 @@ class JobType:
     REVIEW_PROCESS = "reviews.process"
     REVIEW_PROCESS_BULK = "reviews.process_bulk"
     REVIEW_REMATCH = "reviews.rematch"
+    PASSMARK_CPU = "benchmarks.refresh_cpu"
+    PASSMARK_GPU = "benchmarks.refresh_gpu"
 
     ALL = (
         PROCESS_PENDING,
@@ -87,7 +89,12 @@ class JobType:
         REVIEW_PROCESS,
         REVIEW_PROCESS_BULK,
         REVIEW_REMATCH,
+        PASSMARK_CPU,
+        PASSMARK_GPU,
     )
+
+    # One lock for both lists: each run holds a connection for about 12 minutes.
+    PASSMARK = (PASSMARK_CPU, PASSMARK_GPU)
 
     # The review pipeline page's "recent runs".
     REVIEWS = (

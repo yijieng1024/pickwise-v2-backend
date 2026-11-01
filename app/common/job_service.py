@@ -125,13 +125,16 @@ class JobProgress:
         succeeded: bool = True,
         item: Optional[str] = None,
         error: Optional[str] = None,
+        count: int = 1,
     ) -> None:
+        """*count* is for jobs too fast to report per item (PassMark's rows)."""
+
         def _apply(job: BackgroundJob) -> None:
-            job.processed_count += 1
+            job.processed_count += count
             if succeeded:
-                job.succeeded_count += 1
+                job.succeeded_count += count
             else:
-                job.failed_count += 1
+                job.failed_count += count
                 if error and len(job.errors) < _MAX_STORED_ERRORS:
                     # Reassign rather than mutate — SQLAlchemy does not track
                     # in-place edits of a JSONB list.

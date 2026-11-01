@@ -5,24 +5,28 @@ Plain HTTP with Scrapling's `Fetcher`: the whole table is in the raw HTML, so no
 browser. Both pages have the same table, with the same id.
 
 A run below the row floor raises and writes nothing: a challenge page is a 200
-too, and would otherwise parse as a successful refresh of 0 rows.
+too, and would otherwise parse as a successful refresh of 0 rows. Runs are
+background jobs (`refresh_worker`), so that failure reaches the Jobs page with
+its reason.
+
+The whole run is one transaction, so a run that stops for any reason leaves the
+old marks as they were.
 """
 import re
 from dataclasses import dataclass
-from typing import Optional, Type
+from typing import Callable, Optional, Type
 
 from lxml import html as lxml_html
 from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, SQLModel
 
 from app.benchmark.model import BenchmarkRefresh, CPUBenchmark, GPUBenchmark
-from app.database import engine
-from app.logger import get_logger
+from app.common.job_service import JobProgress
 from app.scraper.fetch import fetch_html
 
-logger = get_logger(__name__)
-
 _LAST_UPDATED = re.compile(r"Last updated on the [^<]{1,60}")
+# Progress and the cancel check, in rows. A job update per row would double the run.
+_REPORT_EVERY = 500
 
 
 @dataclass(frozen=True)
@@ -58,40 +62,46 @@ def _source_updated_text(html: str) -> Optional[str]:
     return match.group(0).strip() if match else None
 
 
-def refresh(source_name: str) -> int:
+def refresh(source_name: str, session: Session, progress: JobProgress) -> dict:
     """Fetch one list and upsert it; the refresh row goes in the same transaction."""
     source = SOURCES[source_name]
-    try:
-        html = fetch_html(source.url)
-        rows = parse_passmark_table(html)
-        if len(rows) < source.min_rows:
-            raise ValueError(
-                f"PassMark {source_name} list has {len(rows)} rows, below the floor of "
-                f"{source.min_rows}: a challenge page or a changed table, so nothing was written"
+    html = fetch_html(source.url)
+    rows = parse_passmark_table(html)
+    if len(rows) < source.min_rows:
+        raise ValueError(
+            f"PassMark {source_name} list has {len(rows)} rows, below the floor of "
+            f"{source.min_rows}: a challenge page or a changed table, so nothing was written"
+        )
+
+    progress.set_total(len(rows))
+    for start in range(0, len(rows), _REPORT_EVERY):
+        batch = rows[start:start + _REPORT_EVERY]
+        for name, mark in batch:
+            session.exec(
+                insert(source.model)
+                .values({source.name_column: name, source.mark_column: mark})
+                .on_conflict_do_update(index_elements=[source.name_column], set_={source.mark_column: mark})
             )
+        progress.advance(count=len(batch))
+        if progress.cancel_requested:
+            session.rollback()
+            return {"source": source_name, "written": False, "rows_written": 0}
 
-        with Session(engine) as session:
-            for name, mark in rows:
-                session.exec(
-                    insert(source.model)
-                    .values({source.name_column: name, source.mark_column: mark})
-                    .on_conflict_do_update(index_elements=[source.name_column], set_={source.mark_column: mark})
-                )
-            session.add(BenchmarkRefresh(
-                source=source_name, row_count=len(rows), source_updated_text=_source_updated_text(html),
-            ))
-            session.commit()
-    except Exception as e:
-        logger.error(f"PassMark {source_name} refresh failed: {e}")
-        raise
-
-    logger.info(f"PassMark {source_name} refresh: {len(rows)} rows")
-    return len(rows)
+    updated_text = _source_updated_text(html)
+    session.add(BenchmarkRefresh(source=source_name, row_count=len(rows), source_updated_text=updated_text))
+    session.commit()
+    return {
+        "source": source_name,
+        "written": True,
+        "rows_written": len(rows),
+        "source_updated_text": updated_text,
+    }
 
 
-def run_cpu_list_scraper() -> int:
-    return refresh("cpu")
+def refresh_worker(source_name: str) -> Callable[[Session, JobProgress], dict]:
+    """A `worker(session, progress)` for `run_job`."""
 
+    def worker(session: Session, progress: JobProgress) -> dict:
+        return refresh(source_name, session, progress)
 
-def run_gpu_list_scraper() -> int:
-    return refresh("gpu")
+    return worker
