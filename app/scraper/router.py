@@ -23,14 +23,7 @@ from datetime import datetime, timezone
 
 from app.laptops.brand_model import LaptopBrand
 from app.users.auth import get_current_admin
-from .apple_scraper import crawl_apple_specs_links, scrape_official_website
-from .asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
-from .hp_scraper import crawl_hp_specs_links, scrape_hp_laptop_specs
-from .acer_scraper import (
-    _parse_image_urls,
-    crawl_acer_specs_links,
-    scrape_acer_laptop_specs,
-)
+from .acer_scraper import _parse_image_urls
 from app.scraper.models import ScrapeStatus, ScrapeTarget, RawScrapLaptop
 from app.scraper.html_ingest import (
     MAX_HTML_BYTES,
@@ -49,7 +42,7 @@ from app.scraper.raw_html_model import (
 from app.common.job_model import JobAccepted, JobType
 from app.common.job_service import JobProgress, create_job, job_accepted, run_job
 from app.users.models import User
-from .bulk_scraper import _success_status, run_bulk_scrape, run_scrape_for_targets
+from .bulk_scraper import SCRAPERS, _success_status, run_bulk_scrape, run_scrape_for_targets
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -118,31 +111,14 @@ async def feed_crawler_queue(
     brand_name = brand.name
     session.commit()
 
-    found_urls = []
-
     # 1. Route based on Brand
-    if brand_name.lower() == "apple":
-        # apple_scraper is now async (see playwright_utils refactor)
-        found_urls = await crawl_apple_specs_links(start_url)
-    
-    elif brand_name.lower() == "asus":
-
-        # Playwright is async, so we await it
-        found_urls = await crawl_asus_specs_links(start_url)
-
-    elif brand_name.lower() == "acer":
-        # Lists the pages stored in raw_product_htmls — this brand is parsed
-        # from uploaded HTML (the store's WAF refuses automated requests)
-        found_urls = await crawl_acer_specs_links(start_url, session, brand.id)
-
-    elif brand_name.lower() == "hp":
-        # Magento store, live-crawlable — walks the listing's ?p=N pages
-        found_urls = await crawl_hp_specs_links(start_url)
-
-    else:
+    scrapers = SCRAPERS.get(brand_name.lower())
+    if scrapers is None:
         raise HTTPException(
             status_code=400, detail=f"Currently, {brand_name} brand crawling is not supported."
         )
+    crawl, _ = scrapers
+    found_urls = await crawl(start_url, session, brand.id)
 
     if not found_urls:
         return {"message": "No URLs found to add to the queue.", "added_count": 0}
@@ -208,30 +184,14 @@ async def scrape_url(
     brand_name = brand.name
     session.commit()
 
-    # 1. Route based on Brand — ASUS returns list[dict], Apple returns dict (wrapped below)
-    if brand_name.lower() == "apple":
-        raw_result = await scrape_official_website(request.url, brand_name, request.brand_id)  # type: ignore
-        variant_results = [raw_result]
-
-    elif brand_name.lower() == "asus":
-        # Returns list[dict] — one item per variant found on the page
-        variant_results = await scrape_asus_laptop_specs(request.url, request.brand_id)
-
-    elif brand_name.lower() == "acer":
-        # Returns list[dict] — always exactly one (simple products). Reads the
-        # page from raw_product_htmls, so it must have been uploaded first.
-        variant_results = await scrape_acer_laptop_specs(
-            request.url, request.brand_id, session
-        )
-
-    elif brand_name.lower() == "hp":
-        # Returns list[dict] — always exactly one (one SKU per page)
-        variant_results = await scrape_hp_laptop_specs(request.url, request.brand_id)
-
-    else:
+    # 1. Route based on Brand: one result per variant found on the page
+    scrapers = SCRAPERS.get(brand_name.lower())
+    if scrapers is None:
         raise HTTPException(
             status_code=400, detail=f"Currently, {brand_name} brand scraping is not supported."
         )
+    _, scrape = scrapers
+    variant_results = await scrape(request.url, request.brand_id, session)
 
     # 3. Check if every variant failed
     all_failed = all(v.get("status") == "failed" for v in variant_results)

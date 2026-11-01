@@ -24,17 +24,17 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Awaitable, Callable, List, Optional
 from uuid import UUID
 
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
-from app.scraper.apple_scraper import scrape_official_website
-from app.scraper.asus_scraper import scrape_asus_laptop_specs
-from app.scraper.acer_scraper import scrape_acer_laptop_specs
-from app.scraper.hp_scraper import scrape_hp_laptop_specs
+from app.scraper.apple_scraper import crawl_apple_specs_links, scrape_official_website
+from app.scraper.asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
+from app.scraper.acer_scraper import crawl_acer_specs_links, scrape_acer_laptop_specs
+from app.scraper.hp_scraper import crawl_hp_specs_links, scrape_hp_laptop_specs
 from app.scraper.models import RawScrapLaptop, ScrapeStatus, ScrapeTarget
 
 # Brands whose pages are uploaded by an admin and read from `raw_product_htmls`
@@ -45,10 +45,58 @@ HTML_UPLOAD_BRANDS = {"acer"}
 # enough to need none; plain HTTP would hit a site back to back.
 LIVE_FETCH_PAUSE_S = 1.5
 
-# Every brand _dispatch_scraper routes, lowercase. The admin Dashboard uses it
-# to say "No scraper" instead of "never scraped"; tests/unit/test_scraper_brands
-# fails if the two drift.
-SCRAPER_BRANDS = frozenset({"apple", "asus", "acer", "hp"})
+
+Crawl = Callable[[str, Session, UUID], Awaitable[list[str]]]
+Scrape = Callable[[str, UUID, Session], Awaitable[list[dict]]]
+
+
+# The brands' own functions differ, so these give every brand one signature.
+# Only Acer uses the session: it reads uploaded pages from raw_product_htmls.
+
+async def _crawl_apple(start_url: str, session: Session, brand_id: UUID) -> list[str]:
+    return await crawl_apple_specs_links(start_url)
+
+
+async def _crawl_asus(start_url: str, session: Session, brand_id: UUID) -> list[str]:
+    return await crawl_asus_specs_links(start_url)
+
+
+async def _crawl_acer(start_url: str, session: Session, brand_id: UUID) -> list[str]:
+    return await crawl_acer_specs_links(start_url, session, brand_id)
+
+
+async def _crawl_hp(start_url: str, session: Session, brand_id: UUID) -> list[str]:
+    return await crawl_hp_specs_links(start_url)
+
+
+async def _scrape_apple(url: str, brand_id: UUID, session: Session) -> list[dict]:
+    # Apple's scraper returns a single dict, every other brand a list
+    return [await scrape_official_website(url, "Apple", str(brand_id))]
+
+
+async def _scrape_asus(url: str, brand_id: UUID, session: Session) -> list[dict]:
+    return await scrape_asus_laptop_specs(url, brand_id)
+
+
+async def _scrape_acer(url: str, brand_id: UUID, session: Session) -> list[dict]:
+    return await scrape_acer_laptop_specs(url, brand_id, session)
+
+
+async def _scrape_hp(url: str, brand_id: UUID, session: Session) -> list[dict]:
+    return await scrape_hp_laptop_specs(url, brand_id)
+
+
+# The one place that says which brands exist: lowercase brand name -> (crawl,
+# scrape). Both routes and the bulk path read it, so a new brand is one line.
+SCRAPERS: dict[str, tuple[Crawl, Scrape]] = {
+    "apple": (_crawl_apple, _scrape_apple),
+    "asus": (_crawl_asus, _scrape_asus),
+    "acer": (_crawl_acer, _scrape_acer),
+    "hp": (_crawl_hp, _scrape_hp),
+}
+
+# The admin Dashboard uses this to say "No scraper" instead of "never scraped".
+SCRAPER_BRANDS = frozenset(SCRAPERS)
 
 # ---------------------------------------------------------------------------
 # Log directory (relative to the project root, created on first use)
@@ -130,23 +178,11 @@ async def _dispatch_scraper(
     *session* is only used by HTML-upload brands (Acer), which read their page
     out of `raw_product_htmls` instead of fetching it.
     """
-    name = brand_name.lower()
-
-    if name == "apple":
-        # Apple scraper returns a single dict; wrap in list for uniformity
-        result = await scrape_official_website(url, brand_name, str(brand_id))
-        return [result]
-    elif name == "asus":
-        # ASUS scraper already returns list[dict] (one per variant)
-        return await scrape_asus_laptop_specs(url, brand_id)
-    elif name == "acer":
-        # Acer scraper returns list[dict] — always one (simple products)
-        return await scrape_acer_laptop_specs(url, brand_id, session)
-    elif name == "hp":
-        # HP scraper returns list[dict] — always one (one SKU per page)
-        return await scrape_hp_laptop_specs(url, brand_id)
-    else:
+    scrapers = SCRAPERS.get(brand_name.lower())
+    if scrapers is None:
         raise ValueError(f"Bulk scraping is not supported for brand: {brand_name}")
+    _, scrape = scrapers
+    return await scrape(url, brand_id, session)
 
 
 def _success_status(brand_name: str) -> str:
