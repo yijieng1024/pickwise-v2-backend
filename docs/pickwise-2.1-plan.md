@@ -462,14 +462,14 @@ Before the sites, one `refactor:` commit with no behaviour change: brand dispatc
 *Decided (Jack, 2026-11-01); these replace the browser upload and the POST-endpoint option.*
 - **Upload path:** Jack puts the PDF in a Drive folder shared with the service account and pastes its link on the admin page. No browser upload for now
 - **Rows path:** the GitHub Actions workflow writes the extracted rows straight into the staging tables (`price_guides`, `price_guide_rows`) in the production database, using a `DATABASE_URL` secret. It never writes to `laptops` or `laptop_price_history`; the admin preview and apply stay as planned. The workflow runs only on `workflow_dispatch`, never on `pull_request`, so forks never get the secret. `extract_price_guide` stays database-free, and a separate small step writes its output. The write step checks the database it is about to touch, the same way the alembic guard does, and logs only the host
-- **Blocker:** Jack creates the service account and the test Drive folder. No Drive code until then
+- **Service account (resolved 2026-11-01):** Jack created the service account and the test Drive folder, so Drive code can go ahead. Read test passed: metadata and download of the 84 MB consumer guide, `MY_PC Product Guide Q3 2026.pdf`, in 12.3 s, with size and MD5 matching Drive's metadata. The key file stays outside the repo; its path is `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` in `.env`
 
 1. Jack puts the PDF in the shared Drive folder and pastes its link on the admin page
 2. A GitHub Actions workflow reads the PDF from Drive through a Google service account and runs `python -m app.scripts.extract_price_guide <pdf> --kind consumer|rog|business --out rows.json`. The script itself touches no database and no network. It finds the price pages by content (pages with both `RM` amounts and SKU-shaped words, as the survey overview counted), not by the hard-coded page ranges the survey scripts used. For each SKU it extracts `sku`, `price_rm` (or null), `page`, and where the page gives them, `cpu`, `ram_gb`, `ssd_gb`. It also prints a per-page summary for the hand check
 3. A separate workflow step writes `rows.json` into `price_guides` and `price_guide_rows`. The admin "Price guides" page reads them, and Jack gets the match preview and then applies it (unchanged from here on)
 4. Stored: `price_guides` (`id`, `kind`, `filename`, `pdf_sha256`, `edition_text` from the cover, `uploaded_at` = the guide's date, `uploaded_by`, `row_count`) and `price_guide_rows` (`guide_id`, `sku`, `model_code` = the part of the SKU before the hyphen, `cpu`, `ram_gb`, `ssd_gb`, `price_rm` nullable, `page`). The sha256 identifies the exact PDF a price came from, without storing the PDF itself
 - **Short survey at the start of Phase 3 (not before):**
-  - Reading a file shared with the service account works, on a 258 MB PDF
+  - Reading a file shared with the service account works (passed on the 84 MB guide, above). The 258 MB size is still untested
   - How the admin page triggers the workflow with the pasted link (for example `workflow_dispatch` through the GitHub API)
   - `price_guides.uploaded_by`: the workflow has no logged-in user, so the column is nullable or the admin page passes the id as a workflow input
 - The hand check of 3 pages per guide on each new edition stays
