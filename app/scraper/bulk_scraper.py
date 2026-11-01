@@ -244,7 +244,7 @@ async def _process_target(
     # Release the pooled connection before the scrape. The `already_scraped`
     # read above holds a transaction open, and a Session does not return its
     # connection until that transaction ends -- so without this it sits
-    # idle-in-transaction for every Playwright page load below, for every
+    # idle-in-transaction for every page fetch below, for every
     # target in the run. Materialise the brand fields first: commit expires
     # loaded ORM objects, so reading `brand.name` in the call itself would
     # lazy-refresh and re-open the transaction this commit closes.

@@ -11,8 +11,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 # `chromium` is there for Scrapling's StealthyFetcher (kept for any site that
-# starts blocking plain HTTP) and for the scrapers still on Playwright until
-# step 10 Phase 2 moves them to Scrapling's Fetcher. patchright (pulled in by
+# starts blocking plain HTTP); no scraper runs a browser today. patchright (pulled in by
 # scrapling[fetchers]) reuses this same build: it reads PLAYWRIGHT_BROWSERS_PATH
 # and its pinned version wants the same Chromium revision
 # (tests/unit/test_browser_build.py keeps the pins in step), so neither

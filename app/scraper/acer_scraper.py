@@ -11,7 +11,7 @@ Apple pages are scraped as a DOM text blob and ASUS pages out of
 specs live in the standard Magento attributes table.
 
 **This brand is not fetched over the network.** store.acer.com sits behind
-Akamai Bot Manager: it fingerprints the TLS/HTTP2 handshake (Playwright's
+Akamai Bot Manager: it fingerprints the TLS/HTTP2 handshake (a bundled
 bundled Chromium dies with ERR_HTTP2_PROTOCOL_ERROR), and protected paths stay
 403 until the `_abck` cookie is validated by telemetry only its obfuscated
 sensor JS can produce. Real Chrome and curl_cffi TLS impersonation were both

@@ -53,7 +53,7 @@ TARGET_FILTERABLE_COLUMNS = {
     "is_active": ScrapeTarget.is_active,
 }
 
-# Rough per-target cost for the ETA shown to the admin. Live Playwright scrapes
+# Rough per-target cost for the ETA shown to the admin. Live scrapes
 # dominate this; Acer targets are parsed from stored HTML and are near-instant,
 # so a brand-wide Acer run finishes well ahead of its estimate.
 _SECONDS_PER_TARGET = 12
@@ -174,7 +174,7 @@ async def scrape_url(
     # app/users/auth.py:101 -- FastAPI shares one session across a request's
     # dependencies). A Session releases its connection on commit and checks a
     # fresh one out on the next query, so without this the pooled connection
-    # sits idle-in-transaction for the entire Playwright run below -- minutes
+    # sits idle-in-transaction for the entire scrape below -- minutes
     # for one request. That is what exhausts the pool (QueuePool limit ... 10
     # overflow 20), not request volume.
     #

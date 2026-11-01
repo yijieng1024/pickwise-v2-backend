@@ -17,17 +17,10 @@ import time
 from typing import Callable
 
 from lxml import html as lxml_html
-from playwright.async_api import async_playwright
 
 from .acer_scraper import _gallery_urls, _parse_prices
 from .fetch import fetch_html as _fetch
 from .nuxt_state import read_js_object
-from .playwright_utils import run_async_playwright
-
-_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-)
 
 # ponytail: page walk stops on the first page with no new links; raise if HP
 # ever grows past this many listing pages.
@@ -116,157 +109,6 @@ def parse_hp_product(html: str) -> dict:
         "image_urls": _parse_hp_images(doc),
         "source_url_suffix": "",
     }
-
-
-# ---------------------------------------------------------------------------
-# The old path, removed in step 10 Phase 2e once every scraper has moved.
-# ---------------------------------------------------------------------------
-
-_SPECS_JS = """
-() => {
-    const out = {};
-    for (const sw of document.querySelectorAll('.product-spec-swapper')) {
-        const group = (sw.querySelector('.product-spec-group')?.textContent || '').trim();
-        for (const dl of sw.querySelectorAll('dl.product-spec-attribute')) {
-            const label = (dl.querySelector('.label')?.textContent || '').trim();
-            const value = (dl.querySelector('.value')?.textContent || '').trim();
-            if (label && value) out[group ? `${group} / ${label}` : label] = value;
-        }
-    }
-    return out;
-}
-"""
-
-# The gallery placeholder holds only this product's photos — the page also
-# carries accessory/recommendation images, which must not be picked up.
-# The same photo is served from several `/cache/<hash>/` dirs (one per size
-# preset), so collapse on the path after the hash to dedupe.
-_IMAGES_JS = r"""
-() => {
-    const seen = new Map();
-    for (const i of document.querySelectorAll(
-            '[data-gallery-role="gallery-placeholder"] img, .fotorama__img, .fotorama__stage img')) {
-        const u = (i.src || i.getAttribute('data-src') || '').split('?')[0];
-        if (!u.includes('/catalog/product/')) continue;
-        const key = u.replace(/\/cache\/[0-9a-f]{32}\//, '/');
-        if (!seen.has(key)) seen.set(key, u);
-    }
-    return [...seen.values()];
-}
-"""
-
-_PRODUCT_JS = """
-() => {
-    for (const e of (window.dataLayer || []).slice().reverse()) {
-        const p = e?.ecommerce?.detail?.products?.[0];
-        if (p) return p;
-    }
-    return null;
-}
-"""
-
-
-async def _async_crawl_hp_specs_links(start_url: str) -> list[str]:
-    """Walk `?p=N` until a page adds nothing new; HP ignores product_list_limit."""
-    seen: list[str] = []
-    seen_set: set[str] = set()
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent=_UA, viewport={"width": 1920, "height": 1080}
-        )
-        page = await context.new_page()
-
-        base = start_url.split("?")[0]
-        for page_no in range(1, _MAX_PAGES + 1):
-            url = base if page_no == 1 else f"{base}?p={page_no}"
-            await page.goto(url, wait_until="domcontentloaded", timeout=90000)
-            await page.wait_for_timeout(2000)
-
-            hrefs = await page.eval_on_selector_all(
-                "a.product-item-link", "els => els.map(e => e.href)"
-            )
-            new = [h.split("?")[0] for h in hrefs if h.split("?")[0] not in seen_set]
-            if not new:
-                break
-            for h in new:
-                seen_set.add(h)
-                seen.append(h)
-
-        await browser.close()
-
-    return seen
-
-
-async def _async_scrape_hp_laptop_specs(url: str) -> list[dict]:
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent=_UA, viewport={"width": 1920, "height": 1080}
-        )
-        page = await context.new_page()
-
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=90000)
-            # `state="attached"` — the spec sections render collapsed/hidden
-            # until the user expands them, so they are never "visible".
-            await page.wait_for_selector(
-                ".product-spec-swapper", state="attached", timeout=30000
-            )
-
-            specs: dict = await page.evaluate(_SPECS_JS)
-            if not specs:
-                raise Exception(f"No spec rows found at {url}.")
-
-            product: dict | None = await page.evaluate(_PRODUCT_JS)
-            product = product or {}
-
-            product_name = (product.get("name") or "").strip()
-            if not product_name:
-                product_name = (
-                    specs.get("Product Info / Title", "").split(" - ")[0].strip()
-                    or "Unknown Model"
-                )
-
-            price = product.get("price")
-            if not price:
-                # DOM fallback: Magento's final price node.
-                text = await page.evaluate(
-                    "() => document.querySelector('[data-price-type=\"finalPrice\"]')"
-                    "?.getAttribute('data-price-amount') || ''"
-                )
-                price = text.strip()
-            try:
-                price_val = float(price)
-            except (TypeError, ValueError):
-                price_val = 0.0
-            specs["Price"] = f"RM{price_val:,.2f}" if price_val > 0 else "N/A"
-
-            # Fotorama renders one placeholder <img> immediately and fills
-            # the rest of the gallery seconds later, so reading right after
-            # the specs yields exactly one photo. Wait for it to settle.
-            try:
-                await page.wait_for_function(
-                    "() => document.querySelectorAll('.fotorama__img').length > 1",
-                    timeout=15000,
-                )
-            except Exception:  # noqa: BLE001 - some SKUs genuinely have one photo
-                pass
-            image_urls: list[str] = await page.evaluate(_IMAGES_JS)
-
-            await browser.close()
-            return [{
-                "status": "success",
-                "product_name": product_name,
-                "specs": specs,
-                "image_urls": list(dict.fromkeys(image_urls)),
-                "source_url_suffix": "",
-            }]
-
-        except Exception as e:
-            await browser.close()
-            return [{"status": "failed", "error": str(e)}]
 
 
 # ---------------------------------------------------------------------------

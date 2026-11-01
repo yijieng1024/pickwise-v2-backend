@@ -15,10 +15,8 @@ import json
 import re
 from typing import Callable
 
-from playwright.async_api import async_playwright
 from .fetch import fetch_html as _fetch
 from .nuxt_state import nuxt2_state, nuxt3_state
-from .playwright_utils import run_async_playwright
 
 # Listing API behind https://www.asus.com/my/laptops/all-products/ -- a module
 # constant, so the crawl target is never client-supplied
@@ -238,105 +236,6 @@ def parse_rog_spec(html: str) -> list[dict]:
         })
 
     return results
-
-
-# ---------------------------------------------------------------------------
-# The old ROG path, removed in step 10 Phase 2e once every scraper has moved.
-# Runs inside the worker thread, via run_async_playwright.
-# ---------------------------------------------------------------------------
-
-
-async def _async_scrape_rog_specs(target_url: str, base_url: str) -> list[dict]:
-    """
-    Scrape one ROG spec page from window.__NUXT__.state.Spec.spec.
-
-    Returns a list of result dicts — one per variant.
-    Each dict: { status, product_name, specs, image_urls, source_url_suffix }
-    On failure: { status: "failed", error: "..." }
-    """
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080}
-        )
-        page = await context.new_page()
-
-        try:
-            # ROG site is Nuxt.js. Navigate to the main product page and
-            # wait for the Nuxt state store to be populated.
-            await page.goto(target_url, wait_until="networkidle", timeout=60000)
-
-            spec_obj: list[dict] = await page.evaluate(
-                "() => window.__NUXT__?.state?.Spec?.spec || []"
-            )
-
-            if not spec_obj:
-                raise Exception(
-                    "window.__NUXT__.state.Spec.spec is empty or not found. "
-                    "The ROG page may not have loaded fully."
-                )
-
-            num_variants = len(spec_obj)
-            print(f"🔍 ROG __NUXT__: {num_variants} variant(s) at {base_url}")
-
-            results: list[dict] = []
-
-            for idx, sku in enumerate(spec_obj):
-                # --------------------------------------------------------
-                # Specs — specContent[].displayField / descriptionText
-                # --------------------------------------------------------
-                specs: dict = {}
-                for item in sku.get("specContent", []):
-                    field = item.get("displayField", "").strip()
-                    value = item.get("descriptionText", "").strip()
-                    if field and value:
-                        # descriptionText uses literal \n — convert to readable
-                        specs[field] = value.replace("\\n", "\n").strip()
-
-                # --------------------------------------------------------
-                # Price — stored as float e.g. 9099.0  →  "RM9,099.00"
-                # --------------------------------------------------------
-                raw_price = sku.get("price")
-                try:
-                    price_val = float(raw_price) if raw_price is not None else 0
-                    price_str = f"RM{price_val:,.2f}" if price_val > 0 else "N/A"
-                except (TypeError, ValueError):
-                    price_str = "N/A"
-                specs["Price"] = price_str
-
-                # --------------------------------------------------------
-                # Product name — mktName + skuName
-                # --------------------------------------------------------
-                mkt_name = sku.get("mktName", "").strip()
-                sku_name = sku.get("skuName", "").strip()
-                product_name = f"{mkt_name} ({sku_name})" if sku_name else mkt_name
-
-                # --------------------------------------------------------
-                # Image — skuImg is the per-variant hero image
-                # --------------------------------------------------------
-                sku_img = sku.get("skuImg", "")
-                image_urls = [sku_img] if sku_img and sku_img.startswith("http") else []
-
-                # --------------------------------------------------------
-                # Source URL suffix — unique key per variant in DB
-                # --------------------------------------------------------
-                suffix = f"?v={idx + 1}" if num_variants > 1 else ""
-
-                results.append({
-                    "status": "success",
-                    "product_name": product_name,
-                    "specs": specs,
-                    "image_urls": image_urls,
-                    "source_url_suffix": suffix,
-                })
-
-            await browser.close()
-            return results
-
-        except Exception as e:
-            await browser.close()
-            return [{"status": "failed", "error": str(e)}]
 
 
 # ---------------------------------------------------------------------------

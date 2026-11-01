@@ -30,7 +30,7 @@ doing it inline:
   its full duration — the Session returns its connection on every commit. The
   pool exhaustion this module was blamed for came from workers that read, then
   did slow non-database work, then committed: the connection stayed idle in an
-  open transaction for the whole LLM or Playwright call. Commit before slow
+  open transaction for the whole LLM or scrape call. Commit before slow
   work, and materialise anything the slow call needs into plain values first
   (commit expires loaded ORM objects, so reading one back re-opens the
   transaction you just closed).
@@ -274,10 +274,10 @@ def run_job(job_id: UUID, worker: Callable[[Session, JobProgress], Any]) -> None
     Execute *worker* under job bookkeeping. Handed to `BackgroundTasks`.
 
     Sync callable on purpose: FastAPI runs sync background tasks in a worker
-    thread, which keeps these long blocking loops (LLM throttles, Playwright)
+    thread, which keeps these long blocking loops (LLM throttles, live fetches)
     off the event loop. An async worker is run via `asyncio.run` in that same
-    thread — safe because the scrapers already offload Playwright to their own
-    loop (see scraper/playwright_utils.py).
+    thread — safe because the scrapers already offload their fetches with
+    asyncio.to_thread.
     """
     progress = JobProgress(job_id)
     progress.mark_processing()
@@ -296,7 +296,7 @@ def run_job(job_id: UUID, worker: Callable[[Session, JobProgress], Any]) -> None
         # returns it on commit(), taking a fresh one on the next query. What a
         # job actually holds is a connection per OPEN TRANSACTION — so the
         # thing that matters is whether a worker leaves a transaction open
-        # across its slow work (an LLM call, a Playwright load), not how long
+        # across its slow work (an LLM call, a page fetch), not how long
         # this block lives. Workers commit before that work for exactly this
         # reason; see the notes in processor/engine.py and scraper/
         # bulk_scraper.py.
