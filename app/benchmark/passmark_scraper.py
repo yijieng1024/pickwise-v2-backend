@@ -6,15 +6,15 @@ browser. Both pages have the same table, with the same id.
 
 A run below the row floor raises and writes nothing: a challenge page is a 200
 too, and would otherwise parse as a successful refresh of 0 rows. Runs are
-background jobs (`refresh_worker`), so that failure reaches the Jobs page with
-its reason.
+background jobs (see `app/benchmark/router.py`), so that failure reaches the
+Jobs page with its reason.
 
 The whole run is one transaction, so a run that stops for any reason leaves the
 old marks as they were.
 """
 import re
 from dataclasses import dataclass
-from typing import Callable, Optional, Type
+from typing import Optional, Type
 
 from lxml import html as lxml_html
 from sqlalchemy.dialects.postgresql import insert
@@ -97,11 +97,3 @@ def refresh(source_name: str, session: Session, progress: JobProgress) -> dict:
         "source_updated_text": updated_text,
     }
 
-
-def refresh_worker(source_name: str) -> Callable[[Session, JobProgress], dict]:
-    """A `worker(session, progress)` for `run_job`."""
-
-    def worker(session: Session, progress: JobProgress) -> dict:
-        return refresh(source_name, session, progress)
-
-    return worker

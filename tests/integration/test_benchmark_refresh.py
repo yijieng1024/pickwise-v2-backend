@@ -12,9 +12,12 @@ import pytest
 from sqlmodel import select
 
 from app.benchmark import passmark_scraper
+from app.benchmark import router as benchmark_router
 from app.benchmark.model import BenchmarkRefresh, CPUBenchmark, GPUBenchmark
 from app.common import job_service
 from app.common.job_model import BackgroundJob, JobStatus, JobType
+from app.laptops.laptop_models import LaptopPickScore
+from app.laptops.pickscore_general import USE_CASE_PRIORITIES
 
 from .conftest import make_laptop
 
@@ -43,6 +46,11 @@ def _job(session, response) -> BackgroundJob:
     return session.get(BackgroundJob, response.json()["job_id"])
 
 
+def _pick_score_jobs(session) -> list[BackgroundJob]:
+    session.expire_all()
+    return session.exec(select(BackgroundJob).where(BackgroundJob.job_type == JobType.GENERATE_PICK_SCORES)).all()
+
+
 def _running_job(session, job_type=JobType.PASSMARK_CPU) -> BackgroundJob:
     job = BackgroundJob(job_type=job_type, status=JobStatus.PROCESSING, params={}, total_count=1)
     session.add(job)
@@ -60,13 +68,70 @@ def test_a_run_is_a_job_with_progress_and_the_rows_written(admin_client, session
     job = _job(session, response)
     assert job.status == JobStatus.COMPLETED
     assert (job.total_count, job.processed_count, job.succeeded_count) == (300, 300, 300)
+    [score_job] = _pick_score_jobs(session)
     assert job.result == {
         "source": "cpu",
         "written": True,
         "rows_written": 300,
         "source_updated_text": "Last updated on the 1st of November 2026",
+        "pick_scores": {"queued": True, "job_id": str(score_job.id)},
     }
     assert job.created_by is not None
+
+
+@pytest.mark.parametrize("url, fixture", [
+    (CPU_URL, "passmark_cpu.html"),
+    (GPU_URL, "passmark_gpu.html"),
+])
+def test_a_successful_refresh_recalculates_pick_scores(
+    admin_client, session, brand, monkeypatch, no_floor, url, fixture
+):
+    monkeypatch.setattr(passmark_scraper, "fetch_html", lambda url: _fixture(fixture))
+    laptop = make_laptop(brand.id)
+    session.add(laptop)
+    session.commit()
+
+    job = _job(session, admin_client.post(url))
+
+    [score_job] = _pick_score_jobs(session)
+    assert score_job.status == JobStatus.COMPLETED
+    assert score_job.created_by == job.created_by
+    assert score_job.params == {"triggered_by_job_id": str(job.id)}
+    assert score_job.finished_at >= job.finished_at
+    scores = session.exec(select(LaptopPickScore).where(LaptopPickScore.laptop_id == laptop.id)).all()
+    assert len(scores) == len(USE_CASE_PRIORITIES)
+
+
+def test_a_failed_refresh_queues_nothing(admin_client, session, monkeypatch):
+    monkeypatch.setattr(passmark_scraper, "fetch_html", lambda url: "<html>Just a moment...</html>")
+
+    job = _job(session, admin_client.post(CPU_URL))
+
+    assert job.status == JobStatus.FAILED
+    assert _pick_score_jobs(session) == []
+
+
+def test_a_cancelled_refresh_queues_nothing(admin_client, session, monkeypatch):
+    # What refresh() returns once it has rolled back on a cancel request
+    monkeypatch.setattr(benchmark_router, "refresh", lambda source, session, progress: {
+        "source": source, "written": False, "rows_written": 0,
+    })
+
+    job = _job(session, admin_client.post(CPU_URL))
+
+    assert job.result == {"source": "cpu", "written": False, "rows_written": 0}
+    assert _pick_score_jobs(session) == []
+
+
+def test_a_recalculation_already_running_is_recorded_not_doubled(admin_client, session, monkeypatch, no_floor):
+    monkeypatch.setattr(passmark_scraper, "fetch_html", lambda url: _fixture("passmark_cpu.html"))
+    running = _running_job(session, JobType.GENERATE_PICK_SCORES)
+
+    job = _job(session, admin_client.post(CPU_URL))
+
+    assert job.status == JobStatus.COMPLETED
+    assert job.result["pick_scores"] == {"queued": False, "job_id": str(running.id)}
+    assert [j.id for j in _pick_score_jobs(session)] == [running.id]
 
 
 def test_a_run_upserts_and_writes_exactly_one_refresh_row(admin_client, session, monkeypatch, no_floor):

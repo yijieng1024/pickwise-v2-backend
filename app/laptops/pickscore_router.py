@@ -8,8 +8,8 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.benchmark.model import latest_refreshes
-from app.common.job_model import JobAccepted, JobType
-from app.common.job_service import create_job, job_accepted, refuse_if_running, run_job
+from app.common.job_model import JobAccepted
+from app.common.job_service import job_accepted, run_job
 from app.database import get_session
 from app.laptops.laptop_models import Laptop, LaptopStatus
 from app.laptops.brand_model import LaptopBrand
@@ -17,6 +17,7 @@ from app.laptops.pickscore_adapter import laptop_to_scorable, get_scoring_data
 from app.laptops.pickscore_general import (
     USE_CASE_PRIORITIES,
     LaptopPickScore,
+    create_generate_all_job,
     generate_all_pick_scores,
     get_pick_scores_for_laptop,
     get_ranking_for_use_case,
@@ -213,11 +214,6 @@ def get_pick_score_status(session: Session = Depends(get_session)) -> Dict[str, 
     }
 
 
-# One bookkeeping commit per laptop dominates; the scoring itself is
-# arithmetic. Only feeds the 202's ETA.
-_SECONDS_PER_LAPTOP = 0.3
-
-
 @router.post(
     "/pick-scores/generate-all",
     response_model=JobAccepted,
@@ -230,8 +226,8 @@ def generate_all_laptop_pick_scores(
 ) -> JobAccepted:
     """
     Admin: (re)compute the stored general-mode PickScores for every active
-    laptop × use case. Run after processor imports, benchmark refreshes, or
-    weight-profile changes.
+    laptop × use case. Run after processor imports or weight-profile changes;
+    a successful PassMark refresh queues this by itself.
 
     **Returns 202 with a job — it does not wait.** Poll `poll_url`
     (`GET /api/v2/jobs/{job_id}`); the finished job's `result` holds
@@ -242,24 +238,11 @@ def generate_all_laptop_pick_scores(
     two runs would each rewrite every row, and the one that commits last wins
     with no record of the other.
     """
-    refuse_if_running(
-        session, (JobType.GENERATE_PICK_SCORES,), "A Pick Score recalculation is already running."
-    )
-
-    total = session.execute(
-        select(func.count()).select_from(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)
-    ).scalar() or 0
-    job = create_job(
-        session,
-        job_type=JobType.GENERATE_PICK_SCORES,
-        total_count=total,
-        created_by=current_admin.id,
-        seconds_per_item=_SECONDS_PER_LAPTOP,
-    )
+    job = create_generate_all_job(session, created_by=current_admin.id)
     background_tasks.add_task(run_job, job.id, generate_all_pick_scores)
     return job_accepted(
         job,
-        message=f"Recalculating Pick Scores for {total} laptop(s) — poll the job for progress.",
+        message=f"Recalculating Pick Scores for {job.total_count} laptop(s) — poll the job for progress.",
     )
 
 

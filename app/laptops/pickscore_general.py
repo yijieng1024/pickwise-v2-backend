@@ -11,10 +11,13 @@ POST /laptops/pick-scores/generate-all after processor/benchmark runs.
 """
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.common.job_model import BackgroundJob, JobType
+from app.common.job_service import JobProgress, create_job, refuse_if_running
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_service import deduplicate_by_family
 # LaptopPickScore is declared in laptop_models (see the comment on the class)
@@ -24,8 +27,9 @@ from app.laptops.laptop_models import Laptop, LaptopPickScore, LaptopStatus  # n
 from app.laptops.pickscore_adapter import get_scoring_data, laptop_to_scorable
 from app.pickscore.engine import calculate_pick_score
 
-if TYPE_CHECKING:
-    from app.common.job_service import JobProgress
+# One bookkeeping commit per laptop dominates; the scoring itself is
+# arithmetic. Only feeds the 202's ETA.
+_SECONDS_PER_LAPTOP = 0.3
 
 # Use-case weight profiles (1-10 base-weight scale; normalized to sum 1 in
 # calculate_pick_score). Keys are the API slugs the frontend sends/receives.
@@ -61,7 +65,28 @@ USE_CASE_PRIORITIES: dict[str, dict[str, float]] = {
 }
 
 
-def generate_all_pick_scores(session: Session, progress: Optional["JobProgress"] = None) -> dict:
+def create_generate_all_job(
+    session: Session, created_by: Optional[uuid.UUID], params: Optional[dict] = None
+) -> BackgroundJob:
+    """The queued job for `generate_all_pick_scores`. 409 while one is active:
+    two runs would each rewrite every row, and the last commit wins unrecorded."""
+    refuse_if_running(
+        session, (JobType.GENERATE_PICK_SCORES,), "A Pick Score recalculation is already running."
+    )
+    total = session.execute(
+        select(func.count()).select_from(Laptop).where(Laptop.status == LaptopStatus.ACTIVE.value)
+    ).scalar() or 0
+    return create_job(
+        session,
+        job_type=JobType.GENERATE_PICK_SCORES,
+        total_count=total,
+        params=params,
+        created_by=created_by,
+        seconds_per_item=_SECONDS_PER_LAPTOP,
+    )
+
+
+def generate_all_pick_scores(session: Session, progress: Optional[JobProgress] = None) -> dict:
     """
     (Re)compute and upsert the general-mode PickScore of every laptop for
     every use-case profile. Ranges and benchmark lists are fetched once and

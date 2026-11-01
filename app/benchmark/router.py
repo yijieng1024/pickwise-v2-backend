@@ -3,13 +3,14 @@ from sqlmodel import Session, select
 from typing import List, Optional
 from uuid import UUID
 
-from app.benchmark.passmark_scraper import SOURCES, refresh_worker
+from app.benchmark.passmark_scraper import SOURCES, refresh
 from app.common.job_model import JobAccepted, JobType
-from app.common.job_service import create_job, job_accepted, refuse_if_running, run_job
+from app.common.job_service import JobProgress, create_job, job_accepted, refuse_if_running, run_job
 from app.common.pagination_service import PaginationParams, count_total, paginate
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
 from app.database import get_session
+from app.laptops.pickscore_general import create_generate_all_job, generate_all_pick_scores
 from app.users.auth import get_current_admin
 from app.users.models import User
 from app.benchmark.model import (
@@ -28,6 +29,37 @@ GPU_SORTABLE_COLUMNS = {"gpu_name": GPUBenchmark.gpu_name, "gpu_mark": GPUBenchm
 _SECONDS_PER_ROW = 0.08
 
 
+def _refresh_then_recalculate(job_id: UUID, source: str, admin_id: UUID) -> None:
+    """The refresh job, then the Pick Score job it queued, if it wrote marks.
+
+    Queued inside the worker so the id is in the refresh job's result, and run
+    after it so the refresh shows as finished rather than waiting on the scores.
+    A failed or cancelled refresh wrote nothing, so it queues nothing.
+    """
+    queued: list[UUID] = []
+
+    def worker(session: Session, progress: JobProgress) -> dict:
+        result = refresh(source, session, progress)
+        if result["written"]:
+            try:
+                job = create_generate_all_job(
+                    session, created_by=admin_id, params={"triggered_by_job_id": str(job_id)}
+                )
+            except HTTPException as refused:
+                # ponytail: a run already going may have read the old marks, so
+                # its scores can be stale. Recorded here, not re-queued; a waiting
+                # queue if this is ever seen. Needs a manual run in the same minutes.
+                result["pick_scores"] = {"queued": False, "job_id": refused.detail["job_id"]}
+            else:
+                queued.append(job.id)
+                result["pick_scores"] = {"queued": True, "job_id": str(job.id)}
+        return result
+
+    run_job(job_id, worker)
+    for pick_score_job_id in queued:
+        run_job(pick_score_job_id, generate_all_pick_scores)
+
+
 def _start_refresh(
     source: str, job_type: str, background_tasks: BackgroundTasks, session: Session, admin: User
 ) -> JobAccepted:
@@ -41,7 +73,7 @@ def _start_refresh(
         created_by=admin.id,
         seconds_per_item=_SECONDS_PER_ROW,
     )
-    background_tasks.add_task(run_job, job.id, refresh_worker(source))
+    background_tasks.add_task(_refresh_then_recalculate, job.id, source, admin.id)
     return job_accepted(job, message=f"Refreshing PassMark {source.upper()} marks in the background.")
 
 
@@ -126,8 +158,10 @@ def trigger_cpu_scraper(
 ) -> JobAccepted:
     """
     Refresh the PassMark CPU list. **Returns 202 with a job.** Poll `poll_url`; the
-    finished job's `result` holds `rows_written`. A list below the row floor fails
-    the job with the reason. 409 while either PassMark refresh is running.
+    finished job's `result` holds `rows_written` and `pick_scores`, the Pick Score
+    recalculation a successful refresh queues (`queued`, `job_id`; if one was already
+    running, `queued` is false and `job_id` is that one). A list below the row floor
+    fails the job with the reason. 409 while either PassMark refresh is running.
     """
     return _start_refresh("cpu", JobType.PASSMARK_CPU, background_tasks, session, admin)
 
@@ -214,7 +248,9 @@ def trigger_gpu_scraper(
 ) -> JobAccepted:
     """
     Refresh the PassMark Video Card list. **Returns 202 with a job.** Poll `poll_url`; the
-    finished job's `result` holds `rows_written`. A list below the row floor fails
-    the job with the reason. 409 while either PassMark refresh is running.
+    finished job's `result` holds `rows_written` and `pick_scores`, the Pick Score
+    recalculation a successful refresh queues (`queued`, `job_id`; if one was already
+    running, `queued` is false and `job_id` is that one). A list below the row floor
+    fails the job with the reason. 409 while either PassMark refresh is running.
     """
     return _start_refresh("gpu", JobType.PASSMARK_GPU, background_tasks, session, admin)
