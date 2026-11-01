@@ -16,7 +16,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.logger import get_logger
 from app.laptops.family_service import resolve_family_id
-from app.laptops.laptop_models import Laptop, LaptopPriceHistory
+from app.laptops.laptop_models import Laptop, LaptopPriceHistory, PriceSource
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
@@ -108,6 +108,18 @@ def _sync_laptop_categories(
     if added:
         session.commit()
     return added
+
+
+def raw_sku(raw_specs_dump: Optional[dict]) -> Optional[str]:
+    """The SKU a scraper put in a raw row (`specs["SKU"]`), if it did."""
+    features = (raw_specs_dump or {}).get("scraped_features")
+    sku = features.get("SKU") if isinstance(features, dict) else None
+    return sku.strip() if isinstance(sku, str) and sku.strip() else None
+
+
+def _sku_taken(session: Session, sku: str) -> bool:
+    """One SKU, one laptop (a partial unique index). A second row stays null."""
+    return session.exec(select(Laptop.id).where(Laptop.manufacturer_sku == sku)).first() is not None
 
 
 def process_raw_laptop_data(
@@ -240,6 +252,7 @@ def process_raw_laptop_data(
     _product_name = raw_data.raw_product_name
     _raw_prices_json = json.dumps(raw_data.raw_prices, ensure_ascii=False, indent=2)
     _raw_specs_json = _bounded_json(raw_data.raw_specs_dump)
+    _raw_sku = raw_sku(raw_data.raw_specs_dump)
     session.commit()
 
     try:
@@ -267,6 +280,9 @@ def process_raw_laptop_data(
         prices_not_extracted: list[str] = []
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
+        # With several variants, which one is the SKU would be a guess.
+        sku = _raw_sku if len(extracted_data.variants) == 1 else None
+
         for variant in extracted_data.variants:
             spec_or_unmapped = variant.unmapped_specs if variant.unmapped_specs else {"ai_extraction_source": raw_data.raw_specs_dump}
 
@@ -372,12 +388,16 @@ def process_raw_laptop_data(
                 # Checked". A no-price extraction confirmed nothing.
                 if variant.price_rm > 0:
                     existing.price_checked_at = datetime.now(timezone.utc)
+                if sku and not existing.manufacturer_sku and not _sku_taken(session, sku):
+                    existing.manufacturer_sku = sku
 
                 session.add(existing)
                 session.commit()
 
                 if price_changed:
-                    session.add(LaptopPriceHistory(laptop_id=existing.id, price_rm=variant.price_rm))
+                    session.add(LaptopPriceHistory(
+                        laptop_id=existing.id, price_rm=variant.price_rm, source=PriceSource.PAGE.value,
+                    ))
                     session.commit()
 
                 categories_linked += _sync_laptop_categories(
@@ -388,6 +408,8 @@ def process_raw_laptop_data(
                 new_laptop = Laptop(**laptop_data)
                 if new_laptop.price_rm > 0:
                     new_laptop.price_checked_at = datetime.now(timezone.utc)
+                if sku and not _sku_taken(session, sku):
+                    new_laptop.manufacturer_sku = sku
                 # Family: adopt the one its already-grouped siblings agree on,
                 # or stay null. laptop_data deliberately carries no family_id,
                 # so the update branch above never touches an admin's manual
@@ -403,7 +425,9 @@ def process_raw_laptop_data(
                 session.refresh(new_laptop)
 
                 if new_laptop.price_rm > 0:
-                    session.add(LaptopPriceHistory(laptop_id=new_laptop.id, price_rm=new_laptop.price_rm))
+                    session.add(LaptopPriceHistory(
+                        laptop_id=new_laptop.id, price_rm=new_laptop.price_rm, source=PriceSource.PAGE.value,
+                    ))
                     session.commit()
 
                 categories_linked += _sync_laptop_categories(

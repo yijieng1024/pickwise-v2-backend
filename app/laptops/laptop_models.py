@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pydantic import field_validator
 from sqlmodel import Relationship, SQLModel, Field
-from sqlalchemy import Column, DateTime, JSON, UniqueConstraint, event, func
+from sqlalchemy import Column, DateTime, Index, JSON, String, UniqueConstraint, event, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
@@ -137,7 +137,17 @@ class LaptopBase(SQLModel):
 # DB Table Model
 class Laptop(LaptopBase, table=True):
     __tablename__ = "laptops"  # type: ignore
+    __table_args__ = (
+        Index(
+            "uq_laptops_manufacturer_sku", "manufacturer_sku", unique=True,
+            postgresql_where=text("manufacturer_sku IS NOT NULL"),
+        ),
+    )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    # The maker's SKU, which the product guides key on. Filled by the processor
+    # only when one raw row became one variant: with several, which one is the
+    # SKU would be a guess. Not on LaptopBase, so no request body can set it.
+    manufacturer_sku: Optional[str] = Field(default=None, sa_column=Column(String(64), nullable=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # "Last Checked" on the details page: the last time a scrape/process or an
     # admin confirmed price_rm, changed or not. LaptopPriceHistory records only
@@ -259,6 +269,12 @@ class LaptopSearchResult(SQLModel):
     similarity_score: float
 
 
+class PriceSource(str, Enum):
+    PAGE = "page"  # scraped from the maker's page
+    GUIDE = "guide"  # a product guide import
+    MANUAL = "manual"  # typed in by an admin
+
+
 class LaptopPriceHistory(SQLModel, table=True):
     __tablename__ = "laptop_price_history"  # type: ignore
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -266,6 +282,10 @@ class LaptopPriceHistory(SQLModel, table=True):
     laptop: Optional["Laptop"] = Relationship(back_populates="price_history")
     price_rm: float
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Where this price came from. Null on rows older than the column, which
+    # counts as "not a guide": the import never overwrites those.
+    source: Optional[str] = Field(default=None, max_length=10)
+    price_guide_id: Optional[uuid.UUID] = Field(default=None, foreign_key="price_guides.id")
 
 
 class LaptopPriceHistoryRead(SQLModel):
@@ -414,3 +434,5 @@ from app.taxonomy.category_model import Category  # noqa: E402,F401
 # table already registered in SQLModel.metadata. Importing the module here
 # guarantees it is, whichever of these modules a script enters through.
 from app.laptops.family_model import LaptopFamily  # noqa: E402,F401
+# The same for laptop_price_history.price_guide_id.
+from app.laptops.price_guide_model import PriceGuide  # noqa: E402,F401

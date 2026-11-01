@@ -4,7 +4,8 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.laptops.laptop_models import (
     Laptop, LaptopRead, LaptopDetailRead, LaptopCreate, LaptopUpdate, LaptopPriceHistory,
-    LaptopPriceHistoryRead, LaptopEmbedding, LaptopStatus, HybridSearchRequest, LaptopSearchResult
+    LaptopPriceHistoryRead, LaptopEmbedding, LaptopStatus, HybridSearchRequest, LaptopSearchResult,
+    PriceSource,
 )
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_model import LaptopFamily
@@ -72,7 +73,9 @@ def create_laptop(laptop: LaptopCreate, session: Session = Depends(get_session))
     # 0 is "price unknown", not a data point: recorded, it is a fabricated drop
     # to zero in the series the price-history chart plots.
     if db_laptop.price_rm:
-        session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
+        session.add(LaptopPriceHistory(
+            laptop_id=db_laptop.id, price_rm=db_laptop.price_rm, source=PriceSource.MANUAL.value,
+        ))
         session.commit()
 
     return db_laptop
@@ -274,7 +277,9 @@ def update_laptop(
 
     # 0 is "price unknown", not a data point -- same rule as create_laptop.
     if price_changed and db_laptop.price_rm:
-        session.add(LaptopPriceHistory(laptop_id=db_laptop.id, price_rm=db_laptop.price_rm))
+        session.add(LaptopPriceHistory(
+            laptop_id=db_laptop.id, price_rm=db_laptop.price_rm, source=PriceSource.MANUAL.value,
+        ))
         session.commit()
 
     return db_laptop
