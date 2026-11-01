@@ -34,15 +34,22 @@ jobs:
 
       - id: filter
         shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="origin/${{ github.base_ref }}"
             git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
             CHANGED=$(git diff --name-only "$BASE"...HEAD)
+          elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            # push: the whole push, not its last commit. HEAD^ skipped the job
+            # on 3133099, which added a migration and ended on a docs commit.
+            CHANGED=$(git diff --name-only "$BEFORE" HEAD)
           else
-            # push to main: compare against the previous commit
-            CHANGED=$(git diff --name-only HEAD^ HEAD || git ls-files)
+            # New branch (BEFORE is all zeros) or a force push (not in this
+            # clone): nothing to compare with, so treat every file as changed.
+            CHANGED=$(git ls-files)
           fi
           echo "changed files:"; echo "$CHANGED"
 
