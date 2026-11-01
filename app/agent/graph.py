@@ -4,9 +4,10 @@ from functools import lru_cache
 from typing import Optional
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.rate_limiters import BaseRateLimiter, InMemoryRateLimiter
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableWithFallbacks
 from app.common import llm_config
 from app.common.llm import build_llm
 from sqlmodel import Session, select
@@ -83,6 +84,58 @@ def build_agent_llm(
         rate_limiter_for=(lambda _spec: rate_limiter) if rate_limiter else _agent_rate_limiter,
         models=(model, ()) if model else None,
     )
+
+# On each AIMessage of a turn: the chain position that answered that step.
+_ANSWERED_AT = "llm_chain_position"
+
+
+def _position_to_start_at(messages: list) -> int:
+    """Where this step starts: the position that answered the turn's last step.
+    A turn begins at its last HumanMessage, so an earlier turn's replies (the
+    eval keeps them in the message list) never carry over."""
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            return 0
+        if isinstance(m, AIMessage):
+            return m.response_metadata.get(_ANSWERED_AT, 0)
+    return 0
+
+
+class StickyFallback(AgentMiddleware):
+    """Sticky fallback within a turn. `with_fallbacks` starts every call at the
+    primary, so a primary that is down made every step of a turn wait for it to
+    fail, and mixed models across steps. Here a step starts at the position that
+    answered the previous step and only ever moves further down.
+
+    It walks the chain itself rather than slicing it into a shorter
+    `with_fallbacks`, because this loop is what knows which position answered:
+    a model name would not do, since an alias can come back as a concrete name.
+    The position lives on the AIMessage, not on this object, so one instance is
+    safe across turns and a new turn needs no reset (the eval reuses one agent).
+    Same exceptions as the chain, so a 400 or LLMStreamInterrupted still ends
+    the step, and with it the no-switch-after-the-first-token rule."""
+
+    async def awrap_model_call(self, request, handler):
+        chain = request.model
+        if not isinstance(chain, RunnableWithFallbacks):
+            return await handler(request)
+        models = list(chain.runnables)
+        first_error = None
+        for position in range(_position_to_start_at(request.messages), len(models)):
+            try:
+                response = await handler(request.override(model=models[position]))
+            except chain.exceptions_to_handle as e:
+                first_error = first_error or e
+            else:
+                response.result[0].response_metadata[_ANSWERED_AT] = position
+                return response
+        raise first_error
+
+
+def build_agent(llm: Runnable, tools: list):
+    """The agent loop around `llm`, for production and the eval alike."""
+    return create_agent(llm, tools, middleware=[StickyFallback()])
+
 
 _SYSTEM_PROMPT = (
     "You are Pico, an expert laptop buying consultant. You have "
@@ -340,7 +393,7 @@ async def run_agent(
             message, history, conv_laptops, session, user_id
         )
 
-    agent = create_agent(llm, _agent_tools(user_id))
+    agent = build_agent(llm, _agent_tools(user_id))
     config = {"callbacks": [handler]} if handler else None
     result = await agent.ainvoke({"messages": langchain_messages}, config=config)
 
@@ -387,7 +440,7 @@ async def stream_agent(
             message, history, conv_laptops, session, user_id
         )
 
-    agent = create_agent(llm, _agent_tools(user_id))
+    agent = build_agent(llm, _agent_tools(user_id))
     config = {"callbacks": [handler]} if handler else None
 
     turn_text: list[str] = []

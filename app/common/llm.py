@@ -27,6 +27,10 @@ so `with_fallbacks` lets it through and the stream ends as an error. This
 holds for every path that streams -- `astream`, and `ainvoke` under
 `astream_events` (how create_agent drives the model in the SSE route), since
 both go through `_astream`.
+
+WITHIN AN AGENT TURN the chain is walked by `StickyFallback` in
+app/agent/graph.py, which starts each step at the model that answered the last
+one. Everything above still holds per call; only the starting point moves.
 """
 import asyncio
 import concurrent.futures

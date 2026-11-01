@@ -191,15 +191,13 @@ _agent = None  # compiled once, reused for the whole run
 def _get_agent():
     global _agent
     if _agent is None:
-        from langchain.agents import create_agent
-
-        # the LLM is built by graph.py's factory so the eval always
-        # measures the exact production configuration
-        from app.agent.graph import build_agent_llm
+        # the LLM and the agent loop are built by graph.py's factories so the
+        # eval always measures the exact production configuration
+        from app.agent.graph import build_agent, build_agent_llm
         from app.agent.tools import ALL_TOOLS
 
         llm = build_agent_llm(rate_limiter=_get_rate_limiter(), model=AGENT_MODEL_SPEC)
-        _agent = create_agent(llm, ALL_TOOLS)
+        _agent = build_agent(llm, ALL_TOOLS)
     return _agent
 
 
