@@ -19,6 +19,7 @@ Thumbs.db
 
 # Agent File
 ./PROGRESS.md
+graphify-out/
 
 test_file/
 /logs/

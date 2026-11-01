@@ -12,6 +12,15 @@ on:
   push:
     branches: [main]
 
+    paths-ignore:
+      - .github/workflows/**
+      - CLAUDE.md
+      - .github/**
+      - README.md
+      - Progress.md
+      - eval/runs
+      - docs/**
+
 permissions:
   contents: read
 
