@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     # "unavailable" when unset and the tool answers from the catalog layer
     # + marketplace search links
     serp_api_key: Optional[str] = None
+    # Starts the price guide workflow (actions:write on this repo). Optional: without
+    # it the workflow can still be started from the Actions tab.
+    github_dispatch_token: Optional[str] = None
+    github_repository: str = "yijieng1024/pickwise-v2-backend"
 
     # Comma-separated origins allowed to call the API from a browser
     # (CORS). Add the deployed frontend origin here in production.

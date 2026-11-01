@@ -76,6 +76,7 @@ class JobType:
     REVIEW_REMATCH = "reviews.rematch"
     PASSMARK_CPU = "benchmarks.refresh_cpu"
     PASSMARK_GPU = "benchmarks.refresh_gpu"
+    PRICE_GUIDE_APPLY = "price_guide.apply"
 
     ALL = (
         PROCESS_PENDING,
@@ -91,6 +92,7 @@ class JobType:
         REVIEW_REMATCH,
         PASSMARK_CPU,
         PASSMARK_GPU,
+        PRICE_GUIDE_APPLY,
     )
 
     # One lock for both lists: each run holds a connection for about 12 minutes.

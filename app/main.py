@@ -31,6 +31,7 @@ from app.common.settings_router import router as app_settings_router
 from app.common.llm_usage_router import router as llm_usage_router
 from app.admin.dashboard_router import router as admin_dashboard_router
 from app.admin.pickscore_router import router as admin_pickscore_router
+from app.admin.price_guide_router import router as admin_price_guide_router
 from app.common.job_service import reset_stale_jobs
 from app.laptops.pickscore_adapter import warm_scoring_cache
 
@@ -133,6 +134,7 @@ app.include_router(app_settings_router, prefix=API_PREFIX)
 app.include_router(llm_usage_router, prefix=API_PREFIX)
 app.include_router(admin_dashboard_router, prefix=API_PREFIX)
 app.include_router(admin_pickscore_router, prefix=API_PREFIX)
+app.include_router(admin_price_guide_router, prefix=API_PREFIX)
 
 
 @app.get("/")
