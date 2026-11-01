@@ -14,13 +14,14 @@ fidelity, and app/agent/tools/*.py never needs to know monitoring exists.
 """
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from langchain_core.callbacks import AsyncCallbackHandler
 from sqlmodel import Session
 
-from app.agent.monitoring_models import AgentRunLog
+from app.agent.monitoring_models import AgentModelCall, AgentRunLog
 from app.common.llm import position_from_tags
 from app.common.llm_usage import LLMFeature, log_llm_usage, usage_from_response
 from app.database import engine
@@ -52,12 +53,15 @@ class MonitoringCallbackHandler(AsyncCallbackHandler):
         self.output_tokens: Optional[int] = None
         # Which model answered: the model of the turn's LAST completed LLM
         # call (the one that wrote the reply) and its chain position (0 =
-        # primary, 1..n = backup index). `fallback_triggered` is set when any
-        # step of the turn ran on a backup.
+        # primary, 1..n = backup index). `fallback_triggered` is set when a
+        # backup answers a step, not when one is merely started.
         self.model: Optional[str] = None
         self.model_position: Optional[int] = None
         self.fallback_triggered = False
-        self._llm_runs: Dict[str, tuple] = {}  # run_id -> (model, position)
+        # One entry per model call, in call order: agent_model_calls' columns.
+        self.model_calls: List[Dict[str, Any]] = []
+        self._step = 1  # moves on when a call answers; a failed call's fallback stays on it
+        self._llm_runs: Dict[str, tuple] = {}  # run_id -> (entry dict, monotonic start)
         # (model, position) -> [input, output], one llm_usage_logs row each
         self.usage_by_model: Dict[tuple, List[int]] = {}
 
@@ -72,9 +76,23 @@ class MonitoringCallbackHandler(AsyncCallbackHandler):
         **kwargs: Any,
     ) -> None:
         position = position_from_tags(tags)
-        if position:
-            self.fallback_triggered = True
-        self._llm_runs[str(run_id)] = ((metadata or {}).get("ls_model_name") or "unknown", position)
+        entry: Dict[str, Any] = {
+            "step": self._step,
+            "seq": len(self.model_calls) + 1,
+            "model": (metadata or {}).get("ls_model_name") or "unknown",
+            "chain_position": position,
+            "is_fallback": position > 0,
+            "status": "error",  # until on_llm_end says otherwise
+            "error_type": None,
+            "error_message": None,
+            "started_at": datetime.now(timezone.utc).replace(tzinfo=None),
+            "duration_ms": None,
+            "input_tokens": None,
+            "output_tokens": None,
+            "tool_calls": [],
+        }
+        self.model_calls.append(entry)
+        self._llm_runs[str(run_id)] = (entry, time.monotonic())
 
     async def on_tool_start(
         self,
@@ -112,10 +130,25 @@ class MonitoringCallbackHandler(AsyncCallbackHandler):
         entry["error"] = str(error)
 
     async def on_llm_end(self, response: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        model, position = self._llm_runs.pop(str(run_id), ("unknown", 0))
+        opened = self._llm_runs.pop(str(run_id), None)
+        if opened is None:
+            return
+        entry, started = opened
+        model, position = entry["model"], entry["chain_position"]
         self.model, self.model_position = model, position
+        self.fallback_triggered = self.fallback_triggered or position > 0
+        self._step += 1
+        entry["status"] = "answered"
+        entry["duration_ms"] = round((time.monotonic() - started) * 1000)
+        entry["tool_calls"] = [
+            call["name"]
+            for generations in response.generations
+            for generation in generations
+            for call in getattr(getattr(generation, "message", None), "tool_calls", None) or []
+        ]
         tokens_in, tokens_out = usage_from_response(response)
         if tokens_in or tokens_out:
+            entry["input_tokens"], entry["output_tokens"] = tokens_in, tokens_out
             self.input_tokens = (self.input_tokens or 0) + tokens_in
             self.output_tokens = (self.output_tokens or 0) + tokens_out
             totals = self.usage_by_model.setdefault((model, position), [0, 0])
@@ -123,7 +156,13 @@ class MonitoringCallbackHandler(AsyncCallbackHandler):
             totals[1] += tokens_out
 
     async def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
-        self._llm_runs.pop(str(run_id), None)
+        opened = self._llm_runs.pop(str(run_id), None)
+        if opened is None:
+            return
+        entry, started = opened
+        entry["duration_ms"] = round((time.monotonic() - started) * 1000)
+        entry["error_type"] = type(error).__name__[:100]
+        entry["error_message"] = _preview(str(error))
 
     def finalize_incomplete_calls(self) -> None:
         """Sweeps any tool_start left without a matching end/error — e.g. an
@@ -135,6 +174,11 @@ class MonitoringCallbackHandler(AsyncCallbackHandler):
             entry["duration_ms"] = round((time.monotonic() - started) * 1000)
             entry["error"] = "unclosed (no on_tool_end/on_tool_error fired)"
         self._open.clear()
+        for entry, started in self._llm_runs.values():
+            entry["duration_ms"] = round((time.monotonic() - started) * 1000)
+            entry["error_type"] = "Unfinished"
+            entry["error_message"] = "no on_llm_end/on_llm_error fired"
+        self._llm_runs.clear()
 
 
 def log_agent_run(
@@ -157,23 +201,25 @@ def log_agent_run(
 
     try:
         with Session(engine) as session:
-            session.add(
-                AgentRunLog(
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    user_message=_preview(user_message),
-                    reply_text=_preview(reply_text),
-                    status=status,
-                    error_message=error_message,
-                    latency_ms=latency_ms,
-                    input_tokens=handler.input_tokens if handler else None,
-                    output_tokens=handler.output_tokens if handler else None,
-                    tool_calls=handler.tool_calls if handler else [],
-                    model=handler.model if handler else None,
-                    model_position=handler.model_position if handler else None,
-                    fallback_triggered=handler.fallback_triggered if handler else False,
-                )
+            run = AgentRunLog(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                user_message=_preview(user_message),
+                reply_text=_preview(reply_text),
+                status=status,
+                error_message=error_message,
+                latency_ms=latency_ms,
+                input_tokens=handler.input_tokens if handler else None,
+                output_tokens=handler.output_tokens if handler else None,
+                tool_calls=handler.tool_calls if handler else [],
+                model=handler.model if handler else None,
+                model_position=handler.model_position if handler else None,
+                fallback_triggered=handler.fallback_triggered if handler else False,
             )
+            session.add(run)
+            session.flush()  # the calls' foreign key
+            for call in handler.model_calls if handler else []:
+                session.add(AgentModelCall(run_id=run.id, **call))
             session.commit()
     except Exception:
         logger.exception("failed to write agent_run_log (monitoring only, chat unaffected)")

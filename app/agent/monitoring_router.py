@@ -8,7 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.agent.monitoring_models import AgentRunLog, AgentRunLogDetail, AgentRunLogSummary
+from app.agent.monitoring_models import (
+    AgentModelCall,
+    AgentModelCallRead,
+    AgentRunLog,
+    AgentRunLogDetail,
+    AgentRunLogSummary,
+)
 from app.common.filter_service import apply_filters, filter_query
 from app.common.pagination_service import Page, PaginationParams, count_total, paginate
 from app.common.search_service import apply_search, search_query
@@ -95,6 +101,9 @@ def get_agent_run(run_id: UUID, session: Session = Depends(get_session)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
 
     user = session.get(User, run.user_id)
+    model_calls = session.exec(
+        select(AgentModelCall).where(AgentModelCall.run_id == run_id).order_by(AgentModelCall.seq)
+    ).all()
     return AgentRunLogDetail(
         id=run.id,
         conversation_id=run.conversation_id,
@@ -111,6 +120,7 @@ def get_agent_run(run_id: UUID, session: Session = Depends(get_session)):
         model_position=run.model_position,
         fallback_triggered=run.fallback_triggered,
         tool_calls=run.tool_calls,
+        model_calls=[AgentModelCallRead(**c.model_dump()) for c in model_calls],
         created_at=run.created_at,
     )
 

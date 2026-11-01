@@ -73,12 +73,12 @@ def turn(gemini, monkeypatch):  # noqa: F811
     def set_chain(*models):
         monkeypatch.setattr(agent_graph.llm_config, "resolve_models", lambda use: (models[0], models[1:]))
 
-    def run(route):
+    def run(route, handler=None):
         async def go():
             if route == "run_agent":
-                return (await agent_graph.run_agent("hi", [], []))[0]
+                return (await agent_graph.run_agent("hi", [], [], handler=handler))[0]
             reply = ""
-            async for event in agent_graph.stream_agent("hi", [], []):
+            async for event in agent_graph.stream_agent("hi", [], [], handler=handler):
                 if event["type"] == "final":
                     reply = event["reply"]
             return reply
