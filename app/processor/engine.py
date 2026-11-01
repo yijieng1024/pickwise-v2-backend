@@ -156,18 +156,19 @@ def process_raw_laptop_data(
            - Apple Format: apple-macbook-pro-[size]-m5-[tier]-[cpu]c-[gpu]g-[ram]gb-[ssd]gb. (e.g., apple-macbook-pro-14-m5-pro-14c-16g-24gb-1024gb).
            - PC Format: brand-product-cpumodel-gpumodel-ram-ssd.
         5. SDXC card slot at Macbook is a port to let creators use SD cards for media transfer, not for storage expansion. So it should not be considered as an expansion slot for storage.
+        6. MULTI-OPTION FIELDS: When one spec field lists several options for the same model (e.g. two Memory lines, each with its own "Max up to"), generate one separate variant per option, with every field not tied to an option copied unchanged. Each variant takes its own option's values for every field tied to that option, including `max_ram_gb` ("Max Total system memory up to: 48GB" belongs to the 48GB variant). Each variant gets its own `model_code` per rule 4. When memory is written as "N GB x 2" (or x 4), `ram_gb` is the total (32GB x 2 = 64).
 
         STANDARD EXTRACTION RULES:
-        6. Separate all identified variants into distinct configuration objects.
-        7. Pay close attention to RAM, SSD, CPU, GPU, display size, refresh rate.
-        8. Deduce implicit Apple information if applicable:
+        7. Separate all identified variants into distinct configuration objects.
+        8. Pay close attention to RAM, SSD, CPU, GPU, display size, refresh rate.
+        9. Deduce implicit Apple information if applicable:
            - os = "macOS"
            - gpu_brand = "Apple"
            - processor_brand = "Apple"
            - ai_ready = true
-        9. Only extract information that can reasonably be inferred or calculated from the supplied data.
-        10. Any leftover technical specifications, limitations, or legal footnotes MUST be collected and placed into the `unmapped_specs` JSON object.
-        11. CATEGORY TAGS: For each variant, pick 1-3 use-case tags in `categories`, judged from the hardware
+        10. Only extract information that can reasonably be inferred or calculated from the supplied data.
+        11. Any leftover technical specifications, limitations, or legal footnotes MUST be collected and placed into the `unmapped_specs` JSON object.
+        12. CATEGORY TAGS: For each variant, pick 1-3 use-case tags in `categories`, judged from the hardware
             (e.g. dedicated GPU + high refresh rate -> Gaming; light weight + long battery -> Business;
             strong media engine / color-accurate display -> Creator). You MUST reuse exact names from
             [AVAILABLE CATEGORIES] whenever one fits; only propose a new tag when none fit, and keep it a
