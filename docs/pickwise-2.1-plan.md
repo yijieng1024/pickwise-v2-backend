@@ -642,10 +642,11 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 A laptop that fails stays inactive, and the notification says which condition failed.
 
 **Background jobs (added 2026-10-25)**
-- Every long admin process runs as a background job instead of a request that waits: scrape, process (Gemini), embeddings, PickScore `generate-all`, review `process-bulk`, transcripts, and the benchmark refresh once it exists
-- Each job is recorded in a table: what it is, who or what started it (admin button or schedule), start and end time, status (queued, running, succeeded, failed), progress, result summary and error. The admin shows this list, so a run can be checked without reading Render logs
-- Why: today these are plain requests (curl or admin buttons). Long ones time out, show no progress, and a failure is only visible in the logs
-- PassMark belongs in GitHub Actions too: a run holds one database connection for about 12 minutes (measured 2026-11-01)
+- Every long admin process runs as a background job instead of a request that waits: scrape, process (Gemini), embeddings, PickScore `generate-all`, review `process-bulk`, transcripts, the benchmark refresh (done 2026-11-01), and the feed crawler, which is still a plain request; the scheduled pipeline needs a record of it
+- Each job is recorded in a table: what it is, who or what started it (admin button or schedule), start and end time, status (queued, processing, completed, failed, cancelled, cancelling), progress, result summary and error. The admin shows this list, so a run can be checked without reading Render logs
+- Why: a plain request can time out, shows no progress, and leaves a failure visible only in the logs. All of these except the feed crawler now run as jobs
+- Still missing: a "started by admin or schedule" field. Jobs record `created_by`, which says which admin, but nothing marks a scheduled run
+- PassMark runs as a job on Render today, and belongs in GitHub Actions too: a run holds one database connection for about 12 minutes (measured 2026-11-01)
 - Where a job runs: short jobs (e.g. `generate-all`, minutes) can run on Render. Long ones (scraping every site, multi-day review runs) run in GitHub Actions, because Render's free tier kills running work on every deploy and when the service sleeps. Both write to the same job table
 - A job killed mid-run must show as failed or interrupted, never stay "running" forever
 - Survey first: how each process is started today, how long it takes, and whether the admin already has a job or result table to build on
