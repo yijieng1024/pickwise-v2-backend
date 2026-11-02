@@ -88,6 +88,15 @@ def _names(row: CatalogRow, code: str) -> bool:
     return bool(re.search(pattern, f"{row.model_code} {row.product_name}".upper()))
 
 
+def _letter_fits(guide: GuideRow, row: CatalogRow) -> bool:
+    """FX608J-MRV040W is the FX608JM, not the FX608JP: the letter after the hyphen
+    continues the catalog's code. It carries the GPU, which guide rows do not state."""
+    letter = guide.sku.partition("-")[2][:1].upper()
+    code = re.escape(guide.model_code.upper())
+    found = re.findall(rf"(?<![A-Z0-9]){code}([A-Z])", f"{row.model_code} {row.product_name}".upper())
+    return all(next_letter == letter for next_letter in found)
+
+
 def _spec_candidates(guide: GuideRow, catalog: list[CatalogRow]) -> list[CatalogRow]:
     part = cpu_part(guide.cpu)
     if part is None or guide.ram_gb is None or guide.ssd_gb is None:
@@ -99,6 +108,7 @@ def _spec_candidates(guide: GuideRow, catalog: list[CatalogRow]) -> list[Catalog
     return [
         c for c in named
         if cpu_part(c.processor_model) == part and c.ram_gb == guide.ram_gb and c.ssd_gb == guide.ssd_gb
+        and _letter_fits(guide, c)
     ]
 
 

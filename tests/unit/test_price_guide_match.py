@@ -58,6 +58,22 @@ def test_a_laptop_with_its_own_sku_does_not_make_a_row_ambiguous():
     assert result.ambiguous == []
 
 
+def test_the_letter_after_the_hyphen_picks_the_configuration():
+    tuf = catalog(model_code="asus-tuf-gaming-f16", name="ASUS TUF Gaming F16 (2025) (FX608JM)", cpu="Intel Core i5-13450HX")
+    rtx_5060 = guide(sku="FX608J-MRV040W", price=5799.0, cpu="Intel Core i5-13450HX")
+    rtx_5050 = guide(sku="FX608J-HRV054W", price=5299.0, cpu="Intel Core i5-13450HX")
+
+    result = match([rtx_5060, rtx_5050], [tuf])
+
+    assert [[r.sku for r in rows] for _, rows in result.matched] == [["FX608J-MRV040W"]]
+    assert [r.sku for r in result.unmatched_guide] == ["FX608J-HRV054W"]
+    assert result.conflict == []
+
+
+def test_a_catalog_row_with_nothing_after_the_code_is_not_checked():
+    assert len(match([guide(sku="FX608J-MRV040W")], [catalog(name="ASUS TUF FX608J")]).matched) == 1
+
+
 def test_colour_variants_at_one_price_count_as_matched():
     black, silver = guide(sku="P1403CVA-S61159X"), guide(sku="P1403CVA-S61160X")
 
