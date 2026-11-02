@@ -117,6 +117,37 @@ def raw_sku(raw_specs_dump: Optional[dict]) -> Optional[str]:
     return sku.strip() if isinstance(sku, str) and sku.strip() else None
 
 
+# An ASUS or Acer model code or SKU: S5406SAL, G615L-MS5068W, A715-59G-54Q6.
+# Three digits at least, so a line name such as "S14" is not read as a code.
+_MODEL_CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{3,5}[A-Z]{0,4}(?:-[A-Z0-9]{2,})*\b")
+
+
+def check_model_code(
+    product_name: str, raw_name: str, sku: Optional[str], raw_specs: str
+) -> tuple[str, list[str]]:
+    """
+    `product_name` with any code the LLM invented swapped for the raw one, and
+    the invented codes. A code found in the raw name or SKU stands; so does one
+    found in the specs, because names also carry parts (N4500, RTX5070). A raw
+    row with no code has nothing to check against, so the name is left alone.
+    """
+    name_codes = _MODEL_CODE_RE.findall(raw_name)
+    sku_codes = _MODEL_CODE_RE.findall(sku or "")
+    if not name_codes and not sku_codes:
+        return product_name, []
+
+    # "RTX™ 5070" in the specs is "RTX5070" in a name
+    stated = re.sub(r"[\s®™]", "", raw_specs)
+    invented = [
+        code for code in dict.fromkeys(_MODEL_CODE_RE.findall(product_name))
+        if code not in name_codes and code not in sku_codes and code not in stated
+    ]
+    raw_code = max(name_codes or sku_codes, key=len)
+    for code in invented:
+        product_name = re.sub(rf"\b{re.escape(code)}\b", raw_code, product_name)
+    return product_name, invented
+
+
 def _sku_taken(session: Session, sku: str) -> bool:
     """One SKU, one laptop (a partial unique index). A second row stays null."""
     return session.exec(select(Laptop.id).where(Laptop.manufacturer_sku == sku)).first() is not None
@@ -278,6 +309,9 @@ def process_raw_laptop_data(
         # background job's result), because keeping the old price silently would
         # hide the failed extraction as completely as erasing it hid the price.
         prices_not_extracted: list[str] = []
+        # Names whose code the LLM invented, swapped for the raw code. Returned
+        # for the job's result, the one place an admin can find them later.
+        model_codes_replaced: list[dict] = []
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         # With several variants, which one is the SKU would be a guess.
@@ -286,11 +320,26 @@ def process_raw_laptop_data(
         for variant in extracted_data.variants:
             spec_or_unmapped = variant.unmapped_specs if variant.unmapped_specs else {"ai_extraction_source": raw_data.raw_specs_dump}
 
+            checked_name, invented = check_model_code(
+                variant.product_name, _product_name, _raw_sku, _raw_specs_json
+            )
+            if invented:
+                logger.warning(
+                    "raw %s: LLM wrote %s in %r; used the raw code",
+                    raw_laptop_id, invented, variant.product_name,
+                )
+                model_codes_replaced.append({
+                    "raw_id": str(raw_laptop_id),
+                    "invented": invented,
+                    "llm_name": variant.product_name,
+                    "product_name": checked_name,
+                })
+
             laptop_data = dict(
                 # Part 1: Core Identifiers
                 brand_id=raw_data.brand_id,
                 model_code=variant.model_code.lower(),
-                product_name=variant.product_name,
+                product_name=checked_name,
                 release_year=variant.release_year,
                 price_rm=variant.price_rm,
 
@@ -447,6 +496,7 @@ def process_raw_laptop_data(
             "variants_updated": updated_count,
             "categories_linked": categories_linked,
             "prices_not_extracted": prices_not_extracted,
+            "model_codes_replaced": model_codes_replaced,
         }
 
     except Exception as e:
@@ -635,6 +685,7 @@ def process_pending_laptops(
     total_saved = 0
     total_updated = 0
     prices_not_extracted: list[str] = []
+    model_codes_replaced: list[dict] = []
     requests_made = 0
 
     cancelled = False
@@ -663,6 +714,7 @@ def process_pending_laptops(
                 "variants_saved": res.get("variants_saved", 0),
                 "variants_updated": res.get("variants_updated", 0),
                 "prices_not_extracted": res.get("prices_not_extracted", []),
+                "model_codes_replaced": res.get("model_codes_replaced", []),
                 "error": None if succeeded else res.get("message"),
             }
         )
@@ -671,6 +723,7 @@ def process_pending_laptops(
             total_saved += res.get("variants_saved", 0)
             total_updated += res.get("variants_updated", 0)
             prices_not_extracted.extend(res.get("prices_not_extracted", []))
+            model_codes_replaced.extend(res.get("model_codes_replaced", []))
 
         if progress:
             progress.advance(
@@ -705,6 +758,8 @@ def process_pending_laptops(
         "total_variants_updated": total_updated,
         # Laptops whose stored price was kept because extraction found none.
         "prices_not_extracted": prices_not_extracted,
+        # Names whose LLM-invented code was swapped for the raw one.
+        "model_codes_replaced": model_codes_replaced,
         "pending_remaining": pending_remaining,
         "details": results_summary,
     }

@@ -400,6 +400,10 @@ Phases 0–3 in Jack's order (Phase 4 cancelled, see below). Each phase ends wit
 - **Multi-option prompt rule, committed** (2026-11-01, commit `61e3fd4`): H7607BA re-run on the TEST database gave 128GB with `max_ram_gb` 128 and 48GB with `max_ram_gb` 48, as expected
   - It passed on `gemini-3.5-flash-lite`: `gemma-4-31b-it` returned 503, `gemma-4-26b-a4b-it` returned 504, and the fallback carried the page
   - **Not yet confirmed on the Gemma models.** The wrong `max_ram_gb` above came from `gemma-4-26b-a4b-it`, and they are first in the processor chain
+- **The LLM's model code is checked against the raw row** (decided, Jack, 2026-11-02; built): the catalog's "S5406M" was invented by Gemma. Raw row `e30d0abf` reads `(S5406) (S5406SAL)` and names no S5406M. After extraction, `check_model_code` looks at each code in `product_name`: one found in the raw name or SKU stands, one found in the specs stands (names carry parts too, such as N4500), and anything else is replaced by the longest code in the raw name
+  - The record is not failed. Each swap is logged and listed in `model_codes_replaced`, in the single-record response and the job's `result`. No admin page shows that field yet: read it from `GET /jobs/{id}`
+  - A raw row with no code is left alone, and a name with no code stays without one. The `model_code` slug is not checked
+  - Survey, 2026-11-02: all 224 catalog names carrying a code matched a raw code after the hand fix, and CPUs agreed on all 44 ASUS rows that matched a live page. No bulk re-process (Jack): it would overwrite hand fixes for no gain. Raw codes missing from the catalog are a separate survey, and the URL skip that blocks new variants goes to step 11
 
 **Phase 1b: Docker image Python 3.11 → 3.12** (done 2026-11-01, commit `0a51f96`)
 - Why: CI runs 3.12 (`ci.yml`), the image runs 3.11 (`FROM python:3.11-slim`), so the tiers pass on a Python production never runs
