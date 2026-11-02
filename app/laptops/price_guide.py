@@ -79,7 +79,10 @@ class MatchResult:
 
 
 def _sku_key(sku: Optional[str]) -> str:
-    return (sku or "").strip().upper()
+    """-W and -WP read as one SKU (Jack, 2026-11-02). Only those two: -WS and -WSP stay
+    apart. No Q3 guide prints both forms of a SKU, so nothing proves this; if a later
+    guide does at two prices, the row is a conflict and writes nothing."""
+    return re.sub(r"WP$", "W", (sku or "").strip().upper())
 
 
 def _names(row: CatalogRow, code: str) -> bool:
@@ -114,7 +117,10 @@ def _spec_candidates(guide: GuideRow, catalog: list[CatalogRow]) -> list[Catalog
 
 def match(guide_rows: list[GuideRow], catalog_rows: list[CatalogRow]) -> MatchResult:
     result = MatchResult()
-    by_sku = {_sku_key(c.manufacturer_sku): c for c in catalog_rows if c.manufacturer_sku}
+    by_sku: dict[str, list[CatalogRow]] = {}
+    for row in catalog_rows:
+        if row.manufacturer_sku:
+            by_sku.setdefault(_sku_key(row.manufacturer_sku), []).append(row)
     # A laptop with a SKU of its own is priced by that SKU or not at all: a guide row
     # with another SKU is another machine, however alike the specs read.
     no_sku = [c for c in catalog_rows if not c.manufacturer_sku]
@@ -126,8 +132,12 @@ def match(guide_rows: list[GuideRow], catalog_rows: list[CatalogRow]) -> MatchRe
         if guide.price_rm is None:
             result.unpriced.append(guide)
             continue
-        hit = by_sku.get(_sku_key(guide.sku))
-        candidates = [hit] if hit else _spec_candidates(guide, no_sku)
+        hits = by_sku.get(_sku_key(guide.sku))
+        if hits:  # one row prices the -W and -WP laptops alike, so this is never ambiguous
+            for hit in hits:
+                claims.setdefault(hit.id, []).append(guide)
+            continue
+        candidates = _spec_candidates(guide, no_sku)
         if not candidates:
             result.unmatched_guide.append(guide)
         elif len(candidates) > 1:

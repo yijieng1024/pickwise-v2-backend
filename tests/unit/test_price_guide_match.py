@@ -25,6 +25,36 @@ def test_an_exact_sku_matches_whatever_the_specs_say():
     assert [(c.id, [r.sku for r in rows]) for c, rows in result.matched] == [("a", ["G835L-WGSA478WP"])]
 
 
+@pytest.mark.parametrize("printed, stored", [("GU606A-RTB128W", "GU606A-RTB128WP"), ("G835L-WGSA378WP", "G835L-WGSA378W")])
+def test_w_and_wp_are_one_sku(printed, stored):
+    result = match([guide(sku=printed, cpu=None, ram=None, ssd=None)], [catalog(sku=stored)])
+
+    assert [c.id for c, _ in result.matched] == ["a"]
+
+
+def test_one_guide_row_prices_both_the_w_and_the_wp_laptop():
+    laptops = [catalog(id="w", sku="GU606A-MTB038W"), catalog(id="wp", sku="GU606A-MTB038WP")]
+
+    result = match([guide(sku="GU606A-MTB038W", cpu=None, ram=None, ssd=None)], laptops)
+
+    assert sorted(c.id for c, _ in result.matched) == ["w", "wp"]
+    assert result.ambiguous == []
+
+
+def test_a_guide_that_prices_w_and_wp_apart_is_a_conflict():
+    rows = [guide(sku="GU606A-MTB038W", price=16999.0), guide(sku="GU606A-MTB038WP", price=17999.0)]
+
+    result = match(rows, [catalog(sku="GU606A-MTB038W")])
+
+    assert result.matched == []
+    assert len(result.conflict) == 1
+
+
+@pytest.mark.parametrize("printed, stored", [("A1407C-ALY145WS", "A1407C-ALY145W"), ("UX3407Q-ASB555WSP", "UX3407Q-ASB555WS")])
+def test_other_endings_stay_apart(printed, stored):
+    assert match([guide(sku=printed, cpu=None, ram=None, ssd=None)], [catalog(sku=stored)]).matched == []
+
+
 def test_model_code_and_specs_match():
     result = match([guide()], [catalog()])
 
