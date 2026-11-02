@@ -51,11 +51,32 @@ def test_fixed_answers_are_not_attached(about, reason):
 
 def test_only_offered_ids_are_accepted():
     c = _cands()
-    assert p.parse_about(" f1.c2 ", c) == "F1.C2"
-    assert p.parse_about("other", c) == "OTHER"
-    for bad in ("F4", "F1.C3", "MacBook Air", ""):
+    assert p.parse_about(" f1.c2 ", c) == ("F1.C2", None)
+    assert p.parse_about("other", c) == ("OTHER", None)
+    for bad in ("F4", "F1.C3", "MacBook Air", "", "F1 (MacBook Air)", "NONE (intro)"):
         with pytest.raises(p.InvalidAnswer):
             p.parse_about(bad, c)
+
+
+def test_a_name_written_into_about_moves_to_other_laptop():
+    c = _cands()
+    assert p.parse_about("OTHER (Razer Blade)", c) == ("OTHER", "Razer Blade")
+    assert p.parse_about(" several(ASUS V16, TUF A18) ", c) == ("SEVERAL", "ASUS V16, TUF A18")
+
+    class Chain:
+        def __init__(self, about, other):
+            self.answer = p._WindowAnalysis(summary="s", about=about, sentiment="neutral",
+                                            topic="other", scope="family", other_laptop=other)
+
+        def invoke(self, _):
+            return self.answer
+
+    window = {"text": "t", "previous": ""}
+    analysis, about, placement = p.analyse_window(Chain("OTHER (Razer Blade)", None), c, "title", window)
+    assert (about, analysis.other_laptop, placement["reason"]) == ("OTHER", "Razer Blade", "other_laptop")
+    # The model's own other_laptop wins over the bracketed name.
+    analysis, _, _ = p.analyse_window(Chain("OTHER (Blade)", "Razer Blade 16"), c, "title", window)
+    assert analysis.other_laptop == "Razer Blade 16"
 
 
 def test_each_window_carries_the_tail_of_the_previous_one():

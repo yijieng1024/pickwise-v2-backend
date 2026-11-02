@@ -71,8 +71,9 @@ class _FakeGemini:
                 if b == "hang":
                     time.sleep(5)
                     return
-                if b in ("429", "500", "400"):
-                    status = {"429": "RESOURCE_EXHAUSTED", "500": "INTERNAL", "400": "INVALID_ARGUMENT"}[b]
+                if b in ("429", "500", "504", "400"):
+                    status = {"429": "RESOURCE_EXHAUSTED", "500": "INTERNAL", "504": "DEADLINE_EXCEEDED",
+                              "400": "INVALID_ARGUMENT"}[b]
                     self._json(int(b), {"error": {"code": int(b), "message": "fake", "status": status}})
                     return
                 if method == "generateContent":
@@ -159,8 +160,9 @@ def test_a_primary_past_its_deadline_falls_back(gemini):
     assert time.monotonic() - started < 4  # deadline is 1 s; the hang is 5 s
 
 
-def test_a_server_error_falls_back(gemini):
-    gemini.behaviour.update({"primary-model": "500", "backup-model": "ok"})
+@pytest.mark.parametrize("code", ["500", "504"])  # 504 DEADLINE_EXCEEDED, seen on gemma-4-31b-it
+def test_a_server_error_falls_back(gemini, code):
+    gemini.behaviour.update({"primary-model": code, "backup-model": "ok"})
     assert _llm().invoke("hi").content == "answer from backup-model"
 
 

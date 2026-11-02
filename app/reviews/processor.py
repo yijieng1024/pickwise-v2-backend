@@ -16,6 +16,7 @@ whose links changed (reprocess_requested_at) is re-processed into staging and
 swapped in when complete, and the full re-run (app/scripts/reprocess_reviews)
 stages everything and swaps all videos in one transaction.
 """
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -65,27 +66,42 @@ _CONTEXT_CHARS = 300  # tail of the previous window, for resolving "it"
 # the model and the human labels are judged by one set of definitions.
 # --------------------------------------------------------------------------
 FIXED_ANSWERS = {
-    "OTHER": "a laptop not in the list",
-    "SEVERAL": "compares listed laptops, with no single subject",
-    "NONE": "no laptop is discussed: intro, sponsor, channel talk",
+    "OTHER": "the main subject is a laptop that isn't listed; its name goes in other_laptop",
+    "SEVERAL": "compares two or more laptops with no single main subject",
+    "NONE": (
+        "not about a specific laptop: intro, sponsor, giveaway, a handheld, phone "
+        "or accessory, general buying advice"
+    ),
 }
 
 ABOUT_RULE = (
-    "Which laptop the excerpt's main point is about. Answer one id from the list. "
-    "Use a configuration id (like F2.C1) only when the excerpt singles out that "
+    "The main subject is the laptop that most of the excerpt's claims are about. A "
+    "laptop only mentioned as a comparison point is not the subject ('this will eat "
+    "into the Air's sales' is about 'this'). Use the previous excerpt to resolve "
+    "'this one' or 'it'.\n"
+    "  - Main subject is a listed laptop: its id. The family id (like F2), or a "
+    "configuration id (like F2.C1) if the excerpt makes clear it is that "
     "configuration, by its chip, GPU or memory, or because it is the unit the "
-    "reviewer tested (marked in the list); otherwise use the family id (like F2). "
-    "Answer OTHER for a laptop not in the list, SEVERAL when the excerpt compares "
-    "listed laptops with no single subject, and NONE when no laptop is discussed "
-    "(intro, sponsor, channel talk). Use the previous excerpt to resolve 'this one' "
-    "or 'it'. A laptop that is only mentioned in passing (for example 'it will eat "
-    "into the Air's sales') is not the subject."
+    "reviewer tested (marked in the list).\n"
+    "  - Main subject is a laptop that isn't listed: OTHER, with its name in other_laptop.\n"
+    "  - The excerpt compares two or more laptops with no single main subject (for "
+    "example one FPS result each for three laptops): SEVERAL.\n"
+    "  - Not about a specific laptop at all (intro, sponsor, giveaway, a handheld, "
+    "phone or accessory, general buying advice): NONE.\n"
+    "  about is exactly one listed id, or exactly OTHER, SEVERAL or NONE, with nothing "
+    "added; any laptop name goes only in other_laptop."
 )
 SENTIMENT_RULE = (
-    "Judge the main point, even when it is said politely: 'strength' if the reviewer "
-    "is positive about it, 'weakness' if critical or warning (for example '8GB will "
-    "struggle with longevity' is a weakness), 'neutral' for facts, specs, setup, "
-    "prices stated without judgement, or sponsor talk."
+    "About the main subject of the excerpt.\n"
+    "  - strength: the main point is positive: praise, a recommendation, an "
+    "advantage over others. Mild praise still counts ('punches above its price').\n"
+    "  - weakness: the main point is negative: criticism, a limitation, a "
+    "disappointment, a reason not to buy. Polite criticism still counts ('8GB will "
+    "struggle with longevity').\n"
+    "  - neutral: facts, specs, how-to, or general buying advice with no evaluation "
+    "of the subject.\n"
+    "  - Mixed excerpts: pick the side that takes up more of the excerpt or is "
+    "stressed more. Only if the two are truly balanced, use neutral."
 )
 TOPIC_DEFINITIONS = {
     ReviewTopic.THERMALS.value: "temperatures, fan noise, throttling, cooling",
@@ -285,10 +301,19 @@ def build_candidates(session: Session, links) -> Candidates:
     return c
 
 
-def parse_about(raw: str, cands: Candidates) -> str:
+# "OTHER (Razer Blade)": the name put in `about` instead of other_laptop.
+_NAMED_ANSWER = re.compile(r"\s*(OTHER|SEVERAL)\s*\((.*)\)\s*", re.IGNORECASE)
+
+
+def parse_about(raw: str, cands: Candidates) -> tuple[str, Optional[str]]:
+    """(about, name). The name is set only for OTHER / SEVERAL written with the
+    laptop name in brackets, a formatting habit that must not fail a window."""
+    named = _NAMED_ANSWER.fullmatch(raw)
+    if named:
+        return named.group(1).upper(), named.group(2).strip() or None
     about = raw.strip().upper().replace(" ", "")
     if about in cands.ids or about in FIXED_ANSWERS:
-        return about
+        return about, None
     raise InvalidAnswer(f"about={raw!r} is not one of {sorted(cands.ids) + list(FIXED_ANSWERS)}")
 
 
@@ -345,7 +370,9 @@ def analyse_window(chain, cands: Candidates, title: str, window: dict) -> tuple[
         "previous": window.get("previous", ""),
         "text": window["text"],
     })
-    about = parse_about(analysis.about, cands)
+    about, name = parse_about(analysis.about, cands)
+    if name and not analysis.other_laptop:
+        analysis.other_laptop = name
     return analysis, about, place(about, analysis.scope, cands)
 
 
