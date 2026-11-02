@@ -5,6 +5,7 @@ import time
 from functools import lru_cache
 from typing import List, Optional, cast
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.common import llm_config
@@ -17,6 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.logger import get_logger
 from app.laptops.family_service import resolve_family_id
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, PriceSource
+from app.laptops.price_guide import sku_key
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
@@ -148,9 +150,16 @@ def check_model_code(
     return product_name, invented
 
 
-def _sku_taken(session: Session, sku: str) -> bool:
-    """One SKU, one laptop (a partial unique index). A second row stays null."""
-    return session.exec(select(Laptop.id).where(Laptop.manufacturer_sku == sku)).first() is not None
+def _laptop_by_sku(session: Session, sku: str) -> Optional[Laptop]:
+    """
+    The laptop holding this SKU. A slug is the LLM's wording, so one machine can come
+    back under a new one; the SKU is the maker's. -W and -WP read as one SKU, as in the
+    guides, and the exact form wins when both are stored.
+    """
+    key = sku_key(sku)
+    forms = [key, f"{key}P"] if key.endswith("W") else [key]
+    holders = session.exec(select(Laptop).where(func.upper(Laptop.manufacturer_sku).in_(forms))).all()
+    return next((l for l in holders if l.manufacturer_sku.upper() == sku.upper()), holders[0] if holders else None)
 
 
 def process_raw_laptop_data(
@@ -412,9 +421,16 @@ def process_raw_laptop_data(
                 ),
             )
 
-            existing = session.exec(
-                select(Laptop).where(Laptop.model_code == variant.model_code.lower())
-            ).first()
+            existing = _laptop_by_sku(session, sku) if sku else None
+            if existing is None:
+                existing = session.exec(
+                    select(Laptop).where(Laptop.model_code == laptop_data["model_code"])
+                ).first()
+                # A slug spells out specs, so two SKUs of one spec can share it. The
+                # lookup above missed, so a SKU stored here is another machine's.
+                if existing and sku and existing.manufacturer_sku:
+                    laptop_data["model_code"] = f"{laptop_data['model_code']}-{sku.lower()}"
+                    existing = None
 
             if existing:
                 # Price history: only record if price actually changed and is non-zero
@@ -438,7 +454,7 @@ def process_raw_laptop_data(
                 # Checked". A no-price extraction confirmed nothing.
                 if variant.price_rm > 0:
                     existing.price_checked_at = datetime.now(timezone.utc)
-                if sku and not existing.manufacturer_sku and not _sku_taken(session, sku):
+                if sku and not existing.manufacturer_sku:
                     existing.manufacturer_sku = sku
 
                 session.add(existing)
@@ -458,8 +474,7 @@ def process_raw_laptop_data(
                 new_laptop = Laptop(**laptop_data)
                 if new_laptop.price_rm > 0:
                     new_laptop.price_checked_at = datetime.now(timezone.utc)
-                if sku and not _sku_taken(session, sku):
-                    new_laptop.manufacturer_sku = sku
+                new_laptop.manufacturer_sku = sku
                 # Family: adopt the one its already-grouped siblings agree on,
                 # or stay null. laptop_data deliberately carries no family_id,
                 # so the update branch above never touches an admin's manual

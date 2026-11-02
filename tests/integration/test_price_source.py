@@ -3,6 +3,8 @@
 The guide import may only overwrite a price it wrote itself, so every path that
 writes a price has to say so.
 """
+import uuid
+
 import pytest
 from langchain_core.runnables import RunnableLambda
 from sqlalchemy.exc import IntegrityError
@@ -21,10 +23,10 @@ def _history(session, laptop_id):
     return session.exec(select(LaptopPriceHistory).where(LaptopPriceHistory.laptop_id == laptop_id)).all()
 
 
-def _process(session, monkeypatch, brand, laptops, sku="G835L-XGTQ284WP"):
+def _process(session, monkeypatch, brand, laptops, sku: str | None = "G835L-XGTQ284WP"):
     """Runs the upsert with one extracted variant per laptop in *laptops*."""
     raw = RawScrapLaptop(
-        source_url="https://example.invalid/p", brand_id=brand.id, raw_product_name="Test Laptop",
+        source_url=f"https://example.invalid/{uuid.uuid4().hex}", brand_id=brand.id, raw_product_name="Test Laptop",
         raw_specs_dump={"scraped_features": {"SKU": sku}},
     )
     session.add(raw)
@@ -90,14 +92,107 @@ def test_reprocessing_never_overwrites_a_stored_sku(session, brand, monkeypatch)
     assert laptop.manufacturer_sku == "G835L-ORIGINAL"
 
 
-def test_a_sku_another_laptop_holds_stays_null_rather_than_failing_the_row(session, brand, monkeypatch):
-    _existing(session, brand, "sku-holder", manufacturer_sku="G835L-XGTQ284WP")
-    laptop = _existing(session, brand, "sku-second")
+def _row(brand, code, price):
+    """What the LLM extracted: never added, so only the processor can store it."""
+    return make_laptop(brand.id, model_code=code, price_rm=price)
 
-    _process(session, monkeypatch, brand, [laptop])
+
+def _codes(session, brand):
+    return set(session.exec(select(Laptop.model_code).where(Laptop.brand_id == brand.id)).all())
+
+
+def test_the_same_sku_under_a_new_slug_updates_the_laptop_holding_it(session, brand, monkeypatch):
+    laptop = _existing(session, brand, "slug-first", manufacturer_sku="G835L-XGTQ284WP", price_rm=5000.0)
+
+    _process(session, monkeypatch, brand, [_row(brand, "slug-second", 5500.0)])
 
     session.refresh(laptop)
-    assert laptop.manufacturer_sku is None
+    assert _codes(session, brand) == {"slug-first"}  # the key stays, whatever the LLM wrote
+    assert laptop.price_rm == 5500.0
+
+
+def test_a_sku_match_beats_a_slug_match_on_another_laptop(session, brand, monkeypatch):
+    holder = _existing(session, brand, "sku-holder", manufacturer_sku="G835L-XGTQ284WP", price_rm=5000.0)
+    slug_row = _existing(session, brand, "sku-second", price_rm=4000.0)
+
+    _process(session, monkeypatch, brand, [_row(brand, "sku-second", 5500.0)])
+
+    session.refresh(holder)
+    session.refresh(slug_row)
+    assert (holder.price_rm, slug_row.price_rm, slug_row.manufacturer_sku) == (5500.0, 4000.0, None)
+
+
+@pytest.mark.parametrize("stored, scraped", [("G835L-XGTQ284W", "G835L-XGTQ284WP"), ("G835L-XGTQ284WP", "G835L-XGTQ284W")])
+def test_w_and_wp_are_one_sku_and_the_stored_form_stays(session, brand, monkeypatch, stored, scraped):
+    laptop = _existing(session, brand, "wp-held", manufacturer_sku=stored, price_rm=5000.0)
+
+    _process(session, monkeypatch, brand, [_row(brand, "wp-new-slug", 5500.0)], sku=scraped)
+
+    session.refresh(laptop)
+    assert _codes(session, brand) == {"wp-held"}
+    assert (laptop.price_rm, laptop.manufacturer_sku) == (5500.0, stored)
+
+
+def test_with_both_forms_stored_the_exact_one_is_updated(session, brand, monkeypatch):
+    plain = _existing(session, brand, "wp-plain", manufacturer_sku="G835L-XGTQ284W", price_rm=5000.0)
+    office = _existing(session, brand, "wp-office", manufacturer_sku="G835L-XGTQ284WP", price_rm=5000.0)
+
+    _process(session, monkeypatch, brand, [_row(brand, "wp-third", 5500.0)], sku="G835L-XGTQ284WP")
+
+    session.refresh(plain)
+    session.refresh(office)
+    assert (plain.price_rm, office.price_rm) == (5000.0, 5500.0)
+
+
+def test_different_skus_under_different_slugs_stay_separate(session, brand, monkeypatch):
+    laptop = _existing(session, brand, "sku-a", manufacturer_sku="G835L-AAA111W", price_rm=5000.0)
+
+    _process(session, monkeypatch, brand, [_row(brand, "sku-b", 5500.0)], sku="G835L-BBB222W")
+
+    session.refresh(laptop)
+    new = session.exec(select(Laptop).where(Laptop.model_code == "sku-b")).one()
+    assert (laptop.price_rm, new.manufacturer_sku) == (5000.0, "G835L-BBB222W")
+
+
+def test_two_skus_of_one_spec_share_a_slug_but_stay_separate(session, brand, monkeypatch):
+    """A slug spells out specs, so it cannot tell two SKUs of one spec apart."""
+    laptop = _existing(session, brand, "same-spec", manufacturer_sku="G835L-AAA111W", price_rm=5000.0)
+
+    for _ in range(2):  # the second run finds the new row by its SKU: no third row
+        _process(session, monkeypatch, brand, [_row(brand, "same-spec", 5500.0)], sku="G835L-BBB222W")
+
+    session.refresh(laptop)
+    new = session.exec(select(Laptop).where(Laptop.manufacturer_sku == "G835L-BBB222W")).one()
+    assert (laptop.price_rm, new.price_rm) == (5000.0, 5500.0)
+    assert _codes(session, brand) == {"same-spec", new.model_code}
+
+
+def test_with_no_sku_the_slug_decides_as_before(session, brand, monkeypatch):
+    laptop = _existing(session, brand, "no-sku-slug", price_rm=5000.0)
+
+    _process(session, monkeypatch, brand, [_row(brand, "no-sku-slug", 5500.0)], sku=None)
+
+    session.refresh(laptop)
+    assert _codes(session, brand) == {"no-sku-slug"}
+    assert (laptop.price_rm, laptop.manufacturer_sku) == (5500.0, None)
+
+
+def test_a_new_slug_with_no_sku_is_a_new_laptop(session, brand, monkeypatch):
+    _existing(session, brand, "no-sku-old", manufacturer_sku="G835L-AAA111W")
+
+    _process(session, monkeypatch, brand, [_row(brand, "no-sku-new", 5500.0)], sku=None)
+
+    assert _codes(session, brand) == {"no-sku-old", "no-sku-new"}
+
+
+def test_a_suspended_laptop_is_updated_but_stays_suspended(session, brand, monkeypatch):
+    laptop = _existing(session, brand, "retired", manufacturer_sku="G835L-XGTQ284WP", status="suspended")
+
+    _process(session, monkeypatch, brand, [_row(brand, "retired-new-slug", 5500.0)])
+
+    session.refresh(laptop)
+    assert _codes(session, brand) == {"retired"}
+    assert (laptop.status, laptop.price_rm) == ("suspended", 5500.0)
 
 
 def test_the_database_refuses_one_sku_on_two_laptops_but_allows_many_nulls(session, brand):
