@@ -22,6 +22,8 @@ import re
 from pathlib import Path
 from typing import Optional
 
+# "ASUS Product Guide 2026 2nd Edition", "PRODUCT GUIDE 2026 EDITION"
+_EDITION = re.compile(r"(?:(ASUS|ROG)\s+)?PRODUCT\s+GUIDE\s+(\d{4})\s+(?:(\d(?:st|nd|rd|th))\s+)?EDITION", re.IGNORECASE)
 SKU = re.compile(r"^[A-Z]{1,3}\d{3,4}[A-Z]{0,4}-[A-Z0-9]{5,}$")
 SKU_HEAD = re.compile(r"^[A-Z]{1,3}\d{3,4}[A-Z]{0,4}-$")
 SKU_TAIL = re.compile(r"^[A-Z0-9]{4,}$")
@@ -276,6 +278,17 @@ def extract_rows(pages: list[list[dict]]) -> tuple[list[dict], list[dict]]:
     return list(by_sku.values()), summary
 
 
+def edition_name(cover: str) -> Optional[str]:
+    """The edition on a cover page, without the marketing around it. None if the
+    cover states none: a blank reads "Not stated", and cover text would not."""
+    found = _EDITION.search(cover)
+    if not found:
+        return None
+    brand, year, ordinal = found.groups()
+    parts = [brand.upper() if brand else None, "Product Guide", year, ordinal.lower() if ordinal else None, "Edition"]
+    return " ".join(part for part in parts if part)
+
+
 def main() -> None:
     import pdfplumber  # only this path needs it
 
@@ -290,12 +303,12 @@ def main() -> None:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
 
-    pages, edition = [], ""
+    pages, edition = [], None
     with pdfplumber.open(args.pdf) as pdf:
         for index, page in enumerate(pdf.pages):
             pages.append(page.extract_words())
             if index == 0:
-                edition = " ".join((page.extract_text() or "").split())[:200]
+                edition = edition_name(" ".join((page.extract_text() or "").split()))
             page.close()
 
     rows, summary = extract_rows(pages)

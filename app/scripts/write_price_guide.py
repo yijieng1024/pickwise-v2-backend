@@ -8,7 +8,8 @@ Store one extraction's rows in the staging tables, `price_guides` and
 Writes to TEST_DATABASE_URL unless PRICE_GUIDE_TARGET=production is set, and checks
 that the URL is the database it claims to be (app/common/db_target.py). Logs the
 host only. The PDF's sha256 identifies a guide, so running the same file again adds
-nothing: it only fills `panel` on rows stored before that column existed.
+nothing: it only fills `panel` on rows stored before that column existed, and
+corrects the guide's edition.
 """
 import argparse
 import json
@@ -84,6 +85,19 @@ def fill_panels(connection: Connection, payload: dict) -> int:
     )
 
 
+def fill_edition(connection: Connection, payload: dict) -> bool:
+    """Replace this PDF's stored edition with the one just read. A run that read no
+    edition keeps the stored one. True if it changed."""
+    edition = payload.get("edition_text")
+    if not edition:
+        return False
+    return connection.execute(
+        update(_GUIDES)
+        .where(_GUIDES.c.pdf_sha256 == payload["pdf_sha256"], _GUIDES.c.edition_text.is_distinct_from(edition))
+        .values(edition_text=edition)
+    ).rowcount > 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("rows", type=Path)
@@ -99,6 +113,7 @@ def main() -> int:
     with engine.begin() as connection:
         guide_id = write_guide(connection, payload, uploaded_by)
         filled = fill_panels(connection, payload) if guide_id is None else 0
+        fill_edition(connection, payload)
     engine.dispose()
 
     if guide_id is None:

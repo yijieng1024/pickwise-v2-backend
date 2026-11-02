@@ -3,6 +3,7 @@ from the Q3 2026 guides, and expected.json was checked by hand against the print
 pages (2026-11-01). They hold text and coordinates only, no PDF."""
 import ast
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -118,3 +119,46 @@ def test_the_script_imports_no_database_and_no_network():
         for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))
     }
     assert top_level <= {"argparse", "hashlib", "json", "re", "pathlib", "typing"}
+
+
+
+@pytest.mark.parametrize("cover, edition", [
+    ("ASUS Product Guide 2026 2nd Edition S5408 ASUS Vivobook S14 Sleeker, Powerful", "ASUS Product Guide 2026 2nd Edition"),
+    ("ROG Product Guide 2026 3rd Edition 2026 ROG GAMING LAPTOPS DARE TO INNOVATE", "ROG Product Guide 2026 3rd Edition"),
+    ("PRODUCT GUIDE 2026 EDITION ASUS EXPERT SERIES TRUSTED BY IT EXPERTS", "Product Guide 2026 Edition"),
+    ("ASUS Vivobook S14 Sleeker, Powerful", None),
+    ("", None),
+])
+def test_the_edition_is_the_name_on_the_cover_and_not_its_marketing(cover, edition):
+    assert guide.edition_name(cover) == edition
+
+
+def test_the_extraction_stores_the_edition_name(tmp_path, monkeypatch):
+    class Page:
+        def extract_words(self):
+            return []
+
+        def extract_text(self):
+            return "ROG Product Guide 2026 3rd Edition 2026 ROG GAMING LAPTOPS"
+
+        def close(self):
+            pass
+
+    class Pdf:
+        pages = [Page()]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    fake = type("pdfplumber", (), {"open": staticmethod(lambda _: Pdf())})
+    monkeypatch.setitem(sys.modules, "pdfplumber", fake)
+    pdf, out = tmp_path / "g.pdf", tmp_path / "rows.json"
+    pdf.write_bytes(b"x")
+    monkeypatch.setattr(sys, "argv", ["extract", str(pdf), "--kind", "rog", "--out", str(out)])
+
+    guide.main()
+
+    assert json.loads(out.read_text(encoding="utf-8"))["edition_text"] == "ROG Product Guide 2026 3rd Edition"

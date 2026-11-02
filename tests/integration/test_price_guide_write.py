@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.laptops.price_guide_model import PriceGuide, PriceGuideRow
-from app.scripts.write_price_guide import fill_panels, write_guide
+from app.scripts.write_price_guide import fill_edition, fill_panels, write_guide
 from tests.integration.conftest import make_laptop
 
 pytestmark = pytest.mark.integration
@@ -132,6 +132,44 @@ def test_it_touches_only_the_staging_tables(session, brand):
     session.refresh(laptop)
     assert laptop.price_rm == 0.0
     assert session.exec(select(LaptopPriceHistory)).all() == []
+
+
+def _edition(session):
+    session.expire_all()
+    return session.exec(select(PriceGuide)).one().edition_text
+
+
+def test_a_second_run_corrects_the_stored_edition(session):
+    write_guide(session.connection(), {**PAYLOAD, "edition_text": "ROG Product Guide 2026 3rd Edition 2026 ROG GAMING"})
+    session.commit()
+
+    assert fill_edition(session.connection(), {**PAYLOAD, "edition_text": "ROG Product Guide 2026 3rd Edition"}) is True
+    assert fill_edition(session.connection(), {**PAYLOAD, "edition_text": "ROG Product Guide 2026 3rd Edition"}) is False
+    session.commit()
+
+    assert _edition(session) == "ROG Product Guide 2026 3rd Edition"
+
+
+def test_a_run_that_read_no_edition_keeps_the_stored_one(session):
+    write_guide(session.connection(), PAYLOAD)
+    session.commit()
+
+    assert fill_edition(session.connection(), {**PAYLOAD, "edition_text": None}) is False
+    session.commit()
+
+    assert _edition(session) == "ROG 2026"
+
+
+def test_an_edition_on_one_guide_leaves_another_alone(session):
+    write_guide(session.connection(), {**PAYLOAD, "pdf_sha256": "e" * 64})
+    write_guide(session.connection(), {**PAYLOAD, "pdf_sha256": "f" * 64})
+    session.commit()
+
+    fill_edition(session.connection(), {**PAYLOAD, "pdf_sha256": "e" * 64, "edition_text": "new"})
+    session.commit()
+
+    session.expire_all()
+    assert {g.pdf_sha256[0]: g.edition_text for g in session.exec(select(PriceGuide)).all()} == {"e": "new", "f": "ROG 2026"}
 
 
 def test_an_extraction_that_found_nothing_is_not_stored(session):
