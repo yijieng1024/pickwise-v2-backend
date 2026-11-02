@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.laptops.price_guide_model import PriceGuide, PriceGuideRow
-from app.scripts.write_price_guide import fill_edition, fill_panels, write_guide
+from app.scripts.write_price_guide import fill_edition, fill_panels, run_note, store, write_guide
 from tests.integration.conftest import make_laptop
 
 pytestmark = pytest.mark.integration
@@ -170,6 +170,47 @@ def test_an_edition_on_one_guide_leaves_another_alone(session):
 
     session.expire_all()
     assert {g.pdf_sha256[0]: g.edition_text for g in session.exec(select(PriceGuide)).all()} == {"e": "new", "f": "ROG 2026"}
+
+
+def test_a_new_guide_records_its_run(session):
+    assert store(session.connection(), PAYLOAD, run_id=41444009428) == "Stored 2 rows"
+    session.commit()
+
+    guide = session.exec(select(PriceGuide)).one()
+    assert (guide.last_run_id, guide.last_run_note) == (41444009428, "Stored 2 rows")
+
+
+def test_a_rerun_records_what_it_filled_on_the_stored_guide_only(session):
+    store(session.connection(), PAYLOAD, run_id=1)
+    store(session.connection(), {**PAYLOAD, "pdf_sha256": "9" * 64}, run_id=2)
+    session.commit()
+    session.exec(update(PriceGuideRow).values(panel=None))
+    session.commit()
+    edited = {**PAYLOAD, "edition_text": "ROG Product Guide 2026 3rd Edition"}
+
+    assert store(session.connection(), edited, run_id=3) == (
+        "Already stored: filled 1 blank panels and corrected the edition"
+    )
+    session.commit()
+
+    session.expire_all()
+    guides = {g.pdf_sha256[0]: (g.last_run_id, g.edition_text) for g in session.exec(select(PriceGuide)).all()}
+    assert guides == {"b": (3, "ROG Product Guide 2026 3rd Edition"), "9": (2, "ROG 2026")}
+
+
+def test_a_rerun_with_nothing_to_do_says_so(session):
+    store(session.connection(), PAYLOAD, run_id=1)
+    assert store(session.connection(), PAYLOAD, run_id=2) == "Already stored: nothing changed"
+
+
+@pytest.mark.parametrize("args, note", [
+    ((97, 0, False), "Stored 97 rows"),
+    ((None, 97, False), "Already stored: filled 97 blank panels"),
+    ((None, 0, True), "Already stored: corrected the edition"),
+    ((None, 0, False), "Already stored: nothing changed"),
+])
+def test_run_note(args, note):
+    assert run_note(*args) == note
 
 
 def test_an_extraction_that_found_nothing_is_not_stored(session):

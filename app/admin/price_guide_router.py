@@ -7,6 +7,7 @@ land in the staging tables, and nothing reaches a laptop until `/apply`.
 """
 import re
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
 import httpx
@@ -45,6 +46,24 @@ class ExtractStarted(BaseModel):
     drive_file_id: str
     kind: PriceGuideKind
     message: str
+    # Null when GitHub answers 204, which names no run.
+    run_id: Optional[int] = None
+
+
+class ExtractionRun(BaseModel):
+    run_id: int
+    # GitHub's values: queued, in_progress, completed and a few waiting states.
+    status: str
+    conclusion: Optional[str] = None
+    url: str
+    created_at: datetime
+    # The step running now, or the one that failed.
+    step: Optional[str] = None
+    # Set once a successful run has written; null for a run older than these columns.
+    guide_id: Optional[uuid.UUID] = None
+    filename: Optional[str] = None
+    note: Optional[str] = None
+    is_new_guide: bool = False
 
 
 class UseGuidePriceRequest(BaseModel):
@@ -56,6 +75,32 @@ def _drive_file_id(link: str) -> str:
     if not found:
         raise HTTPException(status_code=400, detail="That is not a Google Drive file link.")
     return found.group(1)
+
+
+def _github_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.github_dispatch_token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+
+def _github_get(path: str) -> dict:
+    url = f"https://api.github.com/repos/{settings.github_repository}/actions/{path}"
+    try:
+        response = httpx.get(url, headers=_github_headers(), timeout=15)
+    except httpx.HTTPError as error:
+        logger.error("workflow status failed: %s", type(error).__name__)
+        raise HTTPException(status_code=502, detail="GitHub could not be reached.")
+    if response.status_code != 200:
+        logger.error("workflow status failed: %s %s", response.status_code, response.text[:300])
+        raise HTTPException(status_code=502, detail=f"GitHub refused the status check ({response.status_code}).")
+    return response.json()
+
+
+def _current_step(run_id: int) -> Optional[str]:
+    """The step running now, or the first that failed."""
+    steps = [step for job in _github_get(f"runs/{run_id}/jobs").get("jobs", []) for step in job.get("steps", [])]
+    return next((s["name"] for s in steps if s.get("status") == "in_progress" or s.get("conclusion") == "failure"), None)
 
 
 def _guide_or_404(session: Session, guide_id: uuid.UUID) -> PriceGuide:
@@ -84,20 +129,52 @@ def start_extraction(body: ExtractRequest, admin: User = Depends(get_current_adm
 
     response = httpx.post(
         f"https://api.github.com/repos/{settings.github_repository}/actions/workflows/{_WORKFLOW}/dispatches",
-        headers={
-            "Authorization": f"Bearer {settings.github_dispatch_token}",
-            "Accept": "application/vnd.github+json",
-        },
+        headers=_github_headers(),
         json={
             "ref": "main",
             "inputs": {"drive_file_id": file_id, "kind": body.kind.value, "uploaded_by": str(admin.id)},
         },
         timeout=15,
     )
-    if response.status_code != 204:
+    # GitHub's docs say 200 with the run id; 204 with no body is what it answered before.
+    if response.status_code not in (200, 204):
         logger.error("workflow dispatch failed: %s %s", response.status_code, response.text[:300])
         raise HTTPException(status_code=502, detail=f"GitHub refused the workflow start ({response.status_code}).")
-    return ExtractStarted(drive_file_id=file_id, kind=body.kind, message="Extraction started.")
+    run_id = response.json().get("workflow_run_id") if response.status_code == 200 else None
+    return ExtractStarted(drive_file_id=file_id, kind=body.kind, message="Extraction started.", run_id=run_id)
+
+
+@router.get("/extraction", response_model=Optional[ExtractionRun])
+def extraction_run(run_id: Optional[int] = None, session: Session = Depends(get_session)) -> Optional[ExtractionRun]:
+    """
+    One workflow run as GitHub reports it: `run_id`, or the latest. Null when there
+    has been no run. Stateless, so a reload finds a running extraction again. Once a
+    run succeeds, `note` says what it wrote. 400 without `GITHUB_DISPATCH_TOKEN`, 502
+    when GitHub cannot answer. No database read happens until GitHub has answered.
+    """
+    if not settings.github_dispatch_token:
+        raise HTTPException(status_code=400, detail="GITHUB_DISPATCH_TOKEN is not set, so the workflow cannot be read.")
+
+    if run_id is None:
+        runs = _github_get(f"workflows/{_WORKFLOW}/runs?per_page=1").get("workflow_runs", [])
+        if not runs:
+            return None
+        run = runs[0]
+    else:
+        run = _github_get(f"runs/{run_id}")
+
+    created_at = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+    found = ExtractionRun(
+        run_id=run["id"], status=run["status"], conclusion=run.get("conclusion"), url=run["html_url"], created_at=created_at,
+    )
+    if run.get("conclusion") == "success":
+        guide = session.exec(select(PriceGuide).where(PriceGuide.last_run_id == found.run_id)).first()
+        if guide is not None:
+            found.guide_id, found.filename, found.note = guide.id, guide.filename, guide.last_run_note
+            found.is_new_guide = guide.uploaded_at >= created_at
+    else:
+        found.step = _current_step(found.run_id)
+    return found
 
 
 @router.get("/{guide_id}/preview")

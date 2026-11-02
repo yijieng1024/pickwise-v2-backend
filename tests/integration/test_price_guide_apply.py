@@ -559,10 +559,16 @@ def test_the_routes_are_admin_only(api_client, session):
 
 
 class _Dispatch:
-    def __init__(self, status_code=204):
+    def __init__(self, status_code=204, body=None):
         self.status_code = status_code
         self.text = "refused"
+        self.body = body
         self.calls = []
+
+    def json(self):
+        if self.body is None:
+            raise ValueError("no body")
+        return self.body
 
     def __call__(self, url, **kwargs):
         self.calls.append((url, kwargs))
@@ -609,6 +615,151 @@ def test_a_refused_dispatch_is_reported_without_the_token(admin_client, monkeypa
     assert response.status_code == 502
     assert "secret-token" not in response.text
     assert "secret-token" not in caplog.text
+
+
+def test_a_dispatch_that_names_its_run_passes_the_id_on(admin_client, monkeypatch, token):
+    monkeypatch.setattr(httpx, "post", _Dispatch(status_code=200, body={"workflow_run_id": 77}))
+
+    response = admin_client.post("/api/v2/admin/price-guides/extract", json={"drive_link": LINK, "kind": "rog"})
+
+    assert response.status_code == 202
+    assert response.json()["run_id"] == 77
+
+
+def test_a_204_dispatch_has_no_run_id(admin_client, monkeypatch, token):
+    monkeypatch.setattr(httpx, "post", _Dispatch())
+
+    response = admin_client.post("/api/v2/admin/price-guides/extract", json={"drive_link": LINK, "kind": "rog"})
+
+    assert response.status_code == 202
+    assert response.json()["run_id"] is None
+
+
+RUN_AT = "2026-11-02T12:21:20Z"
+
+
+def _run(run_id=7, status="completed", conclusion="success"):
+    return {"id": run_id, "status": status, "conclusion": conclusion, "html_url": "https://github.test/run", "created_at": RUN_AT}
+
+
+class _GitHub:
+    """Answers the three GET paths the status route uses, and records them."""
+
+    def __init__(self, runs=None, run=None, steps=(), status_code=200):
+        self.answers = {"workflows/": {"workflow_runs": runs or []}, "/jobs": {"jobs": [{"steps": list(steps)}]}, "runs/": run}
+        self.status_code = status_code
+        self.text = "refused"
+        self.paths = []
+
+    def __call__(self, url, **kwargs):
+        self.paths.append(url.split("/actions/")[1])
+        self.current = next(v for k, v in self.answers.items() if k in self.paths[-1])
+        return self
+
+    def json(self):
+        return self.current
+
+
+def _status(admin_client, query=""):
+    return admin_client.get(f"/api/v2/admin/price-guides/extraction{query}")
+
+
+def test_a_running_extraction_reports_its_step(admin_client, monkeypatch, token):
+    steps = [
+        {"name": "Download the PDF", "status": "completed", "conclusion": "success"},
+        {"name": "Extract the rows", "status": "in_progress", "conclusion": None},
+        {"name": "Write to the staging tables", "status": "pending", "conclusion": None},
+    ]
+    github = _GitHub(runs=[_run(status="in_progress", conclusion=None)], steps=steps)
+    monkeypatch.setattr(httpx, "get", github)
+
+    body = _status(admin_client).json()
+
+    assert (body["run_id"], body["status"], body["step"], body["guide_id"]) == (7, "in_progress", "Extract the rows", None)
+    assert github.paths == ["workflows/price-guide.yml/runs?per_page=1", "runs/7/jobs"]
+
+
+def test_a_failed_run_names_the_step_that_failed(admin_client, monkeypatch, token):
+    steps = [{"name": "Download the PDF", "status": "completed", "conclusion": "failure"}]
+    monkeypatch.setattr(httpx, "get", _GitHub(run=_run(conclusion="failure"), steps=steps))
+
+    body = _status(admin_client, "?run_id=7").json()
+
+    assert (body["conclusion"], body["step"]) == ("failure", "Download the PDF")
+
+
+def test_a_finished_rerun_reports_what_it_did_and_is_not_a_new_guide(admin_client, session, monkeypatch, token):
+    guide = _guide(session, (SKU, 1.0))
+    guide.uploaded_at, guide.last_run_id, guide.last_run_note = OLD, 7, "Already stored: filled 97 blank panels"
+    session.add(guide)
+    session.commit()
+    github = _GitHub(run=_run())
+    monkeypatch.setattr(httpx, "get", github)
+
+    body = _status(admin_client, "?run_id=7").json()
+
+    assert (body["guide_id"], body["note"], body["is_new_guide"]) == (
+        str(guide.id), "Already stored: filled 97 blank panels", False,
+    )
+    assert github.paths == ["runs/7"], "a finished run needs no step lookup"
+
+
+def test_a_finished_run_that_stored_a_guide_is_new(admin_client, session, monkeypatch, token):
+    guide = _guide(session, (SKU, 1.0))
+    guide.last_run_id, guide.last_run_note = 7, "Stored 1 rows"
+    guide.uploaded_at = datetime(2026, 11, 2, 12, 22, tzinfo=timezone.utc)
+    guide.filename = "guide.pdf"
+    session.add(guide)
+    session.commit()
+    monkeypatch.setattr(httpx, "get", _GitHub(run=_run()))
+
+    body = _status(admin_client, "?run_id=7").json()
+
+    assert (body["filename"], body["is_new_guide"]) == ("guide.pdf", True)
+
+
+def test_a_finished_run_from_before_the_columns_has_no_guide(admin_client, monkeypatch, token):
+    monkeypatch.setattr(httpx, "get", _GitHub(runs=[_run()]))
+
+    body = _status(admin_client).json()
+
+    assert (body["conclusion"], body["guide_id"], body["note"]) == ("success", None, None)
+
+
+def test_no_run_yet_is_null(admin_client, monkeypatch, token):
+    monkeypatch.setattr(httpx, "get", _GitHub())
+
+    response = _status(admin_client)
+
+    assert (response.status_code, response.json()) == (200, None)
+
+
+def test_a_status_check_github_refuses_is_a_502_without_the_token(admin_client, monkeypatch, token, caplog):
+    monkeypatch.setattr(httpx, "get", _GitHub(status_code=403))
+
+    response = _status(admin_client)
+
+    assert response.status_code == 502
+    assert "secret-token" not in response.text
+    assert "secret-token" not in caplog.text
+
+
+def test_github_out_of_reach_is_a_502(admin_client, monkeypatch, token):
+    def unreachable(*_, **__):
+        raise httpx.ConnectTimeout("no route")
+
+    monkeypatch.setattr(httpx, "get", unreachable)
+
+    assert _status(admin_client).status_code == 502
+
+
+def test_the_status_check_needs_the_token(admin_client, monkeypatch):
+    monkeypatch.setattr(price_guide_router.settings, "github_dispatch_token", None)
+
+    response = _status(admin_client)
+
+    assert response.status_code == 400
+    assert "GITHUB_DISPATCH_TOKEN" in response.json()["detail"]
 
 
 def test_no_token_is_a_clear_400(admin_client, monkeypatch):

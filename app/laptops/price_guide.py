@@ -83,7 +83,7 @@ class MatchResult:
     base_code: list[tuple[CatalogRow, list[GuideRow]]] = field(default_factory=list)  # nor these
     unmatched_guide: list[GuideRow] = field(default_factory=list)
     unpriced: list[GuideRow] = field(default_factory=list)
-    uncovered: list[CatalogRow] = field(default_factory=list)  # needs a price by hand
+    uncovered: list[CatalogRow] = field(default_factory=list)  # in no row of this guide
 
 
 def _sku_key(sku: Optional[str]) -> str:

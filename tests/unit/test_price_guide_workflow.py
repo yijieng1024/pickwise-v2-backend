@@ -108,7 +108,7 @@ def test_the_write_script_runs_its_check_before_it_connects(monkeypatch, tmp_pat
         write_price_guide.main()
 
 
-def test_a_pdf_already_stored_fills_its_blank_panels(monkeypatch, tmp_path, capsys):
+def test_the_write_step_records_its_run_and_prints_what_it_did(monkeypatch, tmp_path, capsys):
     class Engine:
         def begin(self):
             return contextlib.nullcontext("connection")
@@ -116,16 +116,22 @@ def test_a_pdf_already_stored_fills_its_blank_panels(monkeypatch, tmp_path, caps
         def dispose(self):
             pass
 
+    def store(connection, payload, uploaded_by, run_id):
+        calls.append(run_id)
+        return "Already stored: filled 3 blank panels"
+
+    calls = []
     rows = tmp_path / "rows.json"
     rows.write_text('{"filename": "guide.pdf"}', encoding="utf-8")
     monkeypatch.setattr("sys.argv", ["write_price_guide", str(rows)])
+    monkeypatch.setenv("GITHUB_RUN_ID", "41444009428")
     monkeypatch.setattr(write_price_guide, "write_target", lambda _: PROD_URL)
     monkeypatch.setattr(write_price_guide, "create_engine", lambda url: Engine())
-    monkeypatch.setattr(write_price_guide, "write_guide", lambda *_: None)
-    monkeypatch.setattr(write_price_guide, "fill_panels", lambda *_: 3)
+    monkeypatch.setattr(write_price_guide, "store", store)
 
     write_price_guide.main()
 
+    assert calls == [41444009428]
     assert "filled 3 blank panels" in capsys.readouterr().out
 
 

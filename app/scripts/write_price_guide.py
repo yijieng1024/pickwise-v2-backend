@@ -13,6 +13,7 @@ corrects the guide's edition.
 """
 import argparse
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -98,6 +99,31 @@ def fill_edition(connection: Connection, payload: dict) -> bool:
     ).rowcount > 0
 
 
+def run_note(rows: Optional[int], filled: int, edition_changed: bool) -> str:
+    """What a run did, as the admin page shows it. `rows` is None for a stored PDF."""
+    if rows is not None:
+        return f"Stored {rows} rows"
+    changes = [f"filled {filled} blank panels"] if filled else []
+    if edition_changed:
+        changes.append("corrected the edition")
+    return f"Already stored: {' and '.join(changes) or 'nothing changed'}"
+
+
+def store(
+    connection: Connection, payload: dict, uploaded_by: Optional[uuid.UUID] = None, run_id: Optional[int] = None,
+) -> str:
+    """Everything one workflow run writes, and the note saying what it did."""
+    guide_id = write_guide(connection, payload, uploaded_by)
+    if guide_id is None:
+        note = run_note(None, fill_panels(connection, payload), fill_edition(connection, payload))
+    else:
+        note = run_note(len(payload["rows"]), 0, False)
+    connection.execute(
+        update(_GUIDES).where(_GUIDES.c.pdf_sha256 == payload["pdf_sha256"]).values(last_run_id=run_id, last_run_note=note)
+    )
+    return note
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("rows", type=Path)
@@ -108,18 +134,15 @@ def main() -> int:
     print(f"writing to {host_of(url)}")
     payload = json.loads(args.rows.read_text(encoding="utf-8"))
     uploaded_by = uuid.UUID(args.uploaded_by) if args.uploaded_by else None
+    # Set by GitHub on every run; absent when run by hand.
+    run_id = int(os.environ["GITHUB_RUN_ID"]) if os.environ.get("GITHUB_RUN_ID") else None
 
     engine = create_engine(url)
     with engine.begin() as connection:
-        guide_id = write_guide(connection, payload, uploaded_by)
-        filled = fill_panels(connection, payload) if guide_id is None else 0
-        fill_edition(connection, payload)
+        note = store(connection, payload, uploaded_by, run_id)
     engine.dispose()
 
-    if guide_id is None:
-        print(f"{payload['filename']} is already stored; filled {filled} blank panels, wrote nothing else")
-    else:
-        print(f"stored {len(payload['rows'])} rows as guide {guide_id}")
+    print(f"{payload['filename']}: {note}")
     return 0
 
 

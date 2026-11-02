@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, UniqueConstraint
+from sqlalchemy import BigInteger, Column, DateTime, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -36,6 +36,9 @@ class PriceGuide(SQLModel, table=True):
     # Null when the workflow was started by hand from the Actions tab.
     uploaded_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")
     row_count: int
+    # What the last workflow run did to this guide, which GitHub cannot say.
+    last_run_id: Optional[int] = Field(default=None, sa_column=Column(BigInteger))
+    last_run_note: Optional[str] = None
 
 
 class PriceGuideRow(SQLModel, table=True):
