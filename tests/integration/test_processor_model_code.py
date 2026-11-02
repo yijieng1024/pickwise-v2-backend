@@ -35,12 +35,14 @@ def test_an_invented_code_is_stored_as_the_raw_code_and_listed_in_the_run(sessio
         variants=[ExtractedLaptopVariant.model_construct(**fields)]
     )
 
+    prompts: list[str] = []
+
     class _StubLLM:
         def __init__(self, **_):
             pass
 
         def with_structured_output(self, _schema):
-            return RunnableLambda(lambda _: extracted)
+            return RunnableLambda(lambda prompt: prompts.append(prompt.to_string()) or extracted)
 
     monkeypatch.setattr(processor, "build_llm", lambda *a, **k: _StubLLM())
 
@@ -57,3 +59,4 @@ def test_an_invented_code_is_stored_as_the_raw_code_and_listed_in_the_run(sessio
         "product_name": stored.product_name,
     }]
     assert report["details"][0]["model_codes_replaced"] == report["model_codes_replaced"]
+    assert "copy the model code from Raw Product Name exactly" in prompts[0]

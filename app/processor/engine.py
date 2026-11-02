@@ -198,6 +198,7 @@ def process_raw_laptop_data(
         4. INFERRING SKUS (model_code): Ensure the `model_code` you generate uniquely reflects the hardware.
            - Apple Format: apple-macbook-pro-[size]-m5-[tier]-[cpu]c-[gpu]g-[ram]gb-[ssd]gb. (e.g., apple-macbook-pro-14-m5-pro-14c-16g-24gb-1024gb).
            - PC Format: brand-product-cpumodel-gpumodel-ram-ssd.
+           - In `product_name`, copy the model code from Raw Product Name exactly, letter for letter. Never shorten it, change it or make one up.
         5. SDXC card slot at Macbook is a port to let creators use SD cards for media transfer, not for storage expansion. So it should not be considered as an expansion slot for storage.
         6. MULTI-OPTION FIELDS: When one spec field lists several options for the same model (e.g. two Memory lines, each with its own "Max up to"), generate one separate variant per option, with every field not tied to an option copied unchanged. Each variant takes its own option's values for every field tied to that option, including `max_ram_gb` ("Max Total system memory up to: 48GB" belongs to the 48GB variant). Each variant gets its own `model_code` per rule 4. When memory is written as "N GB x 2" (or x 4), `ram_gb` is the total (32GB x 2 = 64).
 
