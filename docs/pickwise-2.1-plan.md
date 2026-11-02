@@ -510,6 +510,12 @@ Before the sites, one `refactor:` commit with no behaviour change: brand dispatc
 - The workflow uses the full-permission `DATABASE_URL`, no restricted role. The code-level guard (writes only `price_guides` and `price_guide_rows`) and its tests stay
 - "Use guide price" on the differs list, see Applying
 
+*Deleting a stored guide (decided, Jack, 2026-11-02; built)*: `DELETE /admin/price-guides/{id}`, admin-only, one transaction, rows and guide together. No migration: both FKs stay NO ACTION. Deleting frees the `pdf_sha256`, which is the way to re-extract a PDF stored with the wrong kind (`kind` is only a label today, but step 11's "latest guide of each kind" will read it)
+- A guide that any `laptop_price_history` row names answers 409: deleting undoes no price, and would only hide where the price came from. A confirm-only apply writes no history row, so that guide stays deletable and Last Checked stays as it is
+- 409 while an apply job runs. A "Use guide price" that lands after the count is stopped by the FK, and that error is also a 409
+- Extraction has no server-side state, so nothing blocks it there; the page disables Delete while it is waiting. `write_guide` is one transaction, so a half-written guide cannot exist, and the worst race means running the extraction again
+- The confirmation is a plain destructive dialog showing file name, guide type and row count, with no typed confirm: the PDF stays in Drive
+
 *Results (2026-11-02, stopped here: nothing applied to real prices, nothing pushed)*
 - Extraction, Q3 guides: consumer 97 of 97 SKUs priced, ROG 65 of 65, business 43 of 43. Nine pages hand-checked against the print (consumer 77, 84, 86; ROG 75, 79, 83; business 6, 8, 10). The survey's 160 of 162 was wrong: page 77 prints a bare `7499`, so it is 162 of 162. The guide's printed typo `A1407C-AY147WS` is kept
 - Preview, **a sample only**: test DB, real crawl (102 pages, 184 raw rows), processed all 39 ROG rows and 30 `www.asus.com` rows, giving 106 laptops. Per guide (matched / ambiguous / conflict / unmatched_guide / unpriced / differs): consumer 9 / 0 / 0 / 83 / 0 / 0, ROG 18 / 5 / 3 / 34 / 0 / 0, business 6 / 0 / 0 / 37 / 0 / 0. `unmatched_guide` is inflated by the sample. Across all three guides, 64 laptops had no guide and 63 of them have price 0

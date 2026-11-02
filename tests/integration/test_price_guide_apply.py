@@ -366,10 +366,90 @@ def test_an_unknown_guide_is_404(admin_client):
     assert admin_client.post(f"/api/v2/admin/price-guides/{missing}/apply").status_code == 404
     guide = PriceGuide(id=missing, kind="rog", filename="", pdf_sha256="", row_count=0)
     assert _use(admin_client, guide, guide).status_code == 404
+    assert _delete(admin_client, guide).status_code == 404
+
+
+def _delete(client, guide):
+    return client.delete(f"/api/v2/admin/price-guides/{guide.id}")
+
+
+def _rows(session, guide_id):
+    return session.exec(select(PriceGuideRow).where(PriceGuideRow.guide_id == guide_id)).all()
+
+
+def test_delete_removes_the_guide_and_its_rows_only(admin_client, session):
+    guide = _guide(session, (SKU, 1.0), ("G835L-AAAAA", 2.0))
+    kept = _guide(session, (SKU, 3.0), sha="k" * 64)
+    guide_id = guide.id
+
+    assert _delete(admin_client, guide).status_code == 204
+
+    session.expire_all()
+    assert session.get(PriceGuide, guide_id) is None
+    assert _rows(session, guide_id) == []
+    assert session.get(PriceGuide, kept.id) is not None
+    assert len(_rows(session, kept.id)) == 1
+
+
+def test_a_guide_a_price_came_from_cannot_be_deleted(admin_client, session, brand):
+    laptop = _laptop(session, brand)
+    guide = _guide(session, (SKU, 32999.0))
+    _apply(session, guide)
+
+    response = _delete(admin_client, guide)
+
+    assert response.status_code == 409
+    assert "1 price came" in response.json()["detail"]
+    session.expire_all()
+    assert session.get(PriceGuide, guide.id) is not None
+    assert len(_rows(session, guide.id)) == 1
+    assert _history(session, laptop.id)[0].price_guide_id == guide.id
+
+
+def test_a_confirm_only_apply_stays_deletable(admin_client, session, brand):
+    laptop = _laptop(session, brand, price=32999.0, source=PriceSource.PAGE.value, checked=OLD)
+    guide = _guide(session, (SKU, 32999.0))
+    guide_id = guide.id
+    assert _apply(session, guide)["confirmed"] == 1
+
+    assert _delete(admin_client, guide).status_code == 204
+
+    session.expire_all()
+    assert session.get(PriceGuide, guide_id) is None
+    assert laptop.price_checked_at > OLD
+
+
+def test_delete_waits_for_a_running_apply(admin_client, session):
+    guide = _guide(session, (SKU, 1.0))
+    session.add(BackgroundJob(job_type=JobType.PRICE_GUIDE_APPLY, status=JobStatus.PROCESSING, params={}, total_count=1))
+    session.commit()
+
+    assert _delete(admin_client, guide).status_code == 409
+
+    session.expire_all()
+    assert session.get(PriceGuide, guide.id) is not None
+    assert len(_rows(session, guide.id)) == 1
+
+
+def test_a_price_written_during_the_delete_is_a_409_and_deletes_nothing(admin_client, session, brand, monkeypatch):
+    _laptop(session, brand)
+    guide = _guide(session, (SKU, 32999.0))
+    guide_id = guide.id
+    _apply(session, guide)
+    monkeypatch.setattr(price_guide_service, "_history_rows", lambda *_: 0)  # the count ran before the write
+
+    assert _delete(admin_client, guide).status_code == 409
+
+    session.expire_all()
+    assert session.get(PriceGuide, guide_id) is not None
+    assert len(_rows(session, guide_id)) == 1
 
 
 def test_the_routes_are_admin_only(api_client, session):
     guide = _guide(session, (SKU, 1.0))
+
+    assert _delete(api_client, guide).status_code == 403
+    assert session.get(PriceGuide, guide.id) is not None
 
     assert api_client.get("/api/v2/admin/price-guides").status_code == 403
     assert api_client.get(f"/api/v2/admin/price-guides/{guide.id}/preview").status_code == 403

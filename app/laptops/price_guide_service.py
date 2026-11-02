@@ -16,7 +16,8 @@ from enum import Enum
 from typing import Optional
 
 from sqlalchemy import func
-from sqlmodel import Session, select
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, delete, select
 
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, PriceSource
@@ -36,6 +37,10 @@ class NotSelectable(Exception):
     def __init__(self, laptop_ids: list[uuid.UUID]):
         super().__init__(f"not waiting on this guide: {[str(i) for i in laptop_ids]}")
         self.laptop_ids = laptop_ids
+
+
+class GuideInUse(Exception):
+    """A price history row names this guide, so it is the record of where that price came from."""
 
 
 def decide(stored_price: Optional[float], latest_source: Optional[str], guide_price: float) -> Action:
@@ -196,6 +201,31 @@ def use_guide_price(session: Session, guide: PriceGuide, laptop_ids: set[uuid.UU
             _write_guide_price(session, laptop, price, guide.id, now)
     session.commit()
     return {"guide_id": str(guide.id), "updated": len(laptop_ids)}
+
+
+def _history_rows(session: Session, guide_id: uuid.UUID) -> int:
+    return session.exec(
+        select(func.count()).select_from(LaptopPriceHistory).where(LaptopPriceHistory.price_guide_id == guide_id)
+    ).one()
+
+
+def delete_guide(session: Session, guide: PriceGuide) -> None:
+    """Remove a guide and its rows in one transaction, which frees its sha256 for a
+    new extraction. A price taken from it blocks this: deleting undoes no price, and
+    would only hide where the price came from. A confirm-only apply leaves no such
+    row, so it does not block."""
+    count = _history_rows(session, guide.id)
+    if count:
+        noun = "price" if count == 1 else "prices"
+        raise GuideInUse(f"{count} {noun} came from this guide, so it cannot be deleted.")
+    session.exec(delete(PriceGuideRow).where(PriceGuideRow.guide_id == guide.id))
+    session.delete(guide)
+    try:
+        session.commit()
+    except IntegrityError:
+        # "Use guide price" wrote a history row after the count: the FK kept it.
+        session.rollback()
+        raise GuideInUse("A price was just written from this guide, so it cannot be deleted.")
 
 
 def apply_guide(session: Session, guide_id: uuid.UUID, progress=None) -> dict:
