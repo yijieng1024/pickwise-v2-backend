@@ -7,14 +7,14 @@ CatalogRow, GuideRow = price_guide.CatalogRow, price_guide.GuideRow
 cpu_part, match = price_guide.cpu_part, price_guide.match
 
 
-def guide(sku="P1403CVA-S61159X", price=4399.0, cpu="Intel Core i5-13420H", ram=8, ssd=512, model_code=None):
-    return GuideRow(sku=sku, model_code=model_code or sku.split("-")[0], price_rm=price, cpu=cpu, ram_gb=ram, ssd_gb=ssd)
+def guide(sku="P1403CVA-S61159X", price=4399.0, cpu="Intel Core i5-13420H", ram=8, ssd=512, model_code=None, panel=None):
+    return GuideRow(sku=sku, model_code=model_code or sku.split("-")[0], price_rm=price, cpu=cpu, ram_gb=ram, ssd_gb=ssd, panel=panel)
 
 
 def catalog(id="a", model_code="asus-expertbook-p1-p1403cva", name="ASUS ExpertBook P1 P1403CVA",
-            cpu="Intel Core i5-13420H", ram=8, ssd=512, sku=None):
+            cpu="Intel Core i5-13420H", ram=8, ssd=512, sku=None, panel=None):
     return CatalogRow(id=id, model_code=model_code, product_name=name, processor_model=cpu,
-                      ram_gb=ram, ssd_gb=ssd, manufacturer_sku=sku)
+                      ram_gb=ram, ssd_gb=ssd, manufacturer_sku=sku, panel=panel)
 
 
 def test_an_exact_sku_matches_whatever_the_specs_say():
@@ -106,6 +106,50 @@ def test_the_base_code_does_not_match_inside_another_code():
     laptop = catalog(model_code="asus-gp14035", name="ASUS GP14035")
 
     assert match([guide()], [laptop]).matched == []
+
+
+@pytest.mark.parametrize("printed, stored", [
+    ("14.0-inch, WUXGA (1920 x 1200) OLED 16:10", "IPS-level Panel"),
+    ("15.6-inch, FHD (1920 x 1080) 16:9, IPS-level", "ROG Nebula HDR Display OLED"),
+    ("16.0-inch, OLED", "LED Backlit Anti-glare"),
+    ("16.0-inch, OLED", "ROG Nebula HDR Display (Mini LED)"),
+])
+def test_two_stated_panels_that_differ_are_a_conflict(printed, stored):
+    result = match([guide(panel=printed)], [catalog(panel=stored)])
+
+    assert result.matched == []
+    assert len(result.conflict) == 1
+
+
+def test_a_panel_conflict_also_stops_a_sku_match():
+    row = guide(cpu=None, ram=None, ssd=None, panel="OLED")
+
+    result = match([row], [catalog(sku=row.sku, panel="IPS-level")])
+
+    assert result.matched == []
+    assert len(result.conflict) == 1
+
+
+def test_one_differing_row_makes_a_conflict_among_colour_variants():
+    rows = [guide(sku="P1403CVA-S61159X", panel="IPS-level"), guide(sku="P1403CVA-S61160X", panel="OLED")]
+
+    assert len(match(rows, [catalog(panel="IPS-level")]).conflict) == 1
+
+
+@pytest.mark.parametrize("printed, stored", [
+    (None, "OLED"),  # a blank guide cell is not a statement
+    ("14.0-inch, WUXGA (1920 x 1200) 16:10", "OLED"),
+    ("OLED", None),
+    ("OLED", "Anti-glare display"),
+    ("OLED", "WUXGA"),
+    ("OLED", "Tandem OLED"),
+    ("IPS-level", "LED Backlit"),
+])
+def test_a_panel_only_one_side_states_or_both_agree_on_is_no_conflict(printed, stored):
+    result = match([guide(panel=printed)], [catalog(panel=stored)])
+
+    assert len(result.matched) == 1
+    assert result.conflict == []
 
 
 def test_a_laptop_with_its_own_sku_cannot_take_another_skus_price():

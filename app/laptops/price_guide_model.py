@@ -50,3 +50,4 @@ class PriceGuideRow(SQLModel, table=True):
     ssd_gb: Optional[int] = None
     price_rm: Optional[float] = None
     page: int
+    panel: Optional[str] = None  # the printed Panel or Display cell, word for word

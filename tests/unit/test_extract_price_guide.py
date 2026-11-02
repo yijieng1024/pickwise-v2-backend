@@ -11,6 +11,13 @@ from ._adapters import extract_price_guide as guide
 
 FIXTURES = Path(__file__).parent / "fixtures" / "price_guide"
 EXPECTED = json.loads((FIXTURES / "expected.json").read_text(encoding="utf-8"))
+PANELS = [
+    ("consumer_p77", "UX3407N-AQD881WS", "14.0-inch, WUXGA (1920 x 1200) OLED 16:10"),
+    ("consumer_p84", "A1504V-ABQ268WS", "15.6-inch, FHD (1920 x 1080) 16:9"),
+    ("rog_p83", "FA608U-HITU066WP", "16-inch FHD+ WUXGA (1920 × 1200) 16:10, IPS-level, Anti-glare display, G-Sync, MUX Switch + NVIDIA Advanced Optimus"),
+    ("rog_p79", "GZ302E-ARU007W", "13.4-inch QHD+ WQXGA (2560 x 1600) 16:10 100% DCI-P3, Touch Screen, Nebula Display Pantone Validated"),
+    ("business_p6", "B9406CAA-TG5151WS", '14.0" OLED WQXGA+ Anti-Glare'),
+]
 
 
 def _page(name: str) -> list[dict]:
@@ -28,6 +35,12 @@ def test_a_hand_checked_page_comes_out_as_printed(name):
         for sku, r in _by_sku(_page(name)).items()
     }
     assert {sku: v for sku, v in found.items() if not guide.NOT_A_LAPTOP.match(sku)} == EXPECTED[name]
+
+
+# Each checked by hand against the printed page.
+@pytest.mark.parametrize("page, sku, panel", PANELS)
+def test_the_printed_panel_is_kept_word_for_word(page, sku, panel):
+    assert _by_sku(_page(page))[sku]["panel"] == panel
 
 
 def test_a_sku_with_no_price_in_its_column_does_not_take_the_neighbours():

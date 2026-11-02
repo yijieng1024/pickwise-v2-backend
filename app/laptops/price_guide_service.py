@@ -22,7 +22,7 @@ from sqlmodel import Session, delete, select
 
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, PriceSource
-from app.laptops.price_guide import CatalogRow, GuideRow, MatchResult, match
+from app.laptops.price_guide import CatalogRow, GuideRow, MatchResult, match, panels_differ
 from app.laptops.price_guide_model import PriceGuide, PriceGuideRow
 
 
@@ -78,16 +78,19 @@ def _match(session: Session, guide: PriceGuide, laptops: list[Laptop]) -> MatchR
         select(PriceGuideRow).where(PriceGuideRow.guide_id == guide.id).order_by(PriceGuideRow.page, PriceGuideRow.sku)
     ).all()
     return match(
-        [GuideRow(r.sku, r.model_code, r.price_rm, r.cpu, r.ram_gb, r.ssd_gb, r.page) for r in rows],
+        [GuideRow(r.sku, r.model_code, r.price_rm, r.cpu, r.ram_gb, r.ssd_gb, r.page, r.panel) for r in rows],
         [
-            CatalogRow(l.id, l.model_code, l.product_name, l.processor_model, l.ram_gb, l.ssd_gb, l.manufacturer_sku)
+            CatalogRow(
+                l.id, l.model_code, l.product_name, l.processor_model, l.ram_gb, l.ssd_gb, l.manufacturer_sku,
+                l.display_type,
+            )
             for l in laptops
         ],
     )
 
 
 def _guide_row(row: GuideRow) -> dict:
-    return {"sku": row.sku, "price_rm": row.price_rm, "page": row.page}
+    return {"sku": row.sku, "price_rm": row.price_rm, "page": row.page, "panel": row.panel}
 
 
 def _laptop(laptop: Laptop) -> dict:
@@ -164,7 +167,13 @@ def preview(session: Session, guide: PriceGuide) -> dict:
             for row, candidates in result.ambiguous
         ],
         "conflict": [
-            {**_laptop(by_id[c.id]), "rows": [_guide_row(r) for r in rows]} for c, rows in result.conflict
+            {
+                **_laptop(by_id[c.id]),
+                "reason": "panel" if panels_differ(c, rows) else "price",
+                "catalog_panel": c.panel,
+                "rows": [_guide_row(r) for r in rows],
+            }
+            for c, rows in result.conflict
         ],
         "unmatched_guide": [_guide_row(r) for r in result.unmatched_guide],
         "unpriced": [_guide_row(r) for r in result.unpriced],

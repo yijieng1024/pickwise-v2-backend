@@ -9,7 +9,8 @@ no best guess and no fuzzy fallback. The admin prices the rest by hand.
 Two ways in: the guide's SKU equals the laptop's `manufacturer_sku`, or the model
 code plus an exact CPU part number, RAM and storage. A match that found the laptop
 only through the base code (S5406 for S5406S) waits for an admin: a base code is the
-whole line, and the catalog's S5406M took the S5406S's row that way.
+whole line, and the catalog's S5406M took the S5406S's row that way. Whichever way it
+matched, a laptop whose panel plainly differs from the guide's is a conflict.
 """
 import re
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ _CLOCK = re.compile(r"\s*\(?\d+(?:\.\d+)?\s*g?hz.*$")
 # The part number is the last token with a run of digits: "13420h", "370", "x126100".
 _PART = re.compile(r"[a-z]*\d{2,}[a-z]*")
 _BASE = re.compile(r"^[A-Z]{1,3}\d{3,4}")
+_NOT_OLED = re.compile(r"\bips\b|\bled\b|\blcd\b")  # LED backlit and Mini LED are backlit panels
 
 
 def cpu_part(text: Optional[str]) -> Optional[str]:
@@ -57,6 +59,7 @@ class GuideRow:
     ram_gb: Optional[int] = None
     ssd_gb: Optional[int] = None
     page: Optional[int] = None
+    panel: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,7 @@ class CatalogRow:
     ram_gb: Optional[int] = None
     ssd_gb: Optional[int] = None
     manufacturer_sku: Optional[str] = None
+    panel: Optional[str] = None
 
 
 @dataclass
@@ -100,6 +104,21 @@ def _names(row: CatalogRow, code: str) -> bool:
     """The code as a whole token: P1403 is in "P1403CVA" but not in "GP14035"."""
     pattern = rf"(?<![A-Z0-9]){re.escape(code.upper())}(?!\d)"
     return bool(re.search(pattern, f"{row.model_code} {row.product_name}".upper()))
+
+
+def panel_kind(text: Optional[str]) -> Optional[str]:
+    """"oled", "other", or None when the text states neither. A blank guide cell is
+    not a statement (Jack, 2026-11-02), and "Anti-glare display" fits both kinds."""
+    low = (text or "").lower()
+    if "oled" in low:
+        return "oled"
+    return "other" if _NOT_OLED.search(low) else None
+
+
+def panels_differ(row: CatalogRow, guide_rows: list[GuideRow]) -> bool:
+    """Both sides state a panel, and they do not agree."""
+    stored = panel_kind(row.panel)
+    return stored is not None and any(panel_kind(g.panel) not in (None, stored) for g in guide_rows)
 
 
 def _needs_base_code(row: CatalogRow, guide_rows: list[GuideRow]) -> bool:
@@ -164,7 +183,7 @@ def match(guide_rows: list[GuideRow], catalog_rows: list[CatalogRow]) -> MatchRe
 
     for laptop_id, rows in claims.items():
         row = rows_by_id[laptop_id]
-        if len({r.price_rm for r in rows}) > 1:
+        if len({r.price_rm for r in rows}) > 1 or panels_differ(row, rows):
             result.conflict.append((row, rows))
         elif _needs_suffix_rule(row, rows):
             result.suffix_rule.append((row, rows))

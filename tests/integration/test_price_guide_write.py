@@ -2,12 +2,12 @@
 import re
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, update
 from sqlmodel import select
 
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory
 from app.laptops.price_guide_model import PriceGuide, PriceGuideRow
-from app.scripts.write_price_guide import write_guide
+from app.scripts.write_price_guide import fill_panels, write_guide
 from tests.integration.conftest import make_laptop
 
 pytestmark = pytest.mark.integration
@@ -19,7 +19,7 @@ PAYLOAD = {
     "edition_text": "ROG 2026",
     "rows": [
         {"sku": "G835L-XGTQ284WP", "price_rm": 32999.0, "cpu": "Intel Core Ultra 9 Processor 290HX Plus",
-         "ram_gb": 64, "ssd_gb": 2048, "page": 75},
+         "ram_gb": 64, "ssd_gb": 2048, "page": 75, "panel": "18-inch Mini LED"},
         {"sku": "GU405A-WSY066W", "price_rm": None, "cpu": None, "ram_gb": None, "ssd_gb": None, "page": 75},
     ],
 }
@@ -45,6 +45,70 @@ def test_the_same_pdf_twice_changes_nothing(session):
 
     assert len(session.exec(select(PriceGuide)).all()) == 1
     assert len(session.exec(select(PriceGuideRow)).all()) == 2
+
+
+def _panels(session):
+    return {r.sku: r.panel for r in session.exec(select(PriceGuideRow)).all()}
+
+
+def test_a_stored_row_keeps_its_panel(session):
+    write_guide(session.connection(), PAYLOAD)
+    session.commit()
+
+    assert _panels(session) == {"G835L-XGTQ284WP": "18-inch Mini LED", "GU405A-WSY066W": None}
+
+
+def test_a_second_run_fills_only_blank_panels(session):
+    write_guide(session.connection(), PAYLOAD)
+    session.commit()
+    guide_row = session.exec(select(PriceGuideRow).where(PriceGuideRow.sku == "G835L-XGTQ284WP")).one()
+    guide_row.panel = "typed by hand"
+    session.add(guide_row)
+    session.commit()
+    again = {**PAYLOAD, "rows": [
+        {**PAYLOAD["rows"][0], "price_rm": 1.0},
+        {**PAYLOAD["rows"][1], "panel": "16-inch OLED", "price_rm": 2.0},
+    ]}
+
+    assert write_guide(session.connection(), again) is None
+    assert fill_panels(session.connection(), again) == 1
+    session.commit()
+
+    session.expire_all()
+    assert _panels(session) == {"G835L-XGTQ284WP": "typed by hand", "GU405A-WSY066W": "16-inch OLED"}
+    assert {r.price_rm for r in session.exec(select(PriceGuideRow)).all()} == {32999.0, None}
+
+
+def test_filling_panels_on_one_guide_leaves_another_alone(session):
+    write_guide(session.connection(), {**PAYLOAD, "pdf_sha256": "c" * 64})
+    write_guide(session.connection(), {**PAYLOAD, "pdf_sha256": "d" * 64})
+    session.commit()
+    guides = session.exec(select(PriceGuide)).all()
+    session.exec(update(PriceGuideRow).values(panel=None))
+    session.commit()
+
+    assert fill_panels(session.connection(), {**PAYLOAD, "pdf_sha256": guides[0].pdf_sha256}) == 1
+
+
+def test_filling_panels_touches_only_the_staging_tables(session):
+    write_guide(session.connection(), PAYLOAD)
+    session.commit()
+    session.exec(update(PriceGuideRow).values(panel=None))
+    session.commit()
+    connection = session.connection()
+    statements = []
+
+    def record(_conn, _cursor, statement, *_):
+        statements.append(statement)
+
+    event.listen(connection, "before_cursor_execute", record)
+    try:
+        fill_panels(connection, PAYLOAD)
+    finally:
+        event.remove(connection, "before_cursor_execute", record)
+
+    tables = {t for s in statements for t in re.findall(r"(?:FROM|INTO|UPDATE|DELETE FROM)\s+(\w+)", s)}
+    assert tables == {"price_guides", "price_guide_rows"}
 
 
 def test_it_touches_only_the_staging_tables(session, brand):

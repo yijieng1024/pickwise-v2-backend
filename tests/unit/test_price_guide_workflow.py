@@ -1,6 +1,7 @@
 """The workflow's promises, the write step's database check, and the Drive download.
 The workflow holds the production DATABASE_URL, so what it can do is asserted, not
 just described in a comment."""
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -105,6 +106,27 @@ def test_the_write_script_runs_its_check_before_it_connects(monkeypatch, tmp_pat
 
     with pytest.raises(RuntimeError, match="points at the production project"):
         write_price_guide.main()
+
+
+def test_a_pdf_already_stored_fills_its_blank_panels(monkeypatch, tmp_path, capsys):
+    class Engine:
+        def begin(self):
+            return contextlib.nullcontext("connection")
+
+        def dispose(self):
+            pass
+
+    rows = tmp_path / "rows.json"
+    rows.write_text('{"filename": "guide.pdf"}', encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["write_price_guide", str(rows)])
+    monkeypatch.setattr(write_price_guide, "write_target", lambda _: PROD_URL)
+    monkeypatch.setattr(write_price_guide, "create_engine", lambda url: Engine())
+    monkeypatch.setattr(write_price_guide, "write_guide", lambda *_: None)
+    monkeypatch.setattr(write_price_guide, "fill_panels", lambda *_: 3)
+
+    write_price_guide.main()
+
+    assert "filled 3 blank panels" in capsys.readouterr().out
 
 
 class _Response:

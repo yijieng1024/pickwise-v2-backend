@@ -370,6 +370,45 @@ def test_use_guide_price_writes_a_base_code_match(admin_client, session, brand):
     assert (row.source, row.price_guide_id) == (PriceSource.GUIDE.value, guide.id)
 
 
+def _panel_conflict(session, brand, price=0.0, source="none"):
+    laptop = _laptop(session, brand, price=price, source=source)
+    laptop.display_type = "IPS-level Panel"
+    session.add(laptop)
+    session.commit()
+    guide = _guide(session, (SKU, 3999.0))
+    row = session.exec(select(PriceGuideRow).where(PriceGuideRow.guide_id == guide.id)).one()
+    row.panel = "14.0-inch, WUXGA (1920 x 1200) OLED 16:10"
+    session.add(row)
+    session.commit()
+    return laptop, guide
+
+
+def test_a_panel_conflict_is_listed_with_its_reason_and_apply_writes_nothing(session, brand):
+    laptop, guide = _panel_conflict(session, brand)
+
+    body = price_guide_service.preview(session, guide)
+    result = _apply(session, guide)
+
+    assert (body["counts"]["matched"], body["counts"]["conflict"]) == (0, 1)
+    [entry] = body["conflict"]
+    assert (entry["id"], entry["reason"], entry["catalog_panel"]) == (str(laptop.id), "panel", "IPS-level Panel")
+    assert entry["rows"][0]["panel"] == "14.0-inch, WUXGA (1920 x 1200) OLED 16:10"
+    assert result["filled"] == 0
+    session.expire_all()
+    assert laptop.price_rm == 0.0
+    assert _history(session, laptop.id) == []
+
+
+def test_use_guide_price_refuses_a_panel_conflict(admin_client, session, brand):
+    # A page price, so this would sit on the differs list if the panel were not compared.
+    laptop, guide = _panel_conflict(session, brand, price=5499.0, source=PriceSource.PAGE.value)
+
+    assert _use(admin_client, guide, laptop).status_code == 409
+
+    session.expire_all()
+    assert laptop.price_rm == 5499.0
+
+
 def test_use_guide_price_writes_a_suffix_match(admin_client, session, brand):
     twin = _laptop(session, brand, sku="GU606A-RTB128WP")
     guide = _guide(session, ("GU606A-RTB128W", 23999.0))

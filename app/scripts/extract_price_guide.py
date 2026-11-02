@@ -48,6 +48,8 @@ _SSD = re.compile(
 _SIZE = re.compile(r"^(\d+)\s*(GB|TB)$", re.IGNORECASE)
 
 _COLUMN_REACH = 60.0  # a price further sideways than this belongs to another column
+_LABEL_X = 60.0  # the row labels of a spec sheet sit left of this
+_LINE_GAP = 10.0  # lines of one cell sit about 7 apart, separate rows 11 or more
 _ROW_TOLERANCE = 3.0
 
 
@@ -130,6 +132,24 @@ def _ssd_gb(text: str) -> Optional[int]:
     return total
 
 
+def _panel(table: list[dict], column: list[dict]) -> Optional[str]:
+    """The cell of *column* on a spec sheet's Panel Size or Display row, word for word.
+    ROG pages have no ruled tables and their tall cells crowd the next row, so a cell is
+    a run of closely spaced lines, and the one centred on the label is this row's."""
+    label = next((w for w in table if w["text"] in ("Panel", "Display") and w["x0"] < _LABEL_X), None)
+    if label is None:
+        return None
+    label_end = max(w["x1"] for w in table if w["x0"] < _LABEL_X and abs(w["top"] - label["top"]) < _ROW_TOLERANCE)
+    blocks: list[list[dict]] = []
+    for word in sorted((w for w in column if w["x0"] > label_end), key=lambda w: w["top"]):
+        if blocks and word["top"] - blocks[-1][-1]["top"] < _LINE_GAP:
+            blocks[-1].append(word)
+        else:
+            blocks.append([word])
+    nearest = min(blocks, key=lambda b: abs((b[0]["top"] + b[-1]["top"]) / 2 - label["top"]), default=[])
+    return _text(nearest) or None
+
+
 def _spec_sheet_rows(words: list[dict]) -> list[dict]:
     """One table per "Model Name" label. The prices mark the columns, not the SKUs:
     colour variants stack in a column or sit side by side, off its centre."""
@@ -146,7 +166,7 @@ def _spec_sheet_rows(words: list[dict]) -> list[dict]:
         for sku in (w for w in table if SKU.match(w["text"])):
             own = column_of(sku)
             if own is None or abs(_centre(own[0]) - _centre(sku)) > _COLUMN_REACH:
-                rows.append({"sku": sku["text"], "price_rm": None, "cpu": None, "ram_gb": None, "ssd_gb": None})
+                rows.append({"sku": sku["text"], "price_rm": None, "cpu": None, "ram_gb": None, "ssd_gb": None, "panel": None})
                 continue
             text = _text([w for w in table if w["top"] > own[0]["top"] and column_of(w) is own])
             rows.append({
@@ -155,6 +175,7 @@ def _spec_sheet_rows(words: list[dict]) -> list[dict]:
                 "cpu": _cpu(text),
                 "ram_gb": _ram_gb(text),
                 "ssd_gb": _ssd_gb(text),
+                "panel": _panel(table, [w for w in table if column_of(w) is own]),
             })
     return rows
 
@@ -206,6 +227,7 @@ def _price_table_rows(words: list[dict]) -> list[dict]:
                 "cpu": _cpu(cell("PROCESSOR")),
                 "ram_gb": _gigabytes(cell("MEMORY")),
                 "ssd_gb": _gigabytes(cell("STORAGE")),
+                "panel": (cell("DISPLAY") or None) if "DISPLAY" in cells else None,
             })
     return rows
 
