@@ -404,7 +404,7 @@ Phases 0–3 in Jack's order (Phase 4 cancelled, see below). Each phase ends wit
   - The record is not failed. Each swap is logged and listed in `model_codes_replaced`, in the single-record response and the job's `result`. No admin page shows that field yet: read it from `GET /jobs/{id}`
   - A raw row with no code is left alone, and a name with no code stays without one. The `model_code` slug is not checked
   - The extraction prompt also says to copy the model code from Raw Product Name exactly. The check stays as the guard, because a prompt rule is not enforcement
-  - Survey, 2026-11-02: all 224 catalog names carrying a code matched a raw code after the hand fix, and CPUs agreed on all 44 ASUS rows that matched a live page. No bulk re-process (Jack): it would overwrite hand fixes for no gain. Raw codes missing from the catalog are a separate survey, and the URL skip that blocks new variants goes to step 11
+  - Survey, 2026-11-02: all 224 catalog names carrying a code matched a raw code after the hand fix, and CPUs agreed on all 44 ASUS rows that matched a live page. No bulk re-process (Jack): it would overwrite hand fixes for no gain. Raw codes missing from the catalog are a separate survey, and the URL skip that blocks new variants goes to step 11, which needs the SKU-first lookup live first and a key for pages with no SKU (see "ROG guide ambiguity")
 
 **Phase 1b: Docker image Python 3.11 → 3.12** (done 2026-11-01, commit `0a51f96`)
 - Why: CI runs 3.12 (`ci.yml`), the image runs 3.11 (`FROM python:3.11-slim`), so the tiers pass on a Python production never runs
@@ -531,6 +531,30 @@ Before the sites, one `refactor:` commit with no behaviour change: brand dispatc
 - **Page column** on the Matched, Suffix rule, Base code and Differs tabs. Conflict shows it inline; "Not in this guide" has no guide row to take one from
 - **"Needs a price by hand" is now "Not in this guide":** on the Q3 consumer guide 155 of those 168 laptops already have a price and 13 do not. No-price laptops sort first and the hint counts them. No split into "covered by another stored guide" yet: one guide is stored, so it would read 0. Split when a second guide is stored (a replay suggests about 63 of the 168)
 - **Client-side paging, 25 rows** on every preview tab, in `?page=`. Selections survive paging and tab changes; the header box takes the current page, and "Select all N in this tab" takes the whole list
+
+*ROG guide ambiguity (decided, Jack, 2026-11-03; code built, production steps are Jack's)*: all 18 Ambiguous rows on the Q3 ROG guide came from an empty `manufacturer_sku` (the column dates from 2026-11-01, the last processor job from 2026-09-29), which sent them to the spec path, where guide rows state no GPU. 5 of the 18 were also duplicate laptops.
+- **Duplicates: suspend, keep the newer row.** Not merge, because the old rows' wrong prices would join the keeper's history; not delete, because that loses history and can't be undone. ExpertBook B3605 and BM1403 are left alone: same specs, different prices, so they may not be duplicates. Other same-spec HP and Acer pairs carry different part numbers and are colours, not duplicates
+- **The suspend list**, in this order before the backfill. Newer is by `created_at`:
+
+| Group | Keep | Suspend | Reason and flags |
+|---|---|---|---|
+| TUF A14 FA401EA | `29d6cd37-e118-414c-86fb-ba0c593bd952` | `0af3f660-6ed7-4990-92bc-59269b0f6d2d` | Aug re-scrape; RM 7,599 is the guide's price, old RM 7,899 |
+| TUF A16 FA608PP | `ace4e308-51c3-44ef-99ca-5980268feed1` | `93d1cabd-e412-4517-8218-7869440b08ff` | Old row never price-checked. **Flag:** keeper RM 9,299, guide RM 7,699, old RM 7,399, so the keeper shows in Differs |
+| TUF A16 FA608UP | `32a2ba49-52f1-4a7d-99be-976556548ead` | `9dc58daf-aed0-4a4b-a07a-0a7708783cb7` | Same price, RM 7,399; keeper checked 08-15 |
+| TUF A16 FA608PM | `d1d133ab-e57a-47af-aa13-764121f160e4` | `69669749-31d5-4c73-9a98-07efc2e86531` | RM 8,299 is the guide's price, old RM 7,399 |
+| TUF A16 FA608UH | `73b4ef7b-60eb-40db-a178-b4d3677d5030` | `df4845b4-6ee5-4ae6-8273-68558d710ebd` | RM 5,999 is the guide's price, old RM 7,399 |
+| TUF A16 FA608UMI (**reversed**) | Un-suspend `66139f11-3dc6-4000-935c-9e2aee71be8b` | `bdce0967-d823-43f0-a2a5-b335a58f96f0` | Old RM 7,399 row is the live one today. **Flag:** see below |
+| SCAR 18 RTX 5090 | `e859190e-7fce-44cd-ab7f-8d03355a83e6` | `280659d1-ad5a-482b-b91f-5135e2564c3d` | Same price; keeper has the SKU in its name and the one linked review |
+| SCAR 18 RTX 5080 | `d02368b2-ae06-498b-a27f-cf771193e8f4` | none: `f52599a9-9648-4b1f-9858-174199776206` is already suspended | No action |
+| Zephyrus G16 GU605C | `c769bd97-ae04-447f-87c1-29c07f93380a` | `6adcb981-33f7-4a22-91cb-91e85b504878` | Same-run rows 42 s apart, identical data, so "newer" decides nothing. SKU held back on both |
+| Zephyrus G16 GU606A | `614677d7-4c20-491a-8b94-d31de2bd2478` (-WP) | `7d6fc6b5-6140-4ffb-8698-1a62095ced1a` (-W) | Keeper checked 08-15, other 07-08. **Flag:** the guide prints -W, so this row lands in Suffix rule, not Matched |
+| HP OmniBook 7 `14-hg0052TU` | `76101199-588c-49a3-9fa4-9286c9f4504c` | `5abcc7f8-21b9-49a8-b758-4243f3c02035` | Newer adds slots and display support. **Flag:** it drops "Pink" from the name, its `ai_features` is empty and `max_ram_gb` is null |
+
+- **FA608UMI:** a laptop at price 0 cannot be `active`, so the un-suspended row becomes `inactive`, and a price arriving later does not re-activate it: that is an admin's step. Until then the public site has no FA608UMI. An apply of the ROG guide would fill it at RM 6,999, since `FA608U-MITU216WP` matches it and guide prices fill over 0
+- **SKU backfill:** `app/scripts/backfill_manufacturer_sku.py`, after the suspends. 36 rows, not the 38 first counted: suspended rows are skipped, so a scrape updates the row people see, and both GU605C rows are held back. Core UPDATE, so `updated_at` does not move and Pick Scores do not read as stale
+- **Processor:** SKU first, then slug, -W and -WP as one with the exact form winning. A slug hit on a row holding another SKU is a different machine of the same specs: it gets its own row, with the SKU appended to the slug, where before it overwrote that row's specs and price. Without this the backfill would have made that overwrite reachable on 36 rows
+- **This must be live before step 11 lifts the URL skip, and it is not enough on its own.** Only `rog.asus.com` pages carry a SKU (39 of 39 live rows, against 0 of 145 on `www.asus.com`, including all 33 TUF), and a multi-variant raw row has none either. 6 of the 10 ASUS duplicate groups are TUF, so a re-scrape can still duplicate those through a new slug. Step 11 needs a key for them too
+- **Replay of the ROG guide on the end state:** 18 Ambiguous to 0, 38 Matched, 4 Suffix rule, 1 Conflict (`FA608U-HITU066WP` and `-HRV068W` both claim the FA608UH; the first is probably the FA608UHI, on the live page but not in the catalog), 21 unmatched. 13 of the 38 have a different price, for Jack to decide after the next web scrape
 
 *A panel that plainly differs is a conflict (decided, Jack, 2026-11-02; built)*: the guide printed OLED on an S3407VA row and the catalog's S3407VA is IPS. `price_guide_rows.panel` (nullable, migration `b4f7c2e9d1a3`) keeps the printed cell word for word, and `match` compares it with `laptops.display_type` as OLED against not OLED, on both match paths. When both sides state a panel and they differ, the row is a Conflict with reason `panel`, and it writes nothing
 - **A blank guide panel is not a statement (Jack):** the guide leaves "IPS" unprinted on most non-OLED rows, so a blank against a catalog OLED stays a match. A catalog value that names no panel technology ("Anti-glare display", "WUXGA") also counts as unstated. "LED Backlit" and Mini LED count as not OLED
