@@ -105,6 +105,9 @@ def _spec_candidates(guide: GuideRow, catalog: list[CatalogRow]) -> list[Catalog
 def match(guide_rows: list[GuideRow], catalog_rows: list[CatalogRow]) -> MatchResult:
     result = MatchResult()
     by_sku = {_sku_key(c.manufacturer_sku): c for c in catalog_rows if c.manufacturer_sku}
+    # A laptop with a SKU of its own is priced by that SKU or not at all: a guide row
+    # with another SKU is another machine, however alike the specs read.
+    no_sku = [c for c in catalog_rows if not c.manufacturer_sku]
     claims: dict[Any, list[GuideRow]] = {}
     rows_by_id = {c.id: c for c in catalog_rows}
     in_doubt: set[Any] = set()
@@ -114,7 +117,7 @@ def match(guide_rows: list[GuideRow], catalog_rows: list[CatalogRow]) -> MatchRe
             result.unpriced.append(guide)
             continue
         hit = by_sku.get(_sku_key(guide.sku))
-        candidates = [hit] if hit else _spec_candidates(guide, catalog_rows)
+        candidates = [hit] if hit else _spec_candidates(guide, no_sku)
         if not candidates:
             result.unmatched_guide.append(guide)
         elif len(candidates) > 1:

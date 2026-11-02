@@ -44,6 +44,20 @@ def test_the_base_code_does_not_match_inside_another_code():
     assert match([guide()], [laptop]).matched == []
 
 
+def test_a_laptop_with_its_own_sku_cannot_take_another_skus_price():
+    result = match([guide()], [catalog(sku="P1403CVA-OTHERX")])
+
+    assert result.matched == []
+    assert len(result.unmatched_guide) == 1
+
+
+def test_a_laptop_with_its_own_sku_does_not_make_a_row_ambiguous():
+    result = match([guide()], [catalog(id="a", sku="P1403CVA-OTHERX"), catalog(id="b")])
+
+    assert [c.id for c, _ in result.matched] == ["b"]
+    assert result.ambiguous == []
+
+
 def test_colour_variants_at_one_price_count_as_matched():
     black, silver = guide(sku="P1403CVA-S61159X"), guide(sku="P1403CVA-S61160X")
 
