@@ -13,6 +13,7 @@ from sqlmodel import select
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, PriceSource
 from app.processor import engine as processor
 from app.processor.schemas import ExtractedLaptopFamily, ExtractedLaptopVariant
+from app.scripts import backfill_manufacturer_sku as backfill
 from app.scraper.models import RawScrapLaptop
 from tests.integration.conftest import make_laptop
 
@@ -220,6 +221,19 @@ def test_a_new_laptop_from_the_processor_records_page(session, brand, monkeypatc
 
     stored = session.exec(select(Laptop).where(Laptop.model_code == "src-new")).one()
     assert [h.source for h in _history(session, stored.id)] == [PriceSource.PAGE.value]
+
+
+def test_the_sku_backfill_writes_once_and_leaves_updated_at_alone(session, brand):
+    laptop = _existing(session, brand, "backfill", product_name="ROG Strix (G615L-MS5078W)")
+    stamp = laptop.updated_at
+    connection = session.connection()
+
+    first = backfill.apply(connection, backfill.plan(backfill.read_laptops(connection))[0])
+    second = backfill.apply(connection, backfill.plan(backfill.read_laptops(connection))[0])
+
+    session.refresh(laptop)
+    assert (first, second, laptop.manufacturer_sku) == (1, 0, "G615L-MS5078W")
+    assert laptop.updated_at == stamp
 
 
 def _body(brand, code, price):

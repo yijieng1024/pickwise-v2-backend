@@ -668,3 +668,7 @@ from app.scripts import fetch_guide_pdf, write_price_guide  # noqa: E402,F401
 from app.laptops import price_guide  # noqa: E402,F401 - the match decision, pure
 from app.common import db_target  # noqa: E402,F401
 from app.processor import engine as processor_engine  # noqa: E402,F401
+
+
+# The SKU backfill's decisions - app/scripts/backfill_manufacturer_sku.py
+from app.scripts.backfill_manufacturer_sku import plan as backfill_plan  # noqa: E402,F401
