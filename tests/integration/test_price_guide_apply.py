@@ -222,6 +222,17 @@ def test_the_apply_route_runs_as_a_job(admin_client, session, brand):
     assert session.get(Laptop, laptop.id).price_rm == 32999.0
 
 
+def test_a_finished_apply_counts_matched_laptops_not_guide_rows(admin_client, session, brand):
+    _laptop(session, brand)
+    guide = _guide(session, (SKU, 32999.0), ("G835L-AAAAA", 2.0), ("G835L-BBBBB", 3.0))
+
+    response = admin_client.post(f"/api/v2/admin/price-guides/{guide.id}/apply")
+
+    session.expire_all()
+    job = session.get(BackgroundJob, response.json()["job_id"])
+    assert (job.processed_count, job.total_count) == (1, 1)
+
+
 def test_a_second_apply_while_one_runs_is_refused(admin_client, session, brand):
     guide = _guide(session, (SKU, 32999.0))
     session.add(BackgroundJob(job_type=JobType.PRICE_GUIDE_APPLY, status=JobStatus.PROCESSING, params={}, total_count=1))

@@ -284,7 +284,11 @@ def apply_guide(session: Session, guide_id: uuid.UUID, progress=None) -> dict:
 
     session.commit()
     if progress is not None:
-        progress.advance(count=max(len(result.matched), 1))
+        # The job starts with the guide's row count as its estimate, but an apply
+        # works through matched laptops, so a finished job read "16 of 97".
+        done = max(len(result.matched), 1)
+        progress.set_total(done)
+        progress.advance(count=done)
     return {
         "guide_id": str(guide_id),
         "filled": filled,
