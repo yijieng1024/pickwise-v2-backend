@@ -73,6 +73,7 @@ class MatchResult:
     matched: list[tuple[CatalogRow, list[GuideRow]]] = field(default_factory=list)
     ambiguous: list[tuple[GuideRow, list[CatalogRow]]] = field(default_factory=list)
     conflict: list[tuple[CatalogRow, list[GuideRow]]] = field(default_factory=list)
+    suffix_rule: list[tuple[CatalogRow, list[GuideRow]]] = field(default_factory=list)  # never written by an apply
     unmatched_guide: list[GuideRow] = field(default_factory=list)
     unpriced: list[GuideRow] = field(default_factory=list)
     uncovered: list[CatalogRow] = field(default_factory=list)  # needs a price by hand
@@ -80,9 +81,16 @@ class MatchResult:
 
 def _sku_key(sku: Optional[str]) -> str:
     """-W and -WP read as one SKU (Jack, 2026-11-02). Only those two: -WS and -WSP stay
-    apart. No Q3 guide prints both forms of a SKU, so nothing proves this; if a later
-    guide does at two prices, the row is a conflict and writes nothing."""
+    apart. No Q3 guide prints both forms of a SKU, so nothing proves this: a match that
+    needs it waits for the admin, and if a later guide prints both at two prices, the
+    row is a conflict and writes nothing."""
     return re.sub(r"WP$", "W", (sku or "").strip().upper())
+
+
+def _needs_suffix_rule(row: CatalogRow, guide_rows: list[GuideRow]) -> bool:
+    """A SKU match that holds only because -W and -WP read as one."""
+    stored = (row.manufacturer_sku or "").strip().upper()
+    return bool(stored) and all(guide.sku.strip().upper() != stored for guide in guide_rows)
 
 
 def _names(row: CatalogRow, code: str) -> bool:
@@ -147,8 +155,13 @@ def match(guide_rows: list[GuideRow], catalog_rows: list[CatalogRow]) -> MatchRe
             claims.setdefault(candidates[0].id, []).append(guide)
 
     for laptop_id, rows in claims.items():
-        same_price = len({r.price_rm for r in rows}) == 1
-        (result.matched if same_price else result.conflict).append((rows_by_id[laptop_id], rows))
+        row = rows_by_id[laptop_id]
+        if len({r.price_rm for r in rows}) > 1:
+            result.conflict.append((row, rows))
+        elif _needs_suffix_rule(row, rows):
+            result.suffix_rule.append((row, rows))
+        else:
+            result.matched.append((row, rows))
 
     result.uncovered = [c for c in catalog_rows if c.id not in claims and c.id not in in_doubt]
     return result

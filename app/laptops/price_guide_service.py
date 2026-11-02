@@ -6,6 +6,9 @@ Fill rule: a guide price is written when the stored price is 0, or when the stor
 price itself came from a guide. A page price, an admin's price and a price with no
 recorded source are never overwritten by an apply; they are listed as differing from
 the guide, and only an admin choosing "Use guide price" for one replaces it.
+
+A match that holds only because -W and -WP read as one SKU is never written by an
+apply either: the preview lists it for confirmation, and "Use guide price" writes it.
 """
 import uuid
 from datetime import datetime, timezone
@@ -27,11 +30,11 @@ class Action(str, Enum):
     DIFFERS = "differs"  # left alone and listed
 
 
-class NotDiffering(Exception):
-    """A selected laptop is not on the guide's differs list, so nothing was written."""
+class NotSelectable(Exception):
+    """A selected laptop is on neither list "Use guide price" serves, so nothing was written."""
 
     def __init__(self, laptop_ids: list[uuid.UUID]):
-        super().__init__(f"not differing from this guide: {[str(i) for i in laptop_ids]}")
+        super().__init__(f"not waiting on this guide: {[str(i) for i in laptop_ids]}")
         self.laptop_ids = laptop_ids
 
 
@@ -117,6 +120,7 @@ def preview(session: Session, guide: PriceGuide) -> dict:
         "counts": {
             "matched": len(matched),
             "differs_from_guide": len(differs),
+            "matched_by_suffix_rule": len(result.suffix_rule),
             "ambiguous": len(result.ambiguous),
             "conflict": len(result.conflict),
             "unmatched_guide": len(result.unmatched_guide),
@@ -125,6 +129,17 @@ def preview(session: Session, guide: PriceGuide) -> dict:
         },
         "matched": matched,
         "differs_from_guide": differs,
+        # -W read as -WP: an apply skips these, "Use guide price" writes them.
+        "matched_by_suffix_rule": [
+            {
+                **_laptop(by_id[catalog_row.id]),
+                "catalog_sku": catalog_row.manufacturer_sku,
+                "guide_sku": rows[0].sku,
+                "guide_price_rm": rows[0].price_rm,
+                "rows": [_guide_row(r) for r in rows],
+            }
+            for catalog_row, rows in result.suffix_rule
+        ],
         # Priced here but not on sale: making them active is an admin's call.
         "priced_but_inactive": [m for m in matched if m["status"] == LaptopStatus.INACTIVE.value],
         "ambiguous": [
@@ -153,26 +168,32 @@ def _write_guide_price(session: Session, laptop: Laptop, price: float, guide_id:
 def use_guide_price(session: Session, guide: PriceGuide, laptop_ids: set[uuid.UUID]) -> dict:
     """Replace the selected laptops' prices with this guide's, in one transaction.
 
-    Only laptops on the differs list, worked out again here rather than trusted from
-    the page: one that left the list since the preview refuses the whole selection.
+    Only laptops on the differs list or the suffix-rule list, worked out again here
+    rather than trusted from the page: one that left since the preview refuses the
+    whole selection. A confirmed price that is already right moves Last Checked only.
     """
     laptops = _catalog(session)
     by_id = {l.id: l for l in laptops}
     sources = _latest_sources(session)
-    differing = {}
-    for catalog_row, rows in _match(session, guide, laptops).matched:
+    result = _match(session, guide, laptops)
+    selectable = {c.id: (by_id[c.id], rows[0].price_rm) for c, rows in result.suffix_rule}
+    for catalog_row, rows in result.matched:
         laptop = by_id[catalog_row.id]
         if decide(laptop.price_rm, sources.get(laptop.id), rows[0].price_rm) == Action.DIFFERS:
-            differing[laptop.id] = (laptop, rows[0].price_rm)
+            selectable[laptop.id] = (laptop, rows[0].price_rm)
 
-    not_listed = sorted(laptop_ids - differing.keys(), key=str)
+    not_listed = sorted(laptop_ids - selectable.keys(), key=str)
     if not_listed:
-        raise NotDiffering(not_listed)
+        raise NotSelectable(not_listed)
 
     now = datetime.now(timezone.utc)
     for laptop_id in laptop_ids:
-        laptop, price = differing[laptop_id]
-        _write_guide_price(session, laptop, price, guide.id, now)
+        laptop, price = selectable[laptop_id]
+        if laptop.price_rm == price:
+            laptop.price_checked_at = now
+            session.add(laptop)
+        else:
+            _write_guide_price(session, laptop, price, guide.id, now)
     session.commit()
     return {"guide_id": str(guide.id), "updated": len(laptop_ids)}
 
@@ -218,5 +239,6 @@ def apply_guide(session: Session, guide_id: uuid.UUID, progress=None) -> dict:
         "filled": filled,
         "confirmed": confirmed,
         "differs_from_guide": differs,
+        "awaiting_confirmation": len(result.suffix_rule),
         "skipped_unclear": len(result.ambiguous) + len(result.conflict),
     }

@@ -26,10 +26,11 @@ def test_an_exact_sku_matches_whatever_the_specs_say():
 
 
 @pytest.mark.parametrize("printed, stored", [("GU606A-RTB128W", "GU606A-RTB128WP"), ("G835L-WGSA378WP", "G835L-WGSA378W")])
-def test_w_and_wp_are_one_sku(printed, stored):
+def test_w_and_wp_are_one_sku_but_the_match_waits_for_the_admin(printed, stored):
     result = match([guide(sku=printed, cpu=None, ram=None, ssd=None)], [catalog(sku=stored)])
 
-    assert [c.id for c, _ in result.matched] == ["a"]
+    assert [c.id for c, _ in result.suffix_rule] == ["a"]
+    assert result.matched == [] and result.uncovered == []
 
 
 def test_one_guide_row_prices_both_the_w_and_the_wp_laptop():
@@ -37,8 +38,18 @@ def test_one_guide_row_prices_both_the_w_and_the_wp_laptop():
 
     result = match([guide(sku="GU606A-MTB038W", cpu=None, ram=None, ssd=None)], laptops)
 
-    assert sorted(c.id for c, _ in result.matched) == ["w", "wp"]
+    assert [c.id for c, _ in result.matched] == ["w"]  # the exact SKU needs no rule
+    assert [c.id for c, _ in result.suffix_rule] == ["wp"]
     assert result.ambiguous == []
+
+
+def test_an_exact_sku_is_matched_even_with_its_twin_at_the_same_price():
+    rows = [guide(sku="GU606A-MTB038W"), guide(sku="GU606A-MTB038WP")]
+
+    result = match(rows, [catalog(sku="GU606A-MTB038W")])
+
+    assert [c.id for c, _ in result.matched] == ["a"]
+    assert result.suffix_rule == []
 
 
 def test_a_guide_that_prices_w_and_wp_apart_is_a_conflict():

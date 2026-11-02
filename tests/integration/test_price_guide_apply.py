@@ -174,7 +174,8 @@ def test_an_unclear_row_writes_nothing(session, brand):
 
     session.refresh(laptop)
     assert result == {
-        "guide_id": str(guide.id), "filled": 0, "confirmed": 0, "differs_from_guide": 0, "skipped_unclear": 1,
+        "guide_id": str(guide.id), "filled": 0, "confirmed": 0, "differs_from_guide": 0,
+        "awaiting_confirmation": 0, "skipped_unclear": 1,
     }
     assert laptop.price_rm == 0.0
 
@@ -297,6 +298,52 @@ def test_use_guide_price_needs_a_selection(admin_client, session, brand):
     assert _use(admin_client, _guide(session, (SKU, 1.0))).status_code == 422
 
 
+def test_a_suffix_match_is_listed_and_apply_writes_only_the_exact_match(session, brand):
+    twin = _laptop(session, brand, sku="GU606A-RTB128WP", status=LaptopStatus.INACTIVE.value)
+    exact = _laptop(session, brand, sku="G835L-AAAAA", status=LaptopStatus.INACTIVE.value)
+    guide = _guide(session, ("GU606A-RTB128W", 23999.0), ("G835L-AAAAA", 32999.0))
+
+    body = price_guide_service.preview(session, guide)
+    result = _apply(session, guide)
+
+    assert body["counts"]["matched"] == 1
+    assert body["counts"]["matched_by_suffix_rule"] == 1
+    [entry] = body["matched_by_suffix_rule"]
+    assert (entry["id"], entry["catalog_sku"], entry["guide_sku"], entry["guide_price_rm"]) == (
+        str(twin.id), "GU606A-RTB128WP", "GU606A-RTB128W", 23999.0,
+    )
+    assert (result["filled"], result["awaiting_confirmation"]) == (1, 1)
+    session.expire_all()
+    assert exact.price_rm == 32999.0
+    assert twin.price_rm == 0.0
+    assert twin.price_checked_at is None
+    assert _history(session, twin.id) == []
+
+
+def test_use_guide_price_writes_a_suffix_match(admin_client, session, brand):
+    twin = _laptop(session, brand, sku="GU606A-RTB128WP")
+    guide = _guide(session, ("GU606A-RTB128W", 23999.0))
+
+    assert _use(admin_client, guide, twin).status_code == 200
+
+    session.expire_all()
+    assert twin.price_rm == 23999.0
+    assert twin.price_checked_at is not None
+    [row] = _history(session, twin.id)
+    assert (row.source, row.price_guide_id) == (PriceSource.GUIDE.value, guide.id)
+
+
+def test_use_guide_price_on_a_suffix_match_already_right_moves_last_checked_only(admin_client, session, brand):
+    twin = _laptop(session, brand, sku="GU606A-RTB128WP", price=23999.0, source=PriceSource.PAGE.value, checked=OLD)
+    guide = _guide(session, ("GU606A-RTB128W", 23999.0))
+
+    assert _use(admin_client, guide, twin).status_code == 200
+
+    session.expire_all()
+    assert twin.price_checked_at > OLD
+    assert [row.source for row in _history(session, twin.id)] == [PriceSource.PAGE.value]
+
+
 def test_the_preview_reads_only(admin_client, session, brand):
     laptop = _laptop(session, brand)
     guide = _guide(session, (SKU, 32999.0), ("G835L-NOTINCATALOG", 100.0), ("G835L-NOPRICE", None))
@@ -306,7 +353,7 @@ def test_the_preview_reads_only(admin_client, session, brand):
     session.refresh(laptop)
     assert laptop.price_rm == 0.0
     assert body["counts"] == {
-        "matched": 1, "differs_from_guide": 0, "ambiguous": 0, "conflict": 0,
+        "matched": 1, "differs_from_guide": 0, "matched_by_suffix_rule": 0, "ambiguous": 0, "conflict": 0,
         "unmatched_guide": 1, "unpriced": 1, "uncovered": 0,
     }
     assert body["matched"][0]["action"] == "fill"

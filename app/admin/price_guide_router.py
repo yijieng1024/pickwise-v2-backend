@@ -19,7 +19,7 @@ from app.common.job_service import create_job, job_accepted, refuse_if_running, 
 from app.config import settings
 from app.database import get_session
 from app.laptops.price_guide_model import PriceGuide, PriceGuideKind
-from app.laptops.price_guide_service import NotDiffering, apply_guide, preview, use_guide_price
+from app.laptops.price_guide_service import NotSelectable, apply_guide, preview, use_guide_price
 from app.logger import get_logger
 from app.users.auth import get_current_admin
 from app.users.models import User
@@ -142,14 +142,14 @@ def use_price_from_guide(
     session: Session = Depends(get_session),
 ) -> dict:
     """
-    "Use guide price" on the differs list, for one laptop or a selection. Writes as an
-    apply does, so a later guide can update these prices; a laptop not selected keeps
-    its price. All or nothing: 409 if any id is no longer on the list, or while an apply
-    is running.
+    "Use guide price" on the differs list or the suffix-rule list, for one laptop or a
+    selection. Writes as an apply does, so a later guide can update these prices; a
+    laptop not selected keeps its price. All or nothing: 409 if any id is no longer on
+    a list, or while an apply is running.
     """
     guide = _guide_or_404(session, guide_id)
     refuse_if_running(session, (JobType.PRICE_GUIDE_APPLY,), "A price guide apply is already running.")
     try:
         return use_guide_price(session, guide, set(body.laptop_ids))
-    except NotDiffering as error:
+    except NotSelectable as error:
         raise HTTPException(status_code=409, detail=str(error))
