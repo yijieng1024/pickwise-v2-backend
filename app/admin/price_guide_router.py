@@ -142,7 +142,7 @@ def use_price_from_guide(
     session: Session = Depends(get_session),
 ) -> dict:
     """
-    "Use guide price" on the differs list or the suffix-rule list, for one laptop or a
+    "Use guide price" on the differs, suffix-rule or base-code list, for one laptop or a
     selection. Writes as an apply does, so a later guide can update these prices; a
     laptop not selected keeps its price. All or nothing: 409 if any id is no longer on
     a list, or while an apply is running.

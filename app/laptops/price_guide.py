@@ -7,7 +7,9 @@ the live site, while an unmatched row only stays in a visible list, so there is
 no best guess and no fuzzy fallback. The admin prices the rest by hand.
 
 Two ways in: the guide's SKU equals the laptop's `manufacturer_sku`, or the model
-code plus an exact CPU part number, RAM and storage.
+code plus an exact CPU part number, RAM and storage. A match that found the laptop
+only through the base code (S5406 for S5406S) waits for an admin: a base code is the
+whole line, and the catalog's S5406M took the S5406S's row that way.
 """
 import re
 from dataclasses import dataclass, field
@@ -74,6 +76,7 @@ class MatchResult:
     ambiguous: list[tuple[GuideRow, list[CatalogRow]]] = field(default_factory=list)
     conflict: list[tuple[CatalogRow, list[GuideRow]]] = field(default_factory=list)
     suffix_rule: list[tuple[CatalogRow, list[GuideRow]]] = field(default_factory=list)  # never written by an apply
+    base_code: list[tuple[CatalogRow, list[GuideRow]]] = field(default_factory=list)  # nor these
     unmatched_guide: list[GuideRow] = field(default_factory=list)
     unpriced: list[GuideRow] = field(default_factory=list)
     uncovered: list[CatalogRow] = field(default_factory=list)  # needs a price by hand
@@ -97,6 +100,11 @@ def _names(row: CatalogRow, code: str) -> bool:
     """The code as a whole token: P1403 is in "P1403CVA" but not in "GP14035"."""
     pattern = rf"(?<![A-Z0-9]){re.escape(code.upper())}(?!\d)"
     return bool(re.search(pattern, f"{row.model_code} {row.product_name}".upper()))
+
+
+def _needs_base_code(row: CatalogRow, guide_rows: list[GuideRow]) -> bool:
+    """A spec match on a laptop that names none of its guide rows' full model codes."""
+    return not row.manufacturer_sku and not any(_names(row, guide.model_code) for guide in guide_rows)
 
 
 def _letter_fits(guide: GuideRow, row: CatalogRow) -> bool:
@@ -160,6 +168,8 @@ def match(guide_rows: list[GuideRow], catalog_rows: list[CatalogRow]) -> MatchRe
             result.conflict.append((row, rows))
         elif _needs_suffix_rule(row, rows):
             result.suffix_rule.append((row, rows))
+        elif _needs_base_code(row, rows):
+            result.base_code.append((row, rows))
         else:
             result.matched.append((row, rows))
 

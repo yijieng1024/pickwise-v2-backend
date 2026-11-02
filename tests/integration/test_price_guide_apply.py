@@ -320,6 +320,56 @@ def test_a_suffix_match_is_listed_and_apply_writes_only_the_exact_match(session,
     assert _history(session, twin.id) == []
 
 
+def _base_code_laptop(session, brand, price=5300.0):
+    laptop = make_laptop(
+        brand.id, product_name="ASUS Vivobook S16 (M3607)", model_code="asus-vivobook-s16-m3607", price_rm=price,
+        processor_model="AMD Ryzen AI 5 330", ram_gb=16, ssd_gb=512, price_checked_at=OLD,
+    )
+    session.add(laptop)
+    session.commit()
+    session.add(LaptopPriceHistory(laptop_id=laptop.id, price_rm=price, source=PriceSource.PAGE.value, recorded_at=OLD))
+    session.commit()
+    return laptop
+
+
+def _spec_guide(session, sku="M3607K-ASH236WS", price=5199.0):
+    guide = _guide(session)
+    session.add(PriceGuideRow(
+        guide_id=guide.id, sku=sku, model_code=sku.split("-")[0], price_rm=price,
+        cpu="AMD Ryzen AI 5 330 Processor", ram_gb=16, ssd_gb=512, page=79,
+    ))
+    session.commit()
+    return guide
+
+
+def test_a_base_code_match_is_listed_and_apply_writes_nothing(session, brand):
+    laptop = _base_code_laptop(session, brand, price=0.0)  # 0 would be filled if this were `matched`
+    guide = _spec_guide(session)
+
+    body = price_guide_service.preview(session, guide)
+    result = _apply(session, guide)
+
+    assert (body["counts"]["matched"], body["counts"]["matched_by_base_code"]) == (0, 1)
+    [entry] = body["matched_by_base_code"]
+    assert (entry["id"], entry["guide_sku"], entry["guide_price_rm"]) == (str(laptop.id), "M3607K-ASH236WS", 5199.0)
+    assert (result["filled"], result["awaiting_confirmation"]) == (0, 1)
+    session.expire_all()
+    assert laptop.price_rm == 0.0
+    assert laptop.price_checked_at == OLD
+
+
+def test_use_guide_price_writes_a_base_code_match(admin_client, session, brand):
+    laptop = _base_code_laptop(session, brand)
+    guide = _spec_guide(session)
+
+    assert _use(admin_client, guide, laptop).status_code == 200
+
+    session.expire_all()
+    assert laptop.price_rm == 5199.0
+    [_, row] = _history(session, laptop.id)
+    assert (row.source, row.price_guide_id) == (PriceSource.GUIDE.value, guide.id)
+
+
 def test_use_guide_price_writes_a_suffix_match(admin_client, session, brand):
     twin = _laptop(session, brand, sku="GU606A-RTB128WP")
     guide = _guide(session, ("GU606A-RTB128W", 23999.0))
@@ -353,7 +403,8 @@ def test_the_preview_reads_only(admin_client, session, brand):
     session.refresh(laptop)
     assert laptop.price_rm == 0.0
     assert body["counts"] == {
-        "matched": 1, "differs_from_guide": 0, "matched_by_suffix_rule": 0, "ambiguous": 0, "conflict": 0,
+        "matched": 1, "differs_from_guide": 0, "matched_by_suffix_rule": 0, "matched_by_base_code": 0,
+        "ambiguous": 0, "conflict": 0,
         "unmatched_guide": 1, "unpriced": 1, "uncovered": 0,
     }
     assert body["matched"][0]["action"] == "fill"

@@ -7,8 +7,9 @@ price itself came from a guide. A page price, an admin's price and a price with 
 recorded source are never overwritten by an apply; they are listed as differing from
 the guide, and only an admin choosing "Use guide price" for one replaces it.
 
-A match that holds only because -W and -WP read as one SKU is never written by an
-apply either: the preview lists it for confirmation, and "Use guide price" writes it.
+A match that holds only because -W and -WP read as one SKU, or only through the base
+model code, is never written by an apply either: the preview lists it for
+confirmation, and "Use guide price" writes it.
 """
 import uuid
 from datetime import datetime, timezone
@@ -126,6 +127,7 @@ def preview(session: Session, guide: PriceGuide) -> dict:
             "matched": len(matched),
             "differs_from_guide": len(differs),
             "matched_by_suffix_rule": len(result.suffix_rule),
+            "matched_by_base_code": len(result.base_code),
             "ambiguous": len(result.ambiguous),
             "conflict": len(result.conflict),
             "unmatched_guide": len(result.unmatched_guide),
@@ -144,6 +146,16 @@ def preview(session: Session, guide: PriceGuide) -> dict:
                 "rows": [_guide_row(r) for r in rows],
             }
             for catalog_row, rows in result.suffix_rule
+        ],
+        # Found through the base code only: an apply skips these too.
+        "matched_by_base_code": [
+            {
+                **_laptop(by_id[catalog_row.id]),
+                "guide_sku": rows[0].sku,
+                "guide_price_rm": rows[0].price_rm,
+                "rows": [_guide_row(r) for r in rows],
+            }
+            for catalog_row, rows in result.base_code
         ],
         # Priced here but not on sale: making them active is an admin's call.
         "priced_but_inactive": [m for m in matched if m["status"] == LaptopStatus.INACTIVE.value],
@@ -173,7 +185,7 @@ def _write_guide_price(session: Session, laptop: Laptop, price: float, guide_id:
 def use_guide_price(session: Session, guide: PriceGuide, laptop_ids: set[uuid.UUID]) -> dict:
     """Replace the selected laptops' prices with this guide's, in one transaction.
 
-    Only laptops on the differs list or the suffix-rule list, worked out again here
+    Only laptops on the differs, suffix-rule or base-code lists, worked out again here
     rather than trusted from the page: one that left since the preview refuses the
     whole selection. A confirmed price that is already right moves Last Checked only.
     """
@@ -181,7 +193,7 @@ def use_guide_price(session: Session, guide: PriceGuide, laptop_ids: set[uuid.UU
     by_id = {l.id: l for l in laptops}
     sources = _latest_sources(session)
     result = _match(session, guide, laptops)
-    selectable = {c.id: (by_id[c.id], rows[0].price_rm) for c, rows in result.suffix_rule}
+    selectable = {c.id: (by_id[c.id], rows[0].price_rm) for c, rows in result.suffix_rule + result.base_code}
     for catalog_row, rows in result.matched:
         laptop = by_id[catalog_row.id]
         if decide(laptop.price_rm, sources.get(laptop.id), rows[0].price_rm) == Action.DIFFERS:
@@ -269,6 +281,6 @@ def apply_guide(session: Session, guide_id: uuid.UUID, progress=None) -> dict:
         "filled": filled,
         "confirmed": confirmed,
         "differs_from_guide": differs,
-        "awaiting_confirmation": len(result.suffix_rule),
+        "awaiting_confirmation": len(result.suffix_rule) + len(result.base_code),
         "skipped_unclear": len(result.ambiguous) + len(result.conflict),
     }

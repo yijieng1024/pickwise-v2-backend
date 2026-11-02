@@ -73,10 +73,33 @@ def test_model_code_and_specs_match():
     assert result.unmatched_guide == [] and result.uncovered == []
 
 
-def test_the_base_model_code_is_the_fallback():
+def test_a_match_through_the_base_code_waits_for_an_admin():
     laptop = catalog(model_code="asus-expertbook-p1403", name="ASUS ExpertBook P1 (P1403)")
 
-    assert [c.id for c, _ in match([guide()], [laptop]).matched] == ["a"]
+    result = match([guide()], [laptop])
+
+    assert result.matched == []
+    assert [c.id for c, _ in result.base_code] == ["a"]
+    assert result.uncovered == []
+
+
+def test_another_letter_on_the_catalog_side_is_still_only_a_base_code_match():
+    laptop = catalog(model_code="asus-vivobook-s-14-s5406", name="ASUS Vivobook S 14 (S5406M)")
+
+    result = match([guide(sku="S5406S-ALSF322WSP")], [laptop])
+
+    assert result.matched == []
+    assert [c.id for c, _ in result.base_code] == ["a"]
+
+
+def test_a_laptop_naming_one_of_its_rows_full_codes_is_a_direct_match():
+    laptop = catalog(name="ASUS Vivobook S16 (S3607AA)", model_code="asus-vivobook-s16-s3607")
+    rows = [guide(sku="S3607AA-SH185WS"), guide(sku="S3607AB-ASH031WSP")]  # the laptop names only the first
+
+    result = match(rows, [laptop])
+
+    assert [c.id for c, _ in result.matched] == ["a"]
+    assert result.base_code == []
 
 
 def test_the_base_code_does_not_match_inside_another_code():
