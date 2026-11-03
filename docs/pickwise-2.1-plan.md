@@ -47,6 +47,7 @@ Different user groups (students, people who don't understand specs, people decid
 | Apple order (decided 2026-11-03) | Fix Apple before the rest of step 11. Regroup the 3 M6 rows only after the repair |
 | PROLED family (decided 2026-11-03) | PROLED XDR MacBook Pro is its own family (touchscreen), an exception to the line + screen size rule, by Jack's choice |
 | Apple brightness (decided 2026-11-03) | Apple `display_brightness_nits` = peak SDR brightness: PROLED XDR 2000, Liquid Retina XDR 1000. Chosen so PROLED's brighter screen shows in the data |
+| 5f0c1326 (decided 2026-11-03) | 5f0c1326 was created by the PROLED page and overwritten by the Liquid Retina page. It keeps the PROLED code; after the round 3 repair it goes from suspended to inactive (waiting for price) |
 | RTX Spark family (decided 2026-11-03) | ProArt P14 and P16 RTX Spark (H7407, H7607) go in one family, "Asus RTX Spark". An exception to the product line + screen size rule, by Jack's choice |
 | New ASUS families (decided 2026-11-03) | TUF Gaming 16 FX610 joins TUF Gaming F16, and Zenbook 14 UX3480 joins Zenbook 14 OLED |
 | Embeddings and Pick Scores after the ASUS import (decided 2026-11-03) | Embeddings "Generate all" and Pick Score "Recalculate" wait until the 20 new laptops (created 2026-11-03) have prices |
@@ -737,6 +738,8 @@ A laptop that fails stays inactive, and the notification says which condition fa
 - Multi-configuration pages keep the guide-only rule: the website shows a starting price, not the price of any one configuration
 - When a guide later covers the laptop, the normal guide rules apply
 - Example: ASUS Gaming V16 (V3607) is a single-configuration page, so its website price is used; ProArt P14/P16 RTX Spark are multi-configuration pages, so they wait for a guide
+
+*Raw → laptop link (decided, Jack, 2026-11-03; not built)*: the processor records which `laptop_id` each raw record created or updated, in the job result. Reason: on 2026-11-03 the Apple backfill had to infer raw → laptop by time order and counts
 
 **Background jobs (added 2026-10-25)**
 - Every long admin process runs as a background job instead of a request that waits: scrape, process (Gemini), embeddings, PickScore `generate-all`, review `process-bulk`, transcripts, the benchmark refresh (done 2026-11-01), and the feed crawler, which is still a plain request; the scheduled pipeline needs a record of it
