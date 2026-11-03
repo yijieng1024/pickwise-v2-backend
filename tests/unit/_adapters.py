@@ -676,3 +676,7 @@ from app.scripts.backfill_manufacturer_sku import plan as backfill_plan  # noqa:
 
 # Apple identity, built by code - app/processor/apple_name.py
 from app.processor import apple_name  # noqa: E402,F401
+
+
+# The MacBook Pro line backfill - app/scripts/backfill_apple_line.py
+from app.scripts import backfill_apple_line  # noqa: E402,F401
