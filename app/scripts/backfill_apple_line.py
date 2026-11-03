@@ -14,28 +14,35 @@ Which line a row is: there is no link from a laptop to its raw page, so
 - a row created before the split pages were first scraped came from the one page that
   existed, /macbook-pro/specs/, the Liquid Retina XDR machine. That includes c07480ce,
   which today's PROLED page overwrote: Jack decided it is restored to the June machine.
-- a row created after says its line in `display_type` (PROLED or Liquid Retina XDR);
-  one that says neither is skipped, never guessed.
+- a row created after is linked to the raw page that created it through the processor
+  job's result: records run one at a time, so a job's new rows, in created_at order,
+  split by each record's `variants_saved`. The raw page's source_url then gives the line
+  (apple_name.py). A row with no link, a job whose counts do not add up, or an unknown
+  URL is skipped, never guessed: `display_type` is the LLM's and is not used.
 
 Only model_code and product_name. A Core UPDATE, so the mapper event doesn't stamp
 `updated_at` and the Dashboard does not call every Pick Score stale.
 """
 import argparse
 import sys
-from datetime import datetime
-from typing import Any, Iterable, Optional
+from datetime import datetime, timezone
+from typing import Any, Iterable, Mapping, Optional
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.engine import Connection
 
 from app.common.db_target import host_of, write_target
+from app.common.job_model import BackgroundJob
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop
-from app.processor.apple_name import build_name, product_and_line, with_line_token
+from app.processor.apple_name import UnknownLine, build_name, product_and_line, with_line_token
+from app.scraper.models import RawScrapLaptop
 
 _LAPTOPS = Laptop.__table__
 _BRANDS = LaptopBrand.__table__
+_JOBS = BackgroundJob.__table__
+_RAW = RawScrapLaptop.__table__
 # The first PROLED / Liquid Retina page (raw 282c613b) was scraped 2026-11-03 06:52:08 UTC.
 SPLIT_AT = datetime(2026, 11, 3, 6, 52)
 _OLD_PAGE = "https://www.apple.com/my/macbook-pro/specs/"
@@ -54,26 +61,67 @@ def read_laptops(connection: Connection) -> list[Any]:
     ))
 
 
-def line_of(laptop: Any) -> Optional[str]:
-    if laptop.created_at.replace(tzinfo=None) < SPLIT_AT:
-        return product_and_line(_OLD_PAGE)[1]
-    shown = (laptop.display_type or "").lower()
-    if "proled" in shown:
-        return "proled"
-    if "liquid retina xdr" in shown:
-        return "liquid-retina"
-    return None
+def read_jobs(connection: Connection) -> list[Any]:
+    """Processor runs since the split, oldest first."""
+    return list(connection.execute(
+        select(_JOBS.c.id, _JOBS.c.started_at, _JOBS.c.finished_at, _JOBS.c.result)
+        .where(_JOBS.c.job_type == "processor.process_pending", _JOBS.c.started_at >= SPLIT_AT)
+        .order_by(_JOBS.c.started_at)
+    ))
 
 
-def plan(laptops: Iterable[Any]) -> tuple[list[tuple[Any, str, str]], list[tuple[Any, str]]]:
+def read_raw_urls(connection: Connection) -> dict[str, str]:
+    return {str(r.id): r.source_url for r in connection.execute(select(_RAW.c.id, _RAW.c.source_url))}
+
+
+def _utc(moment: datetime) -> datetime:
+    """Naive UTC: jobs store timestamptz, laptops.created_at naive UTC."""
+    return moment.astimezone(timezone.utc).replace(tzinfo=None) if moment.tzinfo else moment
+
+
+def link_new_rows(jobs: Iterable[Any], laptops: Iterable[Any], raw_urls: Mapping[str, str]) -> dict[Any, str]:
+    """laptop id -> source_url of the raw page that created it. A job whose new rows do
+    not add up to its records' variants_saved links nothing."""
+    laptops = list(laptops)
+    links = {}
+    for job in jobs:
+        start, end = _utc(job.started_at), _utc(job.finished_at or datetime.max)
+        # Apple rows only: a job that also made another brand's rows does not add up, and
+        # links nothing.
+        made = sorted((l for l in laptops if start <= _utc(l.created_at) <= end), key=lambda l: l.created_at)
+        records = [d for d in (job.result or {}).get("details", []) if d.get("variants_saved")]
+        if len(made) != sum(d["variants_saved"] for d in records):
+            continue
+        for record in records:
+            for laptop in made[:record["variants_saved"]]:
+                if record["raw_id"] in raw_urls:
+                    links[laptop.id] = raw_urls[record["raw_id"]]
+            made = made[record["variants_saved"]:]
+    return links
+
+
+def line_of(laptop: Any, links: Mapping[Any, str]) -> tuple[Optional[str], str]:
+    """(line, where it came from); line None means skip, with the reason."""
+    if _utc(laptop.created_at) < SPLIT_AT:
+        return product_and_line(_OLD_PAGE)[1], "old page"
+    url = links.get(laptop.id)
+    if url is None:
+        return None, "no raw page linked"
+    try:
+        return product_and_line(url)[1], url
+    except UnknownLine:
+        return None, f"unknown page: {url}"
+
+
+def plan(laptops: Iterable[Any], links: Mapping[Any, str] = {}) -> tuple[list[tuple[Any, str, str]], list[tuple[Any, str]]]:
     """(laptop, new code, new name) and (laptop, why not). Writes nothing."""
     laptops = list(laptops)
     pro = [l for l in laptops if l.model_code.startswith("apple-macbook-pro-")]
     writes, skips = [], []
     for laptop in pro:
-        line = line_of(laptop)
+        line, source = line_of(laptop, links)
         if line is None:
-            skips.append((laptop, f"line unknown: display_type {laptop.display_type!r}"))
+            skips.append((laptop, source))
             continue
         code = with_line_token(laptop.model_code, line)
         name = build_name("MacBook Pro", line, laptop.display_size_inch, laptop.processor_model,
@@ -119,9 +167,12 @@ def main() -> int:
         if not args.apply:
             connection.exec_driver_sql("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
             connection.exec_driver_sql("SET TRANSACTION READ ONLY")  # this one, already open
-        writes, skips = plan(read_laptops(connection))
+        laptops = read_laptops(connection)
+        links = link_new_rows(read_jobs(connection), laptops, read_raw_urls(connection))
+        writes, skips = plan(laptops, links)
         for laptop, code, name in writes:
-            print(f"WRITE {laptop.id} [{laptop.status}]\n  {laptop.model_code} -> {code}\n"
+            print(f"WRITE {laptop.id} [{laptop.status}] from {line_of(laptop, links)[1]}\n"
+                  f"  {laptop.model_code} -> {code}\n"
                   f"  {laptop.product_name} -> {name}")
         for laptop, reason in skips:
             print(f"SKIP  {laptop.id} [{laptop.status}] {reason}")
