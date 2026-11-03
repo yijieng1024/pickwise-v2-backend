@@ -58,7 +58,7 @@ Different user groups (students, people who don't understand specs, people decid
 | RTX Spark family (decided 2026-11-03) | ProArt P14 and P16 RTX Spark (H7407, H7607) go in one family, "Asus RTX Spark". An exception to the product line + screen size rule, by Jack's choice |
 | New ASUS families (decided 2026-11-03) | TUF Gaming 16 FX610 joins TUF Gaming F16, and Zenbook 14 UX3480 joins Zenbook 14 OLED |
 | Embeddings and Pick Scores after the ASUS import (decided 2026-11-03) | Embeddings "Generate all" and Pick Score "Recalculate" wait until the 20 new laptops (created 2026-11-03) have prices |
-| Before Pick Score Recalculate (decided 2026-11-03) | Add M6 to `_APPLE_GPU_EQUIVALENT` (Steel Nomad method, like M5), and an explicit M6 CPU alias: 'Apple M6 (12-core)' matches at 0.90, exactly the threshold |
+| Before Pick Score Recalculate (decided 2026-11-03) | Add M6 to `_APPLE_GPU_EQUIVALENT` (Steel Nomad method, like M5), and an explicit M6 CPU alias: 'Apple M6 (12-core)' matches at 0.90, exactly the threshold; check Apple A18 Pro (6-core) resolves (Neo processor name changed) |
 | Migrations check in CI (decided 2026-11-01) | Compares the whole push (`github.event.before..HEAD`), with a fallback for a new branch, instead of `HEAD^..HEAD`. Push `3133099` added a migration and ended on a docs commit, so the job was skipped |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
 | Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs |
