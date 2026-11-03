@@ -680,3 +680,7 @@ from app.processor import apple_name  # noqa: E402,F401
 
 # The MacBook Pro line backfill - app/scripts/backfill_apple_line.py
 from app.scripts import backfill_apple_line  # noqa: E402,F401
+
+
+# The round 3 Apple repair - app/scripts/repair_apple_round3.py
+from app.scripts import repair_apple_round3  # noqa: E402,F401
