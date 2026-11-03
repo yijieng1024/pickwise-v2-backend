@@ -148,6 +148,10 @@ class Laptop(LaptopBase, table=True):
     # only when one raw row became one variant: with several, which one is the
     # SKU would be a guess. Not on LaptopBase, so no request body can set it.
     manufacturer_sku: Optional[str] = Field(default=None, sa_column=Column(String(64), nullable=True))
+    # Apple's part numbers for this configuration, one per colour (MGDN4ZP/A silver,
+    # MGDR4ZP/A space black), from the Apple MY buy page. The buy-page processor matches
+    # on these first. Not on LaptopBase, so no request body can set it.
+    part_numbers: Optional[list] = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # "Last Checked" on the details page: the last time a scrape/process or an
     # admin confirmed price_rm, changed or not. LaptopPriceHistory records only
@@ -271,6 +275,7 @@ class LaptopSearchResult(SQLModel):
 
 class PriceSource(str, Enum):
     PAGE = "page"  # scraped from the maker's page
+    APPLE_BUY_PAGE = "apple-buy-page"  # Apple's own price, from the Apple MY buy page
     GUIDE = "guide"  # a product guide import
     MANUAL = "manual"  # typed in by an admin
 
@@ -284,7 +289,7 @@ class LaptopPriceHistory(SQLModel, table=True):
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # Where this price came from. Null on rows older than the column, which
     # counts as "not a guide": the import never overwrites those.
-    source: Optional[str] = Field(default=None, max_length=10)
+    source: Optional[str] = Field(default=None, max_length=20)
     price_guide_id: Optional[uuid.UUID] = Field(default=None, foreign_key="price_guides.id")
 
 
