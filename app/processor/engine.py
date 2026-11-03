@@ -162,6 +162,11 @@ def check_model_code(
     return product_name, invented
 
 
+def _empty(value) -> bool:
+    """None, "", [] or {}. Not 0 or False: those are values (price has its own rule)."""
+    return value is None or (isinstance(value, (str, list, dict)) and not (value.strip() if isinstance(value, str) else value))
+
+
 def _laptop_by_sku(session: Session, sku: str) -> Optional[Laptop]:
     """
     The laptop holding this SKU. A slug is the LLM's wording, so one machine can come
@@ -385,6 +390,8 @@ def process_raw_laptop_data(
         # Apple model_code matches whose screen size, chip or line differ: a
         # different machine under the same code, left untouched.
         identity_conflicts: list[dict] = []
+        # Stored values kept because the extraction came back empty for them.
+        fields_kept: list[dict] = []
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         # With several variants, which one is the SKU would be a guess.
@@ -533,9 +540,18 @@ def process_raw_laptop_data(
                         existing.model_code, existing.price_rm,
                     )
 
+                kept = []
                 for key, value in laptop_data.items():
-                    if key != "model_code":  # model_code is the lookup key — never overwrite
-                        setattr(existing, key, value)
+                    if key == "model_code":  # the lookup key — never overwrite
+                        continue
+                    # An empty extraction is "not found", not a value: writing it over a
+                    # stored one erases data, like the 0 price above.
+                    if _empty(value) and not _empty(getattr(existing, key)):
+                        kept.append(key)
+                        continue
+                    setattr(existing, key, value)
+                if kept:
+                    fields_kept.append({"laptop_id": str(existing.id), "model_code": existing.model_code, "fields": kept})
                 # The scrape confirmed a price, changed or not: that is "Last
                 # Checked". A no-price extraction confirmed nothing.
                 if variant.price_rm > 0:
@@ -600,6 +616,7 @@ def process_raw_laptop_data(
             "prices_not_extracted": prices_not_extracted,
             "model_codes_replaced": model_codes_replaced,
             "identity_conflicts": identity_conflicts,
+            "fields_kept": fields_kept,
         }
 
     except Exception as e:
@@ -791,6 +808,7 @@ def process_pending_laptops(
     model_codes_replaced: list[dict] = []
     identity_conflicts: list[dict] = []
     split_failures: list[dict] = []
+    fields_kept: list[dict] = []
     requests_made = 0
 
     cancelled = False
@@ -822,6 +840,7 @@ def process_pending_laptops(
                 "model_codes_replaced": res.get("model_codes_replaced", []),
                 "identity_conflicts": res.get("identity_conflicts", []),
                 "split_failures": res.get("split_failures", []),
+                "fields_kept": res.get("fields_kept", []),
                 "error": None if succeeded else res.get("message"),
             }
         )
@@ -829,6 +848,7 @@ def process_pending_laptops(
         # is listed here too.
         identity_conflicts.extend(res.get("identity_conflicts", []))
         split_failures.extend(res.get("split_failures", []))
+        fields_kept.extend(res.get("fields_kept", []))
 
         if succeeded:
             total_saved += res.get("variants_saved", 0)
@@ -876,6 +896,8 @@ def process_pending_laptops(
         "identity_conflicts": identity_conflicts,
         # Apple pages whose size sections were not as expected: failed, not truncated.
         "split_failures": split_failures,
+        # Per laptop, stored fields an empty extraction did not overwrite.
+        "fields_kept": fields_kept,
         "pending_remaining": pending_remaining,
         "details": results_summary,
     }
