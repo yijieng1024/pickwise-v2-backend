@@ -71,3 +71,14 @@ def test_identity_compares_size_chip_and_line():
     assert june != identity(16.2, "Apple M5 Pro chip", code)
     assert june != identity(14.2, "Apple M5 Max chip", code)
     assert june != identity(14.2, "Apple M5 Pro chip", with_line_token(SLUG, "proled"))
+
+
+def test_apple_processor_and_brightness_built_by_code():
+    """The round 3 repair's values are what the processor now writes, so re-running a page
+    cannot undo them: the June processor form, and peak SDR by line."""
+    assert apple_name.processor_name("Apple M5 Pro chip", 15) == "Apple M5 Pro (15-core)"
+    assert apple_name.processor_name("Apple M5 Pro chip (15-core)", 15) == "Apple M5 Pro (15-core)"
+    assert apple_name.processor_name("Apple M6 chip", 12) == "Apple M6 (12-core)"
+    assert apple_name.brightness("proled", 1600) == 2000
+    assert apple_name.brightness("liquid-retina", 1600) == 1000
+    assert apple_name.brightness(None, 500) == 500

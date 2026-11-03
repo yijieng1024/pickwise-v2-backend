@@ -62,8 +62,9 @@ def _run(session, monkeypatch, brand, url, *variants):
 
 
 def test_apple_name_ignores_llm(session, apple, monkeypatch):
-    """The stored name and code come from the specs and URL, not the LLM's wording."""
-    result, _, _ = _run(session, monkeypatch, apple, PROLED, _variant())
+    """The stored name, code, processor and brightness come from the specs and URL, not
+    the LLM's wording."""
+    result, _, _ = _run(session, monkeypatch, apple, PROLED, _variant(display_brightness_nits=1600))
     assert result["status"] == "success", result
 
     stored = session.exec(
@@ -73,6 +74,9 @@ def test_apple_name_ignores_llm(session, apple, monkeypatch):
         "14-inch MacBook Pro PROLED XDR (M5 Pro, 15-core CPU, 16-core GPU, 24GB RAM, 2TB SSD)"
     )
     assert stored.model_code == "apple-macbook-pro-14-proled-m5-pro-15c-16g-24gb-2048gb"
+    assert (stored.processor_model, stored.display_brightness_nits) == ("Apple M5 Pro (15-core)", 2000), (
+        "the LLM's processor wording or brightness was stored"
+    )
 
 
 def test_identity_conflict_keeps_row(session, apple, monkeypatch):

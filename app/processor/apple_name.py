@@ -66,6 +66,23 @@ def chip_of(processor_model: Optional[str]) -> Optional[str]:
     return match.group(0) if match else None
 
 
+# Peak SDR brightness per MacBook Pro line (decided 2026-11-03): both pages say "SDR
+# brightness: up to 1,000 nits", and PROLED adds "2,000 nits peak". Air and Neo have one
+# line each and keep the extracted figure.
+_BRIGHTNESS = {"proled": 2000, "liquid-retina": 1000}
+
+
+def processor_name(processor_model: Optional[str], cpu_cores: Optional[int]) -> Optional[str]:
+    """The June form, "Apple M5 Pro (15-core)": the one the benchmark table matches. The
+    LLM writes "Apple M5 Pro chip" or "Apple M5 Pro chip (15-core)" depending on the page."""
+    chip = chip_of(processor_model)
+    return f"Apple {chip} ({cpu_cores}-core)" if chip and cpu_cores else processor_model
+
+
+def brightness(line: Optional[str], extracted: Optional[int]) -> Optional[int]:
+    return _BRIGHTNESS.get(line, extracted) if line else extracted
+
+
 def _storage(ssd_gb: Optional[int]) -> Optional[str]:
     if not ssd_gb:
         return None

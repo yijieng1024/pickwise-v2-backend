@@ -24,8 +24,10 @@ from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
 from app.processor.apple_name import (
     UnknownLine,
+    brightness,
     build_name,
     identity,
+    processor_name,
     product_and_line,
     with_line_token,
 )
@@ -460,6 +462,8 @@ def process_raw_laptop_data(
             )
             if is_apple:
                 laptop_data["model_code"] = with_line_token(laptop_data["model_code"], apple_line)
+                laptop_data["processor_model"] = processor_name(variant.processor_model, variant.cpu_cores)
+                laptop_data["display_brightness_nits"] = brightness(apple_line, variant.display_brightness_nits)
                 laptop_data["product_name"] = build_name(
                     apple_product, apple_line, variant.display_size_inch, variant.processor_model,
                     variant.cpu_cores, variant.gpu_cores, variant.ram_gb, variant.ssd_gb,
