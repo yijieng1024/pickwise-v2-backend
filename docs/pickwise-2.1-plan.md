@@ -42,6 +42,7 @@ Different user groups (students, people who don't understand specs, people decid
 | Fallback within an agent turn (decided 2026-11-01) | **Sticky.** Once a step of a turn is answered at chain position k, every later step of that turn starts at k, and only ever moves further down. Each new user message starts at the primary again. Decided after run b6471466: the primary never succeeded, every step waited for it to fail before a backup answered, so 5 steps took 242 s, and mixing models across steps ended in a 400 `thought_signature` error. The stream rule is unchanged: no switch after the first token |
 | Recording an agent turn's model calls (decided 2026-11-01) | One row per model call in a new `agent_model_calls` table, failed calls included, listed in the Chatbot Monitoring run detail. The same investigation could not say which model made which step, because `agent_run_logs` is per turn and `llm_usage_logs` is per model and only sees calls that succeeded. `fallback_triggered` now means "a backup answered at least one step", not "a backup was started"; rows written before this keep the old meaning |
 | Pick Scores after a PassMark refresh (decided 2026-11-01) | A successful refresh queues a Pick Score `generate-all` job by itself and records it in the PassMark job's `result`. A failed or cancelled refresh queues nothing |
+| Embeddings and Pick Scores after the ASUS import (decided 2026-11-03) | Embeddings "Generate all" and Pick Score "Recalculate" wait until the 20 new laptops (created 2026-11-03) have prices |
 | Migrations check in CI (decided 2026-11-01) | Compares the whole push (`github.event.before..HEAD`), with a fallback for a new branch, instead of `HEAD^..HEAD`. Push `3133099` added a migration and ended on a docs commit, so the job was skipped |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
 | Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs |
@@ -688,6 +689,7 @@ Data survey (2026-10-26, read-only): most items can be built from stored data wi
 - Scrape Queue search covers all rows, not only the current page
 - Confirmations for actions that change the live site (Regroup, inline status change, releasing laptops from a family, Rematch, Remove a review link, Questionnaire reorder, Scrape this brand)
 - One type scale on the remaining pages
+- Crawl has no job record: store crawl results in `background_jobs`. Reason: on 2026-11-03 we could not find which of the 14 expected models was missing
 
 ### Benchmark name matching fix (step 6b)
 
