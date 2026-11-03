@@ -210,6 +210,12 @@ def _update_target(session: Session, target: ScrapeTarget, scrape_status: str) -
     session.commit()
 
 
+def stored_rows_of(url: str):
+    """The raw rows of one page: the bare URL, or URL?v=N for a multi-variant page. Not a
+    prefix match: .../buy-mac/macbook-pro is a prefix of .../buy-mac/macbook-pro-proled-xdr."""
+    return or_(RawScrapLaptop.source_url == url, RawScrapLaptop.source_url.like(f"{url}?v=%"))  # type: ignore[attr-defined]
+
+
 async def _process_target(
     session: Session,
     target: ScrapeTarget,
@@ -229,9 +235,7 @@ async def _process_target(
     # Skip if ANY variant of this URL was already stored
     # (source_url is either bare URL or URL?v=N for multi-variant pages)
     already_scraped = session.exec(
-        select(RawScrapLaptop).where(
-            RawScrapLaptop.source_url.like(f"{url}%")  # type: ignore[arg-type]
-        )
+        select(RawScrapLaptop).where(stored_rows_of(url))
     ).first()
 
     if already_scraped:

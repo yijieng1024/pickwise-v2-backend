@@ -42,7 +42,7 @@ from app.scraper.raw_html_model import (
 from app.common.job_model import JobAccepted, JobType
 from app.common.job_service import JobProgress, create_job, job_accepted, run_job
 from app.users.models import User
-from .bulk_scraper import SCRAPERS, _success_status, run_bulk_scrape, run_scrape_for_targets
+from .bulk_scraper import SCRAPERS, _success_status, run_bulk_scrape, run_scrape_for_targets, stored_rows_of
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -157,9 +157,7 @@ async def scrape_url(
 
     # Prevent duplicate scraping — check for bare URL or any variant (?v=N)
     existing_scrape = session.exec(
-        select(RawScrapLaptop).where(
-            RawScrapLaptop.source_url.like(f"{request.url}%")  # type: ignore[arg-type]
-        )
+        select(RawScrapLaptop).where(stored_rows_of(request.url))
     ).first()
 
     if existing_scrape:
