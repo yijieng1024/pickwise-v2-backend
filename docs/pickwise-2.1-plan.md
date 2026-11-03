@@ -47,6 +47,7 @@ Different user groups (students, people who don't understand specs, people decid
 | Apple order (decided 2026-11-03) | Fix Apple before the rest of step 11. Regroup the 3 M6 rows only after the repair |
 | PROLED family (decided 2026-11-03) | PROLED XDR MacBook Pro is its own family (touchscreen), an exception to the line + screen size rule, by Jack's choice |
 | PROLED families by size (decided 2026-11-03) | PROLED families split by size: 'Apple MacBook Pro 14 PROLED' now, 'Apple MacBook Pro 16 PROLED' when 16-inch rows exist. No 16-inch PROLED row exists yet: the LLM only extracted 14-inch configs |
+| Apple buy page (decided 2026-11-03) | Apple standard configs and RM prices come from the Apple MY buy page; specs come from the specs page. No Apple re-run until this is built |
 | Apple brightness (decided 2026-11-03) | Apple `display_brightness_nits` = peak SDR brightness: PROLED XDR 2000, Liquid Retina XDR 1000. Chosen so PROLED's brighter screen shows in the data |
 | 5f0c1326 (decided 2026-11-03) | 5f0c1326 was created by the PROLED page and overwritten by the Liquid Retina page. It keeps the PROLED code; after the round 3 repair it goes from suspended to inactive (waiting for price) |
 | Apple repair, revised (decided 2026-11-03) | c07480ce becomes PROLED 24GB/2TB (price and June price history cleared); 5f0c1326 becomes Liquid Retina 48GB/1TB; supersedes the earlier restore decision. Reason: each row keeps the machine its data already describes |
