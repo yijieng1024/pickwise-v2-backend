@@ -95,6 +95,8 @@ def list_laptops(
     ),
     price_min: Optional[float] = filter_query("Lowest price in RM (inclusive)", ge=0),
     price_max: Optional[float] = filter_query("Highest price in RM (inclusive)", ge=0),
+    added_from: Optional[datetime] = filter_query("Added to the catalog at or after this time (created_at, inclusive)"),
+    added_to: Optional[datetime] = filter_query("Added to the catalog at or before this time (created_at, inclusive)"),
     sort_by: Optional[str] = Query(default=None, description="One of: product_name, price_rm, created_at"),
     sort_dir: SortDirection = sort_dir_query(),
     skip: Optional[int] = Query(default=None, ge=0, description="Omit to get every row (default, unpaginated)"),
@@ -131,6 +133,7 @@ def list_laptops(
         LAPTOP_FILTERABLE_COLUMNS,
     )
     statement = apply_range(statement, Laptop.price_rm, price_min, price_max)  # type: ignore[arg-type]
+    statement = apply_range(statement, Laptop.created_at, added_from, added_to)  # type: ignore[arg-type]
     statement = apply_search(statement, search, [Laptop.product_name, Laptop.model_code, LaptopBrand.name])
 
     # After filter+search, before sort/slice — so this is the filtered total.
