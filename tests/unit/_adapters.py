@@ -672,3 +672,7 @@ from app.processor import engine as processor_engine  # noqa: E402,F401
 
 # The SKU backfill's decisions - app/scripts/backfill_manufacturer_sku.py
 from app.scripts.backfill_manufacturer_sku import plan as backfill_plan  # noqa: E402,F401
+
+
+# Apple identity, built by code - app/processor/apple_name.py
+from app.processor import apple_name  # noqa: E402,F401

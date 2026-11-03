@@ -22,6 +22,13 @@ from app.laptops.price_guide import sku_key
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
+from app.processor.apple_name import (
+    UnknownLine,
+    build_name,
+    identity,
+    product_and_line,
+    with_line_token,
+)
 from app.processor.schemas import ExtractedLaptopCategories, ExtractedLaptopFamily
 from app.taxonomy.category_model import Category
 
@@ -188,6 +195,33 @@ def process_raw_laptop_data(
 
     brand_name = brand.name if brand else "Unknown"
 
+    # Apple: the line comes from the URL, checked before the LLM call so an
+    # unknown page costs no quota. Never guessed (see apple_name.py).
+    is_apple = brand_name.lower() == "apple"
+    apple_product = apple_line = None
+    if is_apple:
+        try:
+            apple_product, apple_line = product_and_line(raw_data.source_url)
+        except UnknownLine as e:
+            # Failed, not completed: once the line is added to apple_name.py, the
+            # next bulk run picks the row up again.
+            raw_data.processing_status = "failed"
+            session.add(raw_data)
+            session.commit()
+            return {
+                "status": "skipped",
+                "message": str(e),
+                "identity_conflicts": [{
+                    "laptop_id": None,
+                    "model_code": None,
+                    "existing": None,
+                    "incoming": None,
+                    "raw_id": str(raw_laptop_id),
+                    "source_url": raw_data.source_url,
+                    "reason": str(e),
+                }],
+            }
+
     # Cached, and on a miss read on its own short session -- not this one.
     chosen_models = resolve_extraction_models()
 
@@ -294,6 +328,7 @@ def process_raw_laptop_data(
     _raw_prices_json = json.dumps(raw_data.raw_prices, ensure_ascii=False, indent=2)
     _raw_specs_json = _bounded_json(raw_data.raw_specs_dump)
     _raw_sku = raw_sku(raw_data.raw_specs_dump)
+    _source_url = raw_data.source_url
     session.commit()
 
     try:
@@ -322,6 +357,9 @@ def process_raw_laptop_data(
         # Names whose code the LLM invented, swapped for the raw code. Returned
         # for the job's result, the one place an admin can find them later.
         model_codes_replaced: list[dict] = []
+        # Apple model_code matches whose screen size, chip or line differ: a
+        # different machine under the same code, left untouched.
+        identity_conflicts: list[dict] = []
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         # With several variants, which one is the SKU would be a guess.
@@ -420,6 +458,12 @@ def process_raw_laptop_data(
                     raw_data.image_urls, variant.display_size_inch
                 ),
             )
+            if is_apple:
+                laptop_data["model_code"] = with_line_token(laptop_data["model_code"], apple_line)
+                laptop_data["product_name"] = build_name(
+                    apple_product, apple_line, variant.display_size_inch, variant.processor_model,
+                    variant.cpu_cores, variant.gpu_cores, variant.ram_gb, variant.ssd_gb,
+                )
 
             existing = _laptop_by_sku(session, sku) if sku else None
             if existing is None:
@@ -431,6 +475,21 @@ def process_raw_laptop_data(
                 if existing and sku and existing.manufacturer_sku:
                     laptop_data["model_code"] = f"{laptop_data['model_code']}-{sku.lower()}"
                     existing = None
+
+            if existing and is_apple:
+                was = identity(existing.display_size_inch, existing.processor_model, existing.model_code)
+                now = identity(variant.display_size_inch, variant.processor_model, laptop_data["model_code"])
+                if was != now:
+                    logger.warning("raw %s: %s matches a different machine; not updated", raw_laptop_id, existing.model_code)
+                    identity_conflicts.append({
+                        "laptop_id": str(existing.id),
+                        "model_code": existing.model_code,
+                        "existing": was,
+                        "incoming": now,
+                        "raw_id": str(raw_laptop_id),
+                        "source_url": _source_url,
+                    })
+                    continue
 
             if existing:
                 # Price history: only record if price actually changed and is non-zero
@@ -513,6 +572,7 @@ def process_raw_laptop_data(
             "categories_linked": categories_linked,
             "prices_not_extracted": prices_not_extracted,
             "model_codes_replaced": model_codes_replaced,
+            "identity_conflicts": identity_conflicts,
         }
 
     except Exception as e:
@@ -702,6 +762,7 @@ def process_pending_laptops(
     total_updated = 0
     prices_not_extracted: list[str] = []
     model_codes_replaced: list[dict] = []
+    identity_conflicts: list[dict] = []
     requests_made = 0
 
     cancelled = False
@@ -731,9 +792,13 @@ def process_pending_laptops(
                 "variants_updated": res.get("variants_updated", 0),
                 "prices_not_extracted": res.get("prices_not_extracted", []),
                 "model_codes_replaced": res.get("model_codes_replaced", []),
+                "identity_conflicts": res.get("identity_conflicts", []),
                 "error": None if succeeded else res.get("message"),
             }
         )
+        # Collected whether or not the record succeeded: a skipped unknown page
+        # is listed here too.
+        identity_conflicts.extend(res.get("identity_conflicts", []))
 
         if succeeded:
             total_saved += res.get("variants_saved", 0)
@@ -776,6 +841,9 @@ def process_pending_laptops(
         "prices_not_extracted": prices_not_extracted,
         # Names whose LLM-invented code was swapped for the raw one.
         "model_codes_replaced": model_codes_replaced,
+        # Apple rows left untouched: a code match on another machine, or a page
+        # whose MacBook Pro line is unknown.
+        "identity_conflicts": identity_conflicts,
         "pending_remaining": pending_remaining,
         "details": results_summary,
     }
