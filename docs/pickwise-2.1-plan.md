@@ -698,6 +698,8 @@ Data survey (2026-10-26, read-only): most items can be built from stored data wi
 - One type scale on the remaining pages
 - Family seed key should drop the brand prefix before comparing: "ProArt P16" and "Asus ProArt P16" got different keys, so regroup would have opened a wrong new family
 - Crawl has no job record: store crawl results in `background_jobs`. Reason: on 2026-11-03 we could not find which of the 14 expected models was missing
+- ProArt P16 edbed64c stores 1600 nits (HDR peak); should be the SDR figure like other rows
+- Acer has `display_brightness_nits` on only 1 of 41 rows (and that one is 0)
 
 ### Benchmark name matching fix (step 6b)
 
