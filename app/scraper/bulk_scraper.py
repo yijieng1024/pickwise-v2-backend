@@ -31,7 +31,8 @@ from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
-from app.scraper.apple_scraper import crawl_apple_specs_links, scrape_official_website
+from app.processor.apple_name import SPECS_PAGES
+from app.scraper.apple_scraper import crawl_apple_specs_links, scrape_apple_buy_page, scrape_official_website
 from app.scraper.asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
 from app.scraper.acer_scraper import crawl_acer_specs_links, scrape_acer_laptop_specs
 from app.scraper.hp_scraper import crawl_hp_specs_links, scrape_hp_laptop_specs
@@ -71,6 +72,8 @@ async def _crawl_hp(start_url: str, session: Session, brand_id: UUID) -> list[st
 
 async def _scrape_apple(url: str, brand_id: UUID, session: Session) -> list[dict]:
     # Apple's scraper returns a single dict, every other brand a list
+    if url in SPECS_PAGES:
+        return [await scrape_apple_buy_page(url, str(brand_id))]
     return [await scrape_official_website(url, "Apple", str(brand_id))]
 
 
@@ -288,7 +291,11 @@ async def _process_target(
             raw_product_name=variant.get("product_name", "Unknown Model"),
             raw_prices=variant.get("raw_prices_list", []),
             image_urls=variant.get("image_urls", []),
-            raw_specs_dump={"scraped_features": variant.get("raw_specs", [])},
+            raw_specs_dump={
+                "scraped_features": variant.get("raw_specs", []),
+                # Apple buy pages: the configurations, part numbers and prices
+                **({"buy_page": variant["buy_page"]} if "buy_page" in variant else {}),
+            },
             processing_status="pending",
         )
         session.add(raw_laptop)

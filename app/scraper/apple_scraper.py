@@ -14,10 +14,13 @@ that part's display price.
 import asyncio
 import json
 import re
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Optional
 from urllib.parse import urljoin
 
 from lxml import html as lxml_html
+
+from app.processor.apple_name import BUY_PAGES, SPECS_PAGES, parse_config_slug
 
 from .fetch import fetch_html as _fetch
 
@@ -139,7 +142,8 @@ async def crawl_apple_specs_links(start_url: str = "https://www.apple.com/my/mac
     if not links:
         # A block page is a 200 too: "No URLs found" would look like a quiet day
         raise ValueError(f"No Mac links found on {start_url}")
-    return links
+    # The buy pages are targets of their own: configurations and prices come from them.
+    return links + [buy for buy in BUY_PAGES.values() if buy not in links]
 
 
 async def scrape_official_website(url: str, brand_name: str, brand_id: str) -> Dict[str, Any]:
@@ -152,6 +156,104 @@ async def scrape_official_website(url: str, brand_name: str, brand_id: str) -> D
         data = await asyncio.to_thread(scrape)
     except Exception as e:
         data = {"brand": brand_name, "status": "failed", "error": str(e)}
+    data["source_url"] = url
+    if brand_id:
+        data["brand_id"] = brand_id
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Buy pages (decided 2026-11-03): standard configurations and RM prices
+# ---------------------------------------------------------------------------
+# The specs pages list options per chip ("24GB or 48GB"), not the configurations Apple
+# sells. The buy page links each standard configuration by a readable slug, and each
+# configuration's own page states its part number and price in a metrics JSON block.
+# Apple gives every colour its own part number, so a configuration is the slug with the
+# colour folded away. Nano-texture glass is an option on a standard configuration, not a
+# configuration of its own: those links are counted, not stored.
+
+_DETAIL = re.compile(
+    r'"products":\[\{"sku":"\w+","partNumber":"([A-Z0-9/]+)","price":\{"fullPrice":([\d.]+)\}'
+    r',"category":"\w+","name":"([^"]*)"\}\]'
+)
+_DETAIL_PAUSE_S = 0.5
+
+
+def _page_cores(html: str) -> Optional[tuple[int, int]]:
+    """The page's one CPU/GPU core option, when it has only one (Neo's links do not
+    state cores)."""
+    found = set(re.findall(r'"processor-[\w-]*cpuCoreCount-gpuCoreCount":"(?:[a-z0-9]+-)?(\d+)-(\d+)"', html))
+    return tuple(map(int, found.pop())) if len(found) == 1 else None
+
+
+def parse_buy_page(html: str, buy_url: str) -> Dict[str, Any]:
+    """The standard configurations a buy page links, colour folded. Raises when there
+    are none: a block page is a 200 too."""
+    page = buy_url.rstrip("/").rsplit("/", 1)[1]
+    cores = _page_cores(html)
+    configs: dict[tuple, dict] = {}
+    nano: list[str] = []
+    for slug in dict.fromkeys(re.findall(rf"/buy-mac/{re.escape(page)}/([a-z0-9-]+)", html)):
+        config = parse_config_slug(slug)
+        if config is None:
+            continue
+        if config.pop("nano_texture"):
+            nano.append(slug)
+            continue
+        if config["cpu_cores"] is None and cores:
+            config["cpu_cores"], config["gpu_cores"] = cores
+        key = tuple(config[k] for k in ("size", "chip", "cpu_cores", "gpu_cores", "ram_gb", "ssd_gb"))
+        configs.setdefault(key, {**config, "slugs": []})["slugs"].append(slug)
+    if not configs:
+        raise ValueError(f"No standard configurations linked on {buy_url}")
+    return {"configs": list(configs.values()), "nano_texture": nano}
+
+
+def parse_detail_page(html: str) -> Dict[str, Any]:
+    """One configuration page in one colour: its part number, RM price and name."""
+    match = _DETAIL.search(html)
+    if not match:
+        raise ValueError("No part number and price on the configuration page")
+    part, price, name = match.groups()
+    return {"part_number": part, "price_rm": float(price), "name": name}
+
+
+def _scrape_buy_page(url: str) -> Dict[str, Any]:
+    html = _fetch(url)
+    page = parse_buy_page(html, url)
+    prices = []
+    for config in page["configs"]:
+        found = []
+        for slug in config["slugs"]:
+            found.append({**parse_detail_page(_fetch(f"{url}/{slug}")), "slug": slug})
+            time.sleep(_DETAIL_PAUSE_S)
+        config["part_numbers"] = [f["part_number"] for f in found]
+        by_colour = {f["price_rm"] for f in found}
+        # Colours of one configuration cost the same; if they ever do not, say so
+        # rather than pick one.
+        config["price_rm"] = found[0]["price_rm"] if len(by_colour) == 1 else None
+        if len(by_colour) > 1:
+            config["prices_by_colour"] = {f["part_number"]: f["price_rm"] for f in found}
+        prices += found
+    title = lxml_html.fromstring(html).findtext(".//title") or url
+    return {
+        "brand": "Apple",
+        "product_name": title.split(" - ")[0].strip(),
+        "raw_prices_list": prices,
+        "image_urls": [],
+        "raw_specs": [],
+        "buy_page": {"url": url, "specs_url": SPECS_PAGES[url], **page},
+        "status": "success",
+    }
+
+
+async def scrape_apple_buy_page(url: str, brand_id: str) -> Dict[str, Any]:
+    """One buy page and every configuration page it links. A failure comes back as
+    `status: failed`, never raises."""
+    try:
+        data = await asyncio.to_thread(_scrape_buy_page, url)
+    except Exception as e:
+        data = {"brand": "Apple", "status": "failed", "error": str(e)}
     data["source_url"] = url
     if brand_id:
         data["brand_id"] = brand_id

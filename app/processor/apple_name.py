@@ -168,3 +168,63 @@ def size_sections(text: str, product: str) -> list[str]:
             raise SplitFailed(f"{product}: size section {i + 1} is {len(core)} characters, over {SECTION_LIMIT}")
         sections.append(core)
     return sections
+
+
+# The Apple MY buy page for each specs page (2026-11-03): standard configurations and
+# prices come from the buy page, specs from the specs page.
+_MY = "https://www.apple.com/my"
+BUY_PAGES = {
+    f"{_MY}/macbook-pro/proled-xdr-display/specs/": f"{_MY}/shop/buy-mac/macbook-pro-proled-xdr",
+    f"{_MY}/macbook-pro/liquid-retina-xdr-display/specs/": f"{_MY}/shop/buy-mac/macbook-pro",
+    f"{_MY}/macbook-air/specs/": f"{_MY}/shop/buy-mac/macbook-air",
+    f"{_MY}/macbook-neo/specs/": f"{_MY}/shop/buy-mac/macbook-neo",
+}
+SPECS_PAGES = {buy: specs for specs, buy in BUY_PAGES.items()}
+
+_SLUG_SIZE = re.compile(r"^(\d+)-inch-")
+_SLUG_CHIP = re.compile(r"(?:^|-)(?:apple-)?([am]\d+(?:-pro|-max|-ultra)?)-chip(?:-|$)")
+_SLUG_CORES = re.compile(r"(\d+)-core-cpu-(\d+)-core-gpu")
+_SLUG_RAM = re.compile(r"(\d+)gb-memory")
+_SLUG_SSD = re.compile(r"(\d+)(tb|gb)(?:-storage)?$")
+
+
+def _chip_name(slug_part: str) -> str:
+    """m5-pro -> M5 Pro, a18-pro -> A18 Pro."""
+    first, *rest = slug_part.split("-")
+    return " ".join([first.upper(), *(w.capitalize() for w in rest)])
+
+
+def parse_config_slug(slug: str) -> Optional[dict]:
+    """A buy page's standard-configuration link, e.g.
+    14-inch-silver-standard-display-apple-m5-pro-chip-15-core-cpu-16-core-gpu-24gb-memory-1tb-storage.
+    None for anything that is not one. Fields the slug does not state are None (Neo's
+    links give only colour and storage: silver-256gb)."""
+    storage = _SLUG_SSD.search(slug)
+    if not storage:
+        return None
+    size, chip, cores, ram = (p.search(slug) for p in (_SLUG_SIZE, _SLUG_CHIP, _SLUG_CORES, _SLUG_RAM))
+    amount, unit = storage.groups()
+    return {
+        "size": int(size.group(1)) if size else None,
+        "chip": _chip_name(chip.group(1)) if chip else None,
+        "cpu_cores": int(cores.group(1)) if cores else None,
+        "gpu_cores": int(cores.group(2)) if cores else None,
+        "ram_gb": int(ram.group(1)) if ram else None,
+        "ssd_gb": int(amount) * (1024 if unit == "tb" else 1),
+        "nano_texture": "nano-texture" in slug,
+    }
+
+
+def build_code(product: str, line: Optional[str], size: int, chip: str, cpu: int, gpu: int, ram: int, ssd: int) -> str:
+    """apple-macbook-pro-14-proled-m5-pro-15c-16g-24gb-1024gb: the form every stored
+    Apple code already has, now built from the buy page instead of written by the LLM."""
+    head = f"apple-{product.lower().replace(' ', '-')}-{size}" + (f"-{line}" if line else "")
+    return f"{head}-{chip.lower().replace(' ', '-')}-{cpu}c-{gpu}g-{ram}gb-{ssd}gb"
+
+
+def only_value(pattern: str, text: str) -> Optional[str]:
+    """The one value *pattern* finds in *text*, or None when it finds none or several:
+    a specs page that names one chip or one memory size states it, one that names
+    several does not say which a configuration has."""
+    found = set(re.findall(pattern, text))
+    return found.pop() if len(found) == 1 else None
