@@ -23,3 +23,34 @@ def test_prefix_url_is_not_already_scraped(session):
 
     assert session.exec(select(RawScrapLaptop).where(stored_rows_of(PRO))).first() is None
     assert session.exec(select(RawScrapLaptop).where(stored_rows_of("https://x.invalid/asus"))).first() is not None
+
+
+def _target_run(session, monkeypatch, brand_name, url):
+    import asyncio
+    from app.scraper import bulk_scraper
+    from app.scraper.models import ScrapeTarget
+
+    brand = LaptopBrand(name=brand_name, base_scrape_url="https://example.invalid")
+    session.add(brand)
+    session.commit()
+    session.add(RawScrapLaptop(source_url=url, brand_id=brand.id, raw_product_name="June", raw_specs_dump={}))
+    target = ScrapeTarget(url=url, brand_id=brand.id)
+    session.add(target)
+    session.commit()
+
+    async def fake(*_a, **_k):
+        return [{"status": "success", "product_name": "Today", "raw_specs": ["today"]}]
+    monkeypatch.setattr(bulk_scraper, "_dispatch_scraper", fake)
+    monkeypatch.setattr(bulk_scraper, "LIVE_FETCH_PAUSE_S", 0)
+    report = bulk_scraper.BulkScrapeReport(brand_name=brand_name, total_pending=1)
+    asyncio.run(bulk_scraper._process_target(session, target, brand, report))
+    return session.exec(select(RawScrapLaptop.raw_product_name).where(RawScrapLaptop.source_url == url)).all()
+
+
+def test_apple_specs_page_is_scraped_again(session, monkeypatch):
+    names = _target_run(session, monkeypatch, "Apple", "https://www.apple.com/my/macbook-neo/specs/")
+    assert names == ["Today"], "a stored Apple specs page blocked today's scrape"
+
+
+def test_other_brands_keep_the_skip_rule(session, monkeypatch):
+    assert _target_run(session, monkeypatch, "HP", "https://www.hp.com/my-en/x/specs/") == ["June"]

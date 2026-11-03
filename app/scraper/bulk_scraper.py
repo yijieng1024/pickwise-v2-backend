@@ -210,6 +210,13 @@ def _update_target(session: Session, target: ScrapeTarget, scrape_status: str) -
     session.commit()
 
 
+def rescrapable(brand_name: str, url: str) -> bool:
+    """Apple specs pages are fetched again every run, and the new fetch replaces the
+    page's raw row (decided 2026-11-03): the buy page needs today's specs, and a stored
+    June page would otherwise be read forever. Other brands keep the skip rule until step 11."""
+    return brand_name.lower() == "apple" and url.rstrip("/").endswith("/specs")
+
+
 def stored_rows_of(url: str):
     """The raw rows of one page: the bare URL, or URL?v=N for a multi-variant page. Not a
     prefix match: .../buy-mac/macbook-pro is a prefix of .../buy-mac/macbook-pro-proled-xdr."""
@@ -234,7 +241,7 @@ async def _process_target(
 
     # Skip if ANY variant of this URL was already stored
     # (source_url is either bare URL or URL?v=N for multi-variant pages)
-    already_scraped = session.exec(
+    already_scraped = not rescrapable(brand.name, url) and session.exec(
         select(RawScrapLaptop).where(stored_rows_of(url))
     ).first()
 
@@ -289,6 +296,13 @@ async def _process_target(
         suffix = variant.get("source_url_suffix", "")
         source_url = f"{url}{suffix}"
 
+        # A re-scraped Apple specs page replaces its one raw row (source_url is unique).
+        stored = rescrapable(brand_name, url) and session.exec(
+            select(RawScrapLaptop).where(RawScrapLaptop.source_url == source_url)
+        ).first()
+        if stored:
+            session.delete(stored)
+            session.flush()
         raw_laptop = RawScrapLaptop(
             source_url=source_url,
             brand_id=brand_pk,
