@@ -740,6 +740,7 @@ A laptop that fails stays inactive, and the notification says which condition fa
 - Example: ASUS Gaming V16 (V3607) is a single-configuration page, so its website price is used; ProArt P14/P16 RTX Spark are multi-configuration pages, so they wait for a guide
 
 *Raw → laptop link (decided, Jack, 2026-11-03; not built)*: the processor records which `laptop_id` each raw record created or updated, in the job result. Reason: on 2026-11-03 the Apple backfill had to infer raw → laptop by time order and counts
+- The single-record route `POST /processor/process/{id}` must also create a `background_jobs` record with the same result and raw → `laptop_id` links. Reason: on 2026-11-03 the Apple re-run through this route left no record of which rows it changed
 
 **Background jobs (added 2026-10-25)**
 - Every long admin process runs as a background job instead of a request that waits: scrape, process (Gemini), embeddings, PickScore `generate-all`, review `process-bulk`, transcripts, the benchmark refresh (done 2026-11-01), and the feed crawler, which is still a plain request; the scheduled pipeline needs a record of it
