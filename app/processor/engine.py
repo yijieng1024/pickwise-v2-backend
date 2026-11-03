@@ -22,17 +22,17 @@ from app.laptops.price_guide import sku_key
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
+from app.processor import apple_buy
 from app.processor.apple_name import (
     SECTION_LIMIT,
     SplitFailed,
     UnknownLine,
     brightness,
     build_name,
-    identity,
+    chip_of,
     processor_name,
     product_and_line,
     size_sections,
-    with_line_token,
 )
 from app.processor.schemas import ExtractedLaptopCategories, ExtractedLaptopFamily
 from app.taxonomy.category_model import Category
@@ -162,6 +162,239 @@ def check_model_code(
     return product_name, invented
 
 
+def _variant_fields(variant, brand_id, image_urls, raw_specs_dump) -> dict:
+    """An extracted variant as Laptop columns. Shared by the generic path and the Apple
+    buy-page path, which overrides the identity fields."""
+    return dict(
+            # Part 1: Core Identifiers
+            brand_id=brand_id,
+            model_code=variant.model_code.lower(),
+            product_name=variant.product_name,
+            release_year=variant.release_year,
+            price_rm=variant.price_rm,
+
+            # Part 2: Processor & AI Engine
+            processor_brand=variant.processor_brand,
+            processor_model=variant.processor_model,
+            processor_ghz=variant.processor_ghz,
+            cpu_cores=variant.cpu_cores,
+            cpu_threads=variant.cpu_threads,
+            npu_model=variant.npu_model,
+            npu_tops=variant.npu_tops,
+            ai_ready=variant.ai_ready,
+            ai_features=variant.ai_features,
+
+            # Part 3: Graphics & Hardware Acceleration
+            gpu_brand=variant.gpu_brand,
+            gpu_model=variant.gpu_model,
+            gpu_cores=variant.gpu_cores,
+            media_engine_details=variant.media_engine_details,
+
+            # Part 4: Memory & Storage
+            ram_gb=variant.ram_gb,
+            ram_type=variant.ram_type,
+            ram_upgradable=variant.ram_upgradable,
+            max_ram_gb=variant.max_ram_gb,
+            ssd_gb=variant.ssd_gb,
+            storage_type=variant.storage_type,
+            storage_upgradable=variant.storage_upgradable,
+            expansion_slots_summary=variant.expansion_slots_summary,
+
+            # Part 5: Display & External Video
+            display_size_inch=variant.display_size_inch,
+            display_resolution=variant.display_resolution,
+            display_type=variant.display_type,
+            display_refresh_rate_hz=variant.display_refresh_rate_hz,
+            display_brightness_nits=variant.display_brightness_nits,
+            touchscreen=variant.touchscreen,
+            external_display_support=variant.external_display_support,
+
+            # Part 6: Build, Battery & Connectivity
+            weight_kg=variant.weight_kg,
+            dimensions_cm=variant.dimensions_cm,
+            battery_wh=variant.battery_wh,
+            power_supply_details=variant.power_supply_details,
+            os=variant.os,
+            colors=variant.colors,
+            ports_summary=variant.ports_summary,
+            wifi_standard=variant.wifi_standard,
+            bluetooth_version=variant.bluetooth_version,
+
+            # Part 7: Peripherals, Input & Audio
+            keyboard_touchpad_details=variant.keyboard_touchpad_details,
+            audio_details=variant.audio_details,
+            camera_details=variant.camera_details,
+            facial_recognition=variant.facial_recognition,
+            fingerprint_reader=variant.fingerprint_reader,
+
+            # Part 8: Security, Certifications & Extras
+            security_features=variant.security_features,
+            materials_and_certifications=variant.materials_and_certifications,
+            microsoft_office_included=variant.microsoft_office_included,
+            bundled_accessories=variant.bundled_accessories,
+            warranty_details=variant.warranty_details,
+
+            # Part 9: External/Raw Assets
+            raw_specs=variant.unmapped_specs if variant.unmapped_specs else {"ai_extraction_source": raw_specs_dump},
+            image_urls=_filter_variant_images(
+                image_urls, variant.display_size_inch
+            ),
+    )
+
+
+# Lists a record's result may carry, collected into the bulk job's result as they are.
+_RESULT_LISTS = (
+    "identity_conflicts", "split_failures", "fields_kept", "apple_configs_skipped",
+    "not_on_buy_page", "matched_suspended", "price_changes", "prices_not_overwritten", "unresolved_configs",
+)
+
+# Prepended to each specs-page size section on a buy-page run: the configurations are
+# the buy page's, so the LLM is asked only what each chip option of that size is like.
+_APPLE_TEMPLATE_TASK = (
+    "[TASK FOR THIS PAGE] This text is ONE screen size of an Apple Mac. Output exactly one "
+    "variant per chip option it lists (each chip with its own CPU and GPU core counts), with "
+    "that chip's own weight, battery, power adapter, media engine and memory bandwidth. Use "
+    "the smallest memory and storage it lists for that chip; they are replaced later.\n\n"
+)
+
+
+def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extract, category_map) -> dict:
+    """
+    One Apple buy page: its configurations, matched and priced by apple_buy.plan before
+    any LLM call, then written with the shared specs the LLM extracted from the specs
+    page, one call per size section. New rows are inactive (going live is step 11).
+    """
+    def fail(message: str, **lists) -> dict:
+        raw_data.processing_status = "failed"
+        session.add(raw_data)
+        session.commit()
+        return {"status": "skipped", "message": message, **lists}
+
+    specs_url = buy["specs_url"]
+    specs_raw = session.exec(
+        select(RawScrapLaptop).where(RawScrapLaptop.source_url == specs_url)
+        .order_by(RawScrapLaptop.created_at.desc())  # type: ignore[attr-defined]
+    ).first()
+    if specs_raw is None:
+        return fail(f"No specs page stored for {specs_url}: scrape it first")
+    features = (specs_raw.raw_specs_dump or {}).get("scraped_features") or []
+    try:
+        sections = size_sections("\n".join(f for f in features if isinstance(f, str)), product)
+    except SplitFailed as e:
+        return fail(str(e), split_failures=[{"raw_id": str(specs_raw.id), "source_url": specs_url, "reason": str(e)}])
+
+    configs, unresolved = apple_buy.resolve(buy["configs"], sections)
+    rows, latest_source = apple_buy_rows(session)
+    planned = apple_buy.plan(configs, product, line, rows, latest_source)
+    brand_id, image_urls, specs_dump = raw_data.brand_id, specs_raw.image_urls, specs_raw.raw_specs_dump
+    session.commit()  # the LLM calls below hold no connection
+
+    try:
+        templates: dict = {}
+        for section in sections:
+            blob = _APPLE_TEMPLATE_TASK + _bounded_json({"scraped_features": [section]}, SECTION_LIMIT + 200)
+            for variant in extract(blob):
+                key = apple_buy.template_key(variant.display_size_inch, chip_of(variant.processor_model),
+                                             variant.cpu_cores, variant.gpu_cores)
+                templates.setdefault(key, variant)
+
+        now = datetime.now(timezone.utc)
+        saved = updated = categories_linked = 0
+        fields_kept: list[dict] = []
+        skipped: list[dict] = []
+        for kind, entries in (("insert", planned["inserts"]), ("update", planned["updates"])):
+            for entry in entries:
+                config = entry["config"]
+                template = templates.get(apple_buy.template_key(
+                    config["size"], config["chip"], config["cpu_cores"], config["gpu_cores"]))
+                if template is None:
+                    skipped.append({"raw_id": raw_id, "source_url": buy["url"], "model_code": entry["model_code"],
+                                    "reason": "no specs extracted for this size and chip"})
+                    continue
+                data = _variant_fields(template, brand_id, image_urls, specs_dump)
+                chip = f"Apple {config['chip']}"
+                data.update(
+                    model_code=apple_buy.code_of(config, product, line),
+                    product_name=build_name(product, line, config["size"], chip, config["cpu_cores"],
+                                            config["gpu_cores"], config["ram_gb"], config["ssd_gb"]),
+                    processor_model=processor_name(chip, config["cpu_cores"]),
+                    cpu_cores=config["cpu_cores"], gpu_cores=config["gpu_cores"],
+                    ram_gb=config["ram_gb"], ssd_gb=config["ssd_gb"],
+                    display_brightness_nits=brightness(line, template.display_brightness_nits),
+                )
+                price = config.get("price_rm") or 0.0
+                data.pop("price_rm", None)
+                if kind == "insert":
+                    laptop = Laptop(**data, price_rm=price, status="inactive")
+                    laptop.part_numbers = config.get("part_numbers")
+                    laptop.price_checked_at = now if price else None
+                    laptop.family_id = resolve_family_id(session, laptop.product_name)
+                    session.add(laptop)
+                    session.flush()
+                    if price:
+                        session.add(LaptopPriceHistory(laptop_id=laptop.id, price_rm=price,
+                                                       source=PriceSource.APPLE_BUY_PAGE.value))
+                    saved += 1
+                else:
+                    laptop = session.get(Laptop, entry["laptop_id"])
+                    data.pop("model_code")  # the lookup key, never overwritten
+                    kept = []
+                    for key, value in data.items():
+                        if _empty(value) and not _empty(getattr(laptop, key)):
+                            kept.append(key)
+                            continue
+                        setattr(laptop, key, value)
+                    if kept:
+                        fields_kept.append({"laptop_id": str(laptop.id), "model_code": laptop.model_code, "fields": kept})
+                    laptop.part_numbers = list(dict.fromkeys((laptop.part_numbers or []) + (config.get("part_numbers") or [])))
+                    if entry["write_price"]:
+                        laptop.price_rm = price
+                        session.add(LaptopPriceHistory(laptop_id=laptop.id, price_rm=price,
+                                                       source=PriceSource.APPLE_BUY_PAGE.value))
+                    if price and price == laptop.price_rm:
+                        laptop.price_checked_at = now
+                    session.add(laptop)
+                    updated += 1
+                session.commit()
+                categories_linked += _sync_laptop_categories(session, laptop.id, template.categories, category_map)
+
+        raw_data.processing_status = "completed"
+        session.add(raw_data)
+        session.commit()
+        return {
+            "status": "success",
+            "variants_extracted": len(templates),
+            "variants_saved": saved,
+            "variants_updated": updated,
+            "categories_linked": categories_linked,
+            "fields_kept": fields_kept,
+            "apple_configs_skipped": skipped,
+            "unresolved_configs": [{**c, "raw_id": raw_id} for c in unresolved],
+            **{key: planned[key] for key in ("not_on_buy_page", "matched_suspended", "identity_conflicts",
+                                              "price_changes", "prices_not_overwritten")},
+        }
+    except Exception as e:
+        session.rollback()
+        return {**fail(str(e)), "status": "error"}
+
+
+def apple_buy_rows(session) -> tuple[list[dict], dict]:
+    """Every Apple laptop as apple_buy.plan reads it, and each one's latest price source.
+    Also what the read-only prediction calls."""
+    rows = [dict(r._mapping) for r in session.exec(
+        select(Laptop.id, Laptop.model_code, Laptop.status, Laptop.part_numbers, Laptop.price_rm,  # type: ignore[call-overload]
+               Laptop.display_size_inch, Laptop.processor_model)
+        .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
+        .where(func.lower(LaptopBrand.name) == "apple")
+    )]
+    latest_source = dict(session.exec(
+        select(LaptopPriceHistory.laptop_id, LaptopPriceHistory.source)  # type: ignore[call-overload]
+        .where(LaptopPriceHistory.laptop_id.in_([r["id"] for r in rows]))  # type: ignore[attr-defined]
+        .order_by(LaptopPriceHistory.recorded_at)
+    ).all())
+    return rows, latest_source
+
+
 def _empty(value) -> bool:
     """None, "", [] or {}. Not 0 or False: those are values (price has its own rule)."""
     return value is None or (isinstance(value, (str, list, dict)) and not (value.strip() if isinstance(value, str) else value))
@@ -205,13 +438,21 @@ def process_raw_laptop_data(
 
     brand_name = brand.name if brand else "Unknown"
 
-    # Apple: the line comes from the URL, checked before the LLM call so an
-    # unknown page costs no quota. Never guessed (see apple_name.py).
+    # Apple (decided 2026-11-03): configurations and prices come from the buy page,
+    # specs from its specs page. A specs page on its own would let the LLM choose the
+    # configurations, so it is read only by its buy page's run.
     is_apple = brand_name.lower() == "apple"
-    apple_product = apple_line = None
+    apple_buy = apple_product = apple_line = None
     if is_apple:
+        apple_buy = (raw_data.raw_specs_dump or {}).get("buy_page")
+        if apple_buy is None:
+            raw_data.processing_status = "completed"
+            session.add(raw_data)
+            session.commit()
+            return {"status": "success", "variants_saved": 0, "variants_updated": 0,
+                    "message": "Apple specs pages are processed through their buy page"}
         try:
-            apple_product, apple_line = product_and_line(raw_data.source_url)
+            apple_product, apple_line = product_and_line(apple_buy["specs_url"])
         except UnknownLine as e:
             # Failed, not completed: once the line is added to apple_name.py, the
             # next bulk run picks the row up again.
@@ -227,7 +468,7 @@ def process_raw_laptop_data(
                     "existing": None,
                     "incoming": None,
                     "raw_id": str(raw_laptop_id),
-                    "source_url": raw_data.source_url,
+                    "source_url": apple_buy["specs_url"],
                     "reason": str(e),
                 }],
             }
@@ -334,29 +575,24 @@ def process_raw_laptop_data(
     # `category_map` is deliberately not materialised: it is used only after
     # the call returns, where a refresh costs a short query on a fresh
     # connection.
+    if apple_buy is not None:
+        buy_name, buy_prices = raw_data.raw_product_name, json.dumps(raw_data.raw_prices, ensure_ascii=False)
+
+        def extract(spec_blob: str) -> list:
+            return cast(ExtractedLaptopFamily, chain.invoke({
+                "brand_name": brand_name, "product_name": buy_name, "current_year": datetime.now().year,
+                "raw_prices": buy_prices, "raw_specs": spec_blob, "available_categories": available_categories,
+            })).variants
+
+        return _process_apple_buy_page(
+            session, raw_data, str(raw_laptop_id), apple_buy, apple_product, apple_line, extract, category_map,
+        )
+
     _product_name = raw_data.raw_product_name
     _raw_prices_json = json.dumps(raw_data.raw_prices, ensure_ascii=False, indent=2)
     _raw_specs_json = _bounded_json(raw_data.raw_specs_dump)
     _raw_sku = raw_sku(raw_data.raw_specs_dump)
-    _source_url = raw_data.source_url
-    # One LLM call per size for Apple (see apple_name.size_sections); one call otherwise.
     _spec_blobs = [_raw_specs_json]
-    if is_apple:
-        try:
-            features = (raw_data.raw_specs_dump or {}).get("scraped_features") or []
-            text = "\n".join(f for f in features if isinstance(f, str))
-            sections = size_sections(text, apple_product)
-        except SplitFailed as e:
-            raw_data.processing_status = "failed"
-            session.add(raw_data)
-            session.commit()
-            return {
-                "status": "skipped",
-                "message": str(e),
-                "split_failures": [{"raw_id": str(raw_laptop_id), "source_url": _source_url, "reason": str(e)}],
-            }
-        if len(sections) > 1:
-            _spec_blobs = [_bounded_json({"scraped_features": [t]}, SECTION_LIMIT + 200) for t in sections]
     session.commit()
 
     try:
@@ -387,21 +623,14 @@ def process_raw_laptop_data(
         # Names whose code the LLM invented, swapped for the raw code. Returned
         # for the job's result, the one place an admin can find them later.
         model_codes_replaced: list[dict] = []
-        # Apple model_code matches whose screen size, chip or line differ: a
-        # different machine under the same code, left untouched.
-        identity_conflicts: list[dict] = []
         # Stored values kept because the extraction came back empty for them.
         fields_kept: list[dict] = []
-        # Apple configs not written: no chip or core count to build processor_model from.
-        apple_configs_skipped: list[dict] = []
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         # With several variants, which one is the SKU would be a guess.
         sku = _raw_sku if len(variants) == 1 else None
 
         for variant in variants:
-            spec_or_unmapped = variant.unmapped_specs if variant.unmapped_specs else {"ai_extraction_source": raw_data.raw_specs_dump}
-
             checked_name, invented = check_model_code(
                 variant.product_name, _product_name, _raw_sku, _raw_specs_json
             )
@@ -417,99 +646,8 @@ def process_raw_laptop_data(
                     "product_name": checked_name,
                 })
 
-            laptop_data = dict(
-                # Part 1: Core Identifiers
-                brand_id=raw_data.brand_id,
-                model_code=variant.model_code.lower(),
-                product_name=checked_name,
-                release_year=variant.release_year,
-                price_rm=variant.price_rm,
-
-                # Part 2: Processor & AI Engine
-                processor_brand=variant.processor_brand,
-                processor_model=variant.processor_model,
-                processor_ghz=variant.processor_ghz,
-                cpu_cores=variant.cpu_cores,
-                cpu_threads=variant.cpu_threads,
-                npu_model=variant.npu_model,
-                npu_tops=variant.npu_tops,
-                ai_ready=variant.ai_ready,
-                ai_features=variant.ai_features,
-
-                # Part 3: Graphics & Hardware Acceleration
-                gpu_brand=variant.gpu_brand,
-                gpu_model=variant.gpu_model,
-                gpu_cores=variant.gpu_cores,
-                media_engine_details=variant.media_engine_details,
-
-                # Part 4: Memory & Storage
-                ram_gb=variant.ram_gb,
-                ram_type=variant.ram_type,
-                ram_upgradable=variant.ram_upgradable,
-                max_ram_gb=variant.max_ram_gb,
-                ssd_gb=variant.ssd_gb,
-                storage_type=variant.storage_type,
-                storage_upgradable=variant.storage_upgradable,
-                expansion_slots_summary=variant.expansion_slots_summary,
-
-                # Part 5: Display & External Video
-                display_size_inch=variant.display_size_inch,
-                display_resolution=variant.display_resolution,
-                display_type=variant.display_type,
-                display_refresh_rate_hz=variant.display_refresh_rate_hz,
-                display_brightness_nits=variant.display_brightness_nits,
-                touchscreen=variant.touchscreen,
-                external_display_support=variant.external_display_support,
-
-                # Part 6: Build, Battery & Connectivity
-                weight_kg=variant.weight_kg,
-                dimensions_cm=variant.dimensions_cm,
-                battery_wh=variant.battery_wh,
-                power_supply_details=variant.power_supply_details,
-                os=variant.os,
-                colors=variant.colors,
-                ports_summary=variant.ports_summary,
-                wifi_standard=variant.wifi_standard,
-                bluetooth_version=variant.bluetooth_version,
-
-                # Part 7: Peripherals, Input & Audio
-                keyboard_touchpad_details=variant.keyboard_touchpad_details,
-                audio_details=variant.audio_details,
-                camera_details=variant.camera_details,
-                facial_recognition=variant.facial_recognition,
-                fingerprint_reader=variant.fingerprint_reader,
-
-                # Part 8: Security, Certifications & Extras
-                security_features=variant.security_features,
-                materials_and_certifications=variant.materials_and_certifications,
-                microsoft_office_included=variant.microsoft_office_included,
-                bundled_accessories=variant.bundled_accessories,
-                warranty_details=variant.warranty_details,
-
-                # Part 9: External/Raw Assets
-                raw_specs=spec_or_unmapped,
-                image_urls=_filter_variant_images(
-                    raw_data.image_urls, variant.display_size_inch
-                ),
-            )
-            if is_apple:
-                apple_processor = processor_name(variant.processor_model, variant.cpu_cores)
-                if apple_processor is None:
-                    apple_configs_skipped.append({
-                        "raw_id": str(raw_laptop_id),
-                        "source_url": _source_url,
-                        "model_code": laptop_data["model_code"],
-                        "reason": f"no chip or CPU core count: processor {variant.processor_model!r}, "
-                                  f"cpu_cores {variant.cpu_cores!r}",
-                    })
-                    continue
-                laptop_data["model_code"] = with_line_token(laptop_data["model_code"], apple_line)
-                laptop_data["processor_model"] = apple_processor
-                laptop_data["display_brightness_nits"] = brightness(apple_line, variant.display_brightness_nits)
-                laptop_data["product_name"] = build_name(
-                    apple_product, apple_line, variant.display_size_inch, variant.processor_model,
-                    variant.cpu_cores, variant.gpu_cores, variant.ram_gb, variant.ssd_gb,
-                )
+            laptop_data = _variant_fields(variant, raw_data.brand_id, raw_data.image_urls, raw_data.raw_specs_dump)
+            laptop_data["product_name"] = checked_name
 
             existing = _laptop_by_sku(session, sku) if sku else None
             if existing is None:
@@ -521,21 +659,6 @@ def process_raw_laptop_data(
                 if existing and sku and existing.manufacturer_sku:
                     laptop_data["model_code"] = f"{laptop_data['model_code']}-{sku.lower()}"
                     existing = None
-
-            if existing and is_apple:
-                was = identity(existing.display_size_inch, existing.processor_model, existing.model_code)
-                now = identity(variant.display_size_inch, variant.processor_model, laptop_data["model_code"])
-                if was != now:
-                    logger.warning("raw %s: %s matches a different machine; not updated", raw_laptop_id, existing.model_code)
-                    identity_conflicts.append({
-                        "laptop_id": str(existing.id),
-                        "model_code": existing.model_code,
-                        "existing": was,
-                        "incoming": now,
-                        "raw_id": str(raw_laptop_id),
-                        "source_url": _source_url,
-                    })
-                    continue
 
             if existing:
                 # Price history: only record if price actually changed and is non-zero
@@ -627,9 +750,7 @@ def process_raw_laptop_data(
             "categories_linked": categories_linked,
             "prices_not_extracted": prices_not_extracted,
             "model_codes_replaced": model_codes_replaced,
-            "identity_conflicts": identity_conflicts,
             "fields_kept": fields_kept,
-            "apple_configs_skipped": apple_configs_skipped,
         }
 
     except Exception as e:
@@ -819,10 +940,7 @@ def process_pending_laptops(
     total_updated = 0
     prices_not_extracted: list[str] = []
     model_codes_replaced: list[dict] = []
-    identity_conflicts: list[dict] = []
-    split_failures: list[dict] = []
-    fields_kept: list[dict] = []
-    apple_configs_skipped: list[dict] = []
+    collected: dict[str, list] = {key: [] for key in _RESULT_LISTS}
     requests_made = 0
 
     cancelled = False
@@ -852,19 +970,13 @@ def process_pending_laptops(
                 "variants_updated": res.get("variants_updated", 0),
                 "prices_not_extracted": res.get("prices_not_extracted", []),
                 "model_codes_replaced": res.get("model_codes_replaced", []),
-                "identity_conflicts": res.get("identity_conflicts", []),
-                "split_failures": res.get("split_failures", []),
-                "fields_kept": res.get("fields_kept", []),
-                "apple_configs_skipped": res.get("apple_configs_skipped", []),
+                **{key: res.get(key, []) for key in _RESULT_LISTS},
                 "error": None if succeeded else res.get("message"),
             }
         )
-        # Collected whether or not the record succeeded: a skipped unknown page
-        # is listed here too.
-        identity_conflicts.extend(res.get("identity_conflicts", []))
-        split_failures.extend(res.get("split_failures", []))
-        fields_kept.extend(res.get("fields_kept", []))
-        apple_configs_skipped.extend(res.get("apple_configs_skipped", []))
+        # Collected whether or not the record succeeded: a skipped page is listed too.
+        for key in _RESULT_LISTS:
+            collected[key].extend(res.get(key, []))
 
         if succeeded:
             total_saved += res.get("variants_saved", 0)
@@ -907,15 +1019,7 @@ def process_pending_laptops(
         "prices_not_extracted": prices_not_extracted,
         # Names whose LLM-invented code was swapped for the raw one.
         "model_codes_replaced": model_codes_replaced,
-        # Apple rows left untouched: a code match on another machine, or a page
-        # whose MacBook Pro line is unknown.
-        "identity_conflicts": identity_conflicts,
-        # Apple pages whose size sections were not as expected: failed, not truncated.
-        "split_failures": split_failures,
-        # Per laptop, stored fields an empty extraction did not overwrite.
-        "fields_kept": fields_kept,
-        # Apple configs with no chip or core count: not written, never guessed.
-        "apple_configs_skipped": apple_configs_skipped,
+        **collected,
         "pending_remaining": pending_remaining,
         "details": results_summary,
     }

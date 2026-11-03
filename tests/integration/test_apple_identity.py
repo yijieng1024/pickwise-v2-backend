@@ -1,16 +1,16 @@
 """
-The Apple upsert (app/processor/engine.py + apple_name.py).
+The Apple buy-page processor (app/processor/engine.py + apple_buy.py, decided 2026-11-03).
 
-On 2026-11-03 the PROLED XDR page's 14" M5 Pro 24GB/2TB got the same slug as a June
-Liquid Retina XDR row, and the processor overwrote that row with the new machine:
-name, display, weight, battery, images, all of it, keeping the June price. These
-tests pin the three guards: the line in the code, the name built from specs, and a
-code match on a different machine left alone. The LLM is stubbed throughout.
+Configurations and prices come from the buy page; the specs page gives the shared specs,
+one LLM call per size section. Before this, the LLM chose the configurations from the
+specs page, which lists options per chip, not what Apple sells, and a PROLED page once
+overwrote a Liquid Retina row in place. The LLM is stubbed throughout.
 """
 import pytest
 from langchain_core.runnables import RunnableLambda
 
 from app.laptops.brand_model import LaptopBrand
+from app.laptops.laptop_models import LaptopPriceHistory
 from app.processor import engine as processor
 from app.processor.schemas import ExtractedLaptopFamily, ExtractedLaptopVariant
 from app.scraper.models import RawScrapLaptop
@@ -18,8 +18,10 @@ from tests.integration.conftest import make_laptop
 
 pytestmark = pytest.mark.integration
 
-PROLED = "https://www.apple.com/my/macbook-pro/proled-xdr-display/specs/"
-SLUG = "apple-macbook-pro-14-m5-pro-15c-16g-24gb-2048gb"
+SPECS = "https://www.apple.com/my/macbook-pro/liquid-retina-xdr-display/specs/"
+BUY = "https://www.apple.com/my/shop/buy-mac/macbook-pro"
+CODE = "apple-macbook-pro-14-liquid-retina-m5-pro-15c-16g-24gb-1024gb"
+NAME = "14-inch MacBook Pro Liquid Retina XDR (M5 Pro, 15-core CPU, 16-core GPU, 24GB RAM, 1TB SSD)"
 
 
 @pytest.fixture
@@ -31,13 +33,14 @@ def apple(session) -> LaptopBrand:
     return row
 
 
-def _variant(**fields) -> ExtractedLaptopVariant:
+def _template(**fields) -> ExtractedLaptopVariant:
+    """What the LLM gives for one chip of one size: specs, with memory and storage that
+    the buy page replaces."""
     base = {name: None for name in ExtractedLaptopVariant.model_fields}
     base.update(
-        model_code=SLUG, product_name="MacBook Pro with PROLED XDR Display", price_rm=0.0,
-        processor_model="Apple M5 Pro chip", gpu_model="16-core GPU", cpu_cores=15, gpu_cores=16, ram_gb=24,
-        weight_kg=1.38, battery_wh=72.6,
-        ssd_gb=2048, display_size_inch=14.2, display_type="PROLED XDR display",
+        model_code="llm-wording", product_name="MacBook Pro", price_rm=0.0,
+        processor_model="Apple M5 Pro chip", gpu_model="16-core GPU", cpu_cores=15, gpu_cores=16, ram_gb=16,
+        ssd_gb=512, display_size_inch=14.2, display_brightness_nits=1600, weight_kg=1.55, battery_wh=72.4,
         categories=[], unmapped_specs={"test": True}, colors=[], ports_summary=[], ai_features=[],
     )
     base.update(fields)
@@ -49,13 +52,16 @@ def _size(inch: int) -> str:
             f"\nOperating System\nmacOS\n\nIn the Box\n{inch}-inch MacBook Pro\n\nEnvironment\n")
 
 
-# A MacBook Pro page as the scraper stores it: two size sections.
 TWO_SIZES = {"scraped_features": ["Product image" + _size(14) + _size(16)]}
 
 
-def _run(session, monkeypatch, brand, url, *variants, dump=TWO_SIZES):
-    """The stub answers the first size section with *variants* and the second with none,
-    and records the specs text of every call."""
+def _config(**over) -> dict:
+    return {"size": 14, "chip": "M5 Pro", "cpu_cores": 15, "gpu_cores": 16, "ram_gb": 24, "ssd_gb": 1024,
+            "slugs": ["s"], "part_numbers": ["MGDN4ZP/A", "MGDR4ZP/A"], "price_rm": 10299.0, **over}
+
+
+def _stub(monkeypatch, *variants):
+    """First size section answers *variants*, later ones none; records each call."""
     calls = []
 
     class _StubLLM:
@@ -66,109 +72,134 @@ def _run(session, monkeypatch, brand, url, *variants, dump=TWO_SIZES):
             return RunnableLambda(extract)
 
     monkeypatch.setattr(processor, "build_llm", lambda *a, **k: _StubLLM())
-    raw = RawScrapLaptop(source_url=url, brand_id=brand.id, raw_product_name="MacBook Pro", raw_specs_dump=dump)
-    session.add(raw)
+    return calls
+
+
+def _pages(session, brand, configs, specs_dump=TWO_SIZES):
+    specs = RawScrapLaptop(source_url=SPECS, brand_id=brand.id, raw_product_name="MacBook Pro",
+                           raw_specs_dump=specs_dump, processing_status="completed")
+    buy = RawScrapLaptop(source_url=BUY, brand_id=brand.id, raw_product_name="MacBook Pro",
+                         raw_specs_dump={"scraped_features": [], "buy_page": {
+                             "url": BUY, "specs_url": SPECS, "configs": configs, "nano_texture": []}})
+    session.add_all([specs, buy])
     session.commit()
-    return processor.process_raw_laptop_data(str(raw.id), session), raw, calls
+    return buy
 
 
-def test_apple_name_ignores_llm(session, apple, monkeypatch):
-    """The stored name, code, processor and brightness come from the specs and URL, not
-    the LLM's wording."""
-    result, _, _ = _run(session, monkeypatch, apple, PROLED, _variant(display_brightness_nits=1600))
+def _run(session, monkeypatch, brand, configs, *templates, specs_dump=TWO_SIZES):
+    calls = _stub(monkeypatch, *(templates or (_template(),)))
+    buy = _pages(session, brand, configs, specs_dump)
+    return processor.process_raw_laptop_data(str(buy.id), session), buy, calls
+
+
+def _rows(session, brand):
+    return session.exec(processor.select(processor.Laptop).where(processor.Laptop.brand_id == brand.id)).all()
+
+
+def test_new_config_is_built_by_code_and_inactive(session, apple, monkeypatch):
+    result, _, calls = _run(session, monkeypatch, apple, [_config()])
     assert result["status"] == "success", result
+    assert len(calls) == 2, "the specs page was not sent one size at a time"
 
-    stored = session.exec(
-        processor.select(processor.Laptop).where(processor.Laptop.brand_id == apple.id)
-    ).one()
-    assert stored.product_name == (
-        "14-inch MacBook Pro PROLED XDR (M5 Pro, 15-core CPU, 16-core GPU, 24GB RAM, 2TB SSD)"
-    )
-    assert stored.model_code == "apple-macbook-pro-14-proled-m5-pro-15c-16g-24gb-2048gb"
-    assert (stored.processor_model, stored.display_brightness_nits) == ("Apple M5 Pro (15-core)", 2000), (
-        "the LLM's processor wording or brightness was stored"
-    )
+    [row] = _rows(session, apple)
+    assert (row.model_code, row.product_name) == (CODE, NAME)
+    assert (row.processor_model, row.display_brightness_nits) == ("Apple M5 Pro (15-core)", 1000)
+    assert (row.ram_gb, row.ssd_gb, row.price_rm) == (24, 1024, 10299.0), "the LLM's memory, storage or price was stored"
+    assert row.status == "inactive", "a new buy-page row went live by itself"
+    assert row.part_numbers == ["MGDN4ZP/A", "MGDR4ZP/A"]
+    [history] = session.exec(processor.select(LaptopPriceHistory).where(LaptopPriceHistory.laptop_id == row.id)).all()
+    assert (history.price_rm, history.source) == (10299.0, "apple-buy-page")
 
 
-def test_identity_conflict_keeps_row(session, apple, monkeypatch):
-    """
-    A code match whose screen size differs is another machine: the row is not
-    touched, and the job result names it.
-    """
-    code = "apple-macbook-pro-14-proled-m5-pro-15c-16g-24gb-2048gb"
-    june = make_laptop(apple.id, model_code=code, product_name="June row",
-                       processor_model="Apple M5 Pro (15-core)", display_size_inch=16.2,
-                       weight_kg=2.14, price_rm=12549.0)
+def test_unsourced_price_is_overwritten_and_recorded(session, apple, monkeypatch):
+    june = make_laptop(apple.id, model_code=CODE, product_name="June", processor_model="Apple M5 Pro (15-core)",
+                       display_size_inch=14.2, price_rm=9999.0, materials_and_certifications="kept")
     session.add(june)
     session.commit()
 
-    result, raw, _ = _run(session, monkeypatch, apple, PROLED, _variant(weight_kg=1.38))
-    assert result["status"] == "success", result
-
+    result, _, _ = _run(session, monkeypatch, apple, [_config()])
+    assert result["variants_updated"] == 1, result
     session.refresh(june)
-    assert (june.product_name, june.display_size_inch, june.weight_kg) == ("June row", 16.2, 2.14), (
-        "a code match on a different machine overwrote the row"
-    )
-    assert result["variants_updated"] == 0
-    [conflict] = result["identity_conflicts"]
-    assert conflict["laptop_id"] == str(june.id)
-    assert conflict["model_code"] == code
-    assert conflict["existing"]["screen_inch"] == 16 and conflict["incoming"]["screen_inch"] == 14
-    assert (conflict["raw_id"], conflict["source_url"]) == (str(raw.id), PROLED)
+    assert (june.price_rm, june.status, june.product_name) == (10299.0, "active", NAME)
+    assert june.materials_and_certifications == "kept", "an empty extraction overwrote a stored field"
+    assert result["price_changes"] == [{"laptop_id": str(june.id), "model_code": CODE, "status": "active",
+                                        "old": 9999.0, "new": 10299.0}]
+    sources = session.exec(processor.select(LaptopPriceHistory.source)
+                           .where(LaptopPriceHistory.laptop_id == june.id)).all()
+    assert sources == ["apple-buy-page"]
 
 
-def test_unknown_macbook_pro_url_is_skipped_and_listed(session, apple, monkeypatch):
-    """No default line: an unknown MacBook Pro page writes nothing, costs no LLM
-    call, and is listed for an admin."""
-    url = "https://www.apple.com/my/macbook-pro/nano-texture/specs/"
-    result, raw, calls = _run(session, monkeypatch, apple, url, _variant())
+def test_guide_price_is_kept(session, apple, monkeypatch):
+    row = make_laptop(apple.id, model_code=CODE, processor_model="Apple M5 Pro (15-core)",
+                      display_size_inch=14.2, price_rm=9999.0)
+    session.add(row)
+    session.commit()
+    session.add(LaptopPriceHistory(laptop_id=row.id, price_rm=9999.0, source="guide"))
+    session.commit()
 
-    assert result["status"] == "skipped", result
-    assert calls == [], "the LLM was called for a page that cannot be placed"
-    assert session.exec(
-        processor.select(processor.Laptop).where(processor.Laptop.brand_id == apple.id)
-    ).all() == []
-    [conflict] = result["identity_conflicts"]
-    assert (conflict["raw_id"], conflict["source_url"]) == (str(raw.id), url)
-    session.refresh(raw)
-    assert raw.processing_status == "failed"
+    result, _, _ = _run(session, monkeypatch, apple, [_config()])
+    session.refresh(row)
+    assert row.price_rm == 9999.0, "a guide price was overwritten"
+    assert result["prices_not_overwritten"][0]["source"] == "guide"
 
 
-def test_apple_page_is_extracted_one_size_at_a_time(session, apple, monkeypatch):
-    """The 16-inch half of the PROLED page lay past the 8,000-character cut and never
-    reached the LLM. Each size now gets its own call, with only its own section."""
-    result, _, calls = _run(session, monkeypatch, apple, PROLED, _variant())
-    assert result["status"] == "success", result
-    assert len(calls) == 2, "the page was not sent one size at a time"
-    assert "Width: 14cm" in calls[0] and "Width: 16cm" not in calls[0]
-    assert "Width: 16cm" in calls[1] and "Width: 14cm" not in calls[1]
-    assert "Environment" not in calls[0] + calls[1], "the copy after the specs was sent"
+def test_suspended_match_and_rows_off_the_page_are_untouched(session, apple, monkeypatch):
+    suspended = make_laptop(apple.id, model_code=CODE, product_name="Retired", status="suspended",
+                            processor_model="Apple M5 Pro (15-core)", display_size_inch=14.2)
+    cto = make_laptop(apple.id, model_code=CODE.replace("24gb", "48gb"), product_name="Build to order",
+                      status="inactive", processor_model="Apple M5 Pro (15-core)", display_size_inch=14.2)
+    session.add_all([suspended, cto])
+    session.commit()
+
+    result, _, _ = _run(session, monkeypatch, apple, [_config()])
+    session.refresh(suspended)
+    session.refresh(cto)
+    assert (suspended.product_name, suspended.status) == ("Retired", "suspended")
+    assert (cto.product_name, cto.status) == ("Build to order", "inactive")
+    assert result["matched_suspended"] == [{"laptop_id": str(suspended.id), "model_code": CODE}]
+    assert [r["laptop_id"] for r in result["not_on_buy_page"]] == [str(cto.id)]
+    assert result["variants_saved"] == result["variants_updated"] == 0
 
 
-def test_apple_page_that_does_not_split_fails_and_is_listed(session, apple, monkeypatch):
-    """A MacBook Pro page with one size section is a layout change, not a one-size
-    page: nothing is written, no LLM call, the row fails and the result says why."""
+def test_identity_conflict_keeps_row(session, apple, monkeypatch):
+    other = make_laptop(apple.id, model_code=CODE, product_name="16-inch", processor_model="Apple M5 Pro (15-core)",
+                        display_size_inch=16.2)
+    session.add(other)
+    session.commit()
+    result, _, _ = _run(session, monkeypatch, apple, [_config()])
+    session.refresh(other)
+    assert other.product_name == "16-inch"
+    assert result["identity_conflicts"][0]["laptop_id"] == str(other.id)
+
+
+def test_specs_page_alone_writes_nothing(session, apple, monkeypatch):
+    """A specs page would let the LLM choose configurations: it is read only by its buy page."""
+    calls = _stub(monkeypatch, _template())
+    specs = RawScrapLaptop(source_url=SPECS, brand_id=apple.id, raw_product_name="MacBook Pro", raw_specs_dump=TWO_SIZES)
+    session.add(specs)
+    session.commit()
+    result = processor.process_raw_laptop_data(str(specs.id), session)
+    assert result["status"] == "success" and calls == [] and _rows(session, apple) == []
+
+
+def test_specs_page_that_does_not_split_fails_the_buy_page(session, apple, monkeypatch):
     one = {"scraped_features": ["Product image" + _size(14)]}
-    result, raw, calls = _run(session, monkeypatch, apple, PROLED, _variant(), dump=one)
-
-    assert result["status"] == "skipped", result
-    assert calls == []
-    [failure] = result["split_failures"]
-    assert (failure["raw_id"], failure["source_url"]) == (str(raw.id), PROLED)
-    assert "expected 2 size sections" in failure["reason"]
-    session.refresh(raw)
-    assert raw.processing_status == "failed"
+    result, buy, calls = _run(session, monkeypatch, apple, [_config()], specs_dump=one)
+    assert result["status"] == "skipped" and calls == []
+    assert "expected 2 size sections" in result["split_failures"][0]["reason"]
+    session.refresh(buy)
+    assert buy.processing_status == "failed"
 
 
-def test_apple_config_without_core_count_is_skipped_and_listed(session, apple, monkeypatch):
-    """processor_model is built from chip + cores; with no core count the config is not
-    written, and the result says so."""
-    result, raw, _ = _run(session, monkeypatch, apple, PROLED, _variant(cpu_cores=None))
-    assert result["status"] == "success", result
-    assert result["variants_saved"] == 0
-    assert session.exec(
-        processor.select(processor.Laptop).where(processor.Laptop.brand_id == apple.id)
-    ).all() == []
-    [skipped] = result["apple_configs_skipped"]
-    assert (skipped["raw_id"], skipped["source_url"]) == (str(raw.id), PROLED)
-    assert "cpu_cores None" in skipped["reason"]
+def test_bulk_job_result_lists_what_was_left_alone(session, apple, monkeypatch):
+    """The lists reach the job's result, not only the per-record answer."""
+    cto = make_laptop(apple.id, model_code=CODE.replace("24gb", "48gb"), status="inactive",
+                      processor_model="Apple M5 Pro (15-core)", display_size_inch=14.2)
+    session.add(cto)
+    session.commit()
+    _stub(monkeypatch, _template())
+    monkeypatch.setattr(processor.time, "sleep", lambda _s: None)
+    _pages(session, apple, [_config()])
+    result = processor.process_pending_laptops(session)
+    assert [r["laptop_id"] for r in result["not_on_buy_page"]] == [str(cto.id)]
+    assert result["matched_suspended"] == [] and "price_changes" in result

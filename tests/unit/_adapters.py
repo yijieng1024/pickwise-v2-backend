@@ -684,3 +684,7 @@ from app.scripts import backfill_apple_line  # noqa: E402,F401
 
 # The round 3 Apple repair - app/scripts/repair_apple_round3.py
 from app.scripts import repair_apple_round3  # noqa: E402,F401
+
+
+# The Apple buy-page plan - app/processor/apple_buy.py
+from app.processor import apple_buy  # noqa: E402,F401
