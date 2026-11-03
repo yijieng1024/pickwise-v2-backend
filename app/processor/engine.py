@@ -392,6 +392,8 @@ def process_raw_laptop_data(
         identity_conflicts: list[dict] = []
         # Stored values kept because the extraction came back empty for them.
         fields_kept: list[dict] = []
+        # Apple configs not written: no chip or core count to build processor_model from.
+        apple_configs_skipped: list[dict] = []
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         # With several variants, which one is the SKU would be a guess.
@@ -491,8 +493,18 @@ def process_raw_laptop_data(
                 ),
             )
             if is_apple:
+                apple_processor = processor_name(variant.processor_model, variant.cpu_cores)
+                if apple_processor is None:
+                    apple_configs_skipped.append({
+                        "raw_id": str(raw_laptop_id),
+                        "source_url": _source_url,
+                        "model_code": laptop_data["model_code"],
+                        "reason": f"no chip or CPU core count: processor {variant.processor_model!r}, "
+                                  f"cpu_cores {variant.cpu_cores!r}",
+                    })
+                    continue
                 laptop_data["model_code"] = with_line_token(laptop_data["model_code"], apple_line)
-                laptop_data["processor_model"] = processor_name(variant.processor_model, variant.cpu_cores)
+                laptop_data["processor_model"] = apple_processor
                 laptop_data["display_brightness_nits"] = brightness(apple_line, variant.display_brightness_nits)
                 laptop_data["product_name"] = build_name(
                     apple_product, apple_line, variant.display_size_inch, variant.processor_model,
@@ -617,6 +629,7 @@ def process_raw_laptop_data(
             "model_codes_replaced": model_codes_replaced,
             "identity_conflicts": identity_conflicts,
             "fields_kept": fields_kept,
+            "apple_configs_skipped": apple_configs_skipped,
         }
 
     except Exception as e:
@@ -809,6 +822,7 @@ def process_pending_laptops(
     identity_conflicts: list[dict] = []
     split_failures: list[dict] = []
     fields_kept: list[dict] = []
+    apple_configs_skipped: list[dict] = []
     requests_made = 0
 
     cancelled = False
@@ -841,6 +855,7 @@ def process_pending_laptops(
                 "identity_conflicts": res.get("identity_conflicts", []),
                 "split_failures": res.get("split_failures", []),
                 "fields_kept": res.get("fields_kept", []),
+                "apple_configs_skipped": res.get("apple_configs_skipped", []),
                 "error": None if succeeded else res.get("message"),
             }
         )
@@ -849,6 +864,7 @@ def process_pending_laptops(
         identity_conflicts.extend(res.get("identity_conflicts", []))
         split_failures.extend(res.get("split_failures", []))
         fields_kept.extend(res.get("fields_kept", []))
+        apple_configs_skipped.extend(res.get("apple_configs_skipped", []))
 
         if succeeded:
             total_saved += res.get("variants_saved", 0)
@@ -898,6 +914,8 @@ def process_pending_laptops(
         "split_failures": split_failures,
         # Per laptop, stored fields an empty extraction did not overwrite.
         "fields_kept": fields_kept,
+        # Apple configs with no chip or core count: not written, never guessed.
+        "apple_configs_skipped": apple_configs_skipped,
         "pending_remaining": pending_remaining,
         "details": results_summary,
     }

@@ -158,3 +158,17 @@ def test_apple_page_that_does_not_split_fails_and_is_listed(session, apple, monk
     assert "expected 2 size sections" in failure["reason"]
     session.refresh(raw)
     assert raw.processing_status == "failed"
+
+
+def test_apple_config_without_core_count_is_skipped_and_listed(session, apple, monkeypatch):
+    """processor_model is built from chip + cores; with no core count the config is not
+    written, and the result says so."""
+    result, raw, _ = _run(session, monkeypatch, apple, PROLED, _variant(cpu_cores=None))
+    assert result["status"] == "success", result
+    assert result["variants_saved"] == 0
+    assert session.exec(
+        processor.select(processor.Laptop).where(processor.Laptop.brand_id == apple.id)
+    ).all() == []
+    [skipped] = result["apple_configs_skipped"]
+    assert (skipped["raw_id"], skipped["source_url"]) == (str(raw.id), PROLED)
+    assert "cpu_cores None" in skipped["reason"]

@@ -74,9 +74,11 @@ _BRIGHTNESS = {"proled": 2000, "liquid-retina": 1000}
 
 def processor_name(processor_model: Optional[str], cpu_cores: Optional[int]) -> Optional[str]:
     """The June form, "Apple M5 Pro (15-core)": the one the benchmark table matches. The
-    LLM writes "Apple M5 Pro chip" or "Apple M5 Pro chip (15-core)" depending on the page."""
+    LLM writes "Apple M5 Pro chip" or "Apple M5 Pro chip (15-core)" depending on the page.
+    None when the chip or the core count is missing: the caller skips that config rather
+    than store the LLM's wording, which the benchmark table may not match."""
     chip = chip_of(processor_model)
-    return f"Apple {chip} ({cpu_cores}-core)" if chip and cpu_cores else processor_model
+    return f"Apple {chip} ({cpu_cores}-core)" if chip and cpu_cores else None
 
 
 def brightness(line: Optional[str], extracted: Optional[int]) -> Optional[int]:

@@ -114,3 +114,9 @@ def test_size_sections_refuse_an_oversized_section():
     long = "Product image" + _size(14).replace("Chip\n", "Chip\n" + "x" * 13_000) + _size(16)
     with pytest.raises(apple_name.SplitFailed, match="over"):
         apple_name.size_sections(long, "MacBook Pro")
+
+
+def test_processor_name_has_no_fallback():
+    """No core count, no name: never the LLM's own wording."""
+    assert apple_name.processor_name("Apple M5 Pro chip", None) is None
+    assert apple_name.processor_name("Intel Core i7", 8) is None
