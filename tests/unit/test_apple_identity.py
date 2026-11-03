@@ -82,3 +82,35 @@ def test_apple_processor_and_brightness_built_by_code():
     assert apple_name.brightness("proled", 1600) == 2000
     assert apple_name.brightness("liquid-retina", 1600) == 1000
     assert apple_name.brightness(None, 500) == 500
+
+
+def _size(inch):
+    return (f"\nFinish\nSilver\n\nChip\nApple M5 Pro chip\n\nSize and Weight\nWidth: {inch}cm\n"
+            f"\nOperating System\nmacOS app list\n\nIn the Box\n{inch}-inch MacBook Pro\n\nEnvironment\ncopy\n")
+
+
+def test_size_sections_split_per_size():
+    """One section per size, cut before the app list, with its own In the Box paragraph."""
+    sections = apple_name.size_sections("Product image" + _size(14) + _size(16), "MacBook Pro")
+    assert len(sections) == 2
+    assert "Width: 14cm" in sections[0] and "14-inch MacBook Pro" in sections[0]
+    assert "Width: 16cm" in sections[1] and "14cm" not in sections[1]
+    assert not any("macOS app list" in s or "Environment" in s for s in sections)
+    # Neo is one size: whole, unchanged
+    assert apple_name.size_sections("anything", "MacBook Neo") == ["anything"]
+
+
+@pytest.mark.parametrize("text", [
+    "Product image" + _size(14),                              # one size where two are expected
+    "Product image" + _size(14) + _size(16) + _size(18),      # three
+    "Product image" + _size(14) + _size(16).replace("Size and Weight", "Dimensions"),
+])
+def test_size_sections_refuse_an_unexpected_layout(text):
+    with pytest.raises(apple_name.SplitFailed):
+        apple_name.size_sections(text, "MacBook Pro")
+
+
+def test_size_sections_refuse_an_oversized_section():
+    long = "Product image" + _size(14).replace("Chip\n", "Chip\n" + "x" * 13_000) + _size(16)
+    with pytest.raises(apple_name.SplitFailed, match="over"):
+        apple_name.size_sections(long, "MacBook Pro")

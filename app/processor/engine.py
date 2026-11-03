@@ -23,12 +23,15 @@ from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
 from app.processor.apple_name import (
+    SECTION_LIMIT,
+    SplitFailed,
     UnknownLine,
     brightness,
     build_name,
     identity,
     processor_name,
     product_and_line,
+    size_sections,
     with_line_token,
 )
 from app.processor.schemas import ExtractedLaptopCategories, ExtractedLaptopFamily
@@ -331,22 +334,42 @@ def process_raw_laptop_data(
     _raw_specs_json = _bounded_json(raw_data.raw_specs_dump)
     _raw_sku = raw_sku(raw_data.raw_specs_dump)
     _source_url = raw_data.source_url
+    # One LLM call per size for Apple (see apple_name.size_sections); one call otherwise.
+    _spec_blobs = [_raw_specs_json]
+    if is_apple:
+        try:
+            features = (raw_data.raw_specs_dump or {}).get("scraped_features") or []
+            text = "\n".join(f for f in features if isinstance(f, str))
+            sections = size_sections(text, apple_product)
+        except SplitFailed as e:
+            raw_data.processing_status = "failed"
+            session.add(raw_data)
+            session.commit()
+            return {
+                "status": "skipped",
+                "message": str(e),
+                "split_failures": [{"raw_id": str(raw_laptop_id), "source_url": _source_url, "reason": str(e)}],
+            }
+        if len(sections) > 1:
+            _spec_blobs = [_bounded_json({"scraped_features": [t]}, SECTION_LIMIT + 200) for t in sections]
     session.commit()
 
     try:
-        extracted_data = cast(
-            ExtractedLaptopFamily,
-            chain.invoke(
-                {
-                    "brand_name": brand_name,
-                    "product_name": _product_name,
-                    "current_year": datetime.now().year,
-                    "raw_prices": _raw_prices_json,
-                    "raw_specs": _raw_specs_json,
-                    "available_categories": available_categories,
-                }
-            ),
-        )
+        variants = []
+        for spec_blob in _spec_blobs:
+            variants += cast(
+                ExtractedLaptopFamily,
+                chain.invoke(
+                    {
+                        "brand_name": brand_name,
+                        "product_name": _product_name,
+                        "current_year": datetime.now().year,
+                        "raw_prices": _raw_prices_json,
+                        "raw_specs": spec_blob,
+                        "available_categories": available_categories,
+                    }
+                ),
+            ).variants
 
         saved_count = 0
         updated_count = 0
@@ -365,9 +388,9 @@ def process_raw_laptop_data(
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         # With several variants, which one is the SKU would be a guess.
-        sku = _raw_sku if len(extracted_data.variants) == 1 else None
+        sku = _raw_sku if len(variants) == 1 else None
 
-        for variant in extracted_data.variants:
+        for variant in variants:
             spec_or_unmapped = variant.unmapped_specs if variant.unmapped_specs else {"ai_extraction_source": raw_data.raw_specs_dump}
 
             checked_name, invented = check_model_code(
@@ -570,7 +593,7 @@ def process_raw_laptop_data(
 
         return {
             "status": "success",
-            "variants_extracted": len(extracted_data.variants),
+            "variants_extracted": len(variants),
             "variants_saved": saved_count,
             "variants_updated": updated_count,
             "categories_linked": categories_linked,
@@ -767,6 +790,7 @@ def process_pending_laptops(
     prices_not_extracted: list[str] = []
     model_codes_replaced: list[dict] = []
     identity_conflicts: list[dict] = []
+    split_failures: list[dict] = []
     requests_made = 0
 
     cancelled = False
@@ -797,12 +821,14 @@ def process_pending_laptops(
                 "prices_not_extracted": res.get("prices_not_extracted", []),
                 "model_codes_replaced": res.get("model_codes_replaced", []),
                 "identity_conflicts": res.get("identity_conflicts", []),
+                "split_failures": res.get("split_failures", []),
                 "error": None if succeeded else res.get("message"),
             }
         )
         # Collected whether or not the record succeeded: a skipped unknown page
         # is listed here too.
         identity_conflicts.extend(res.get("identity_conflicts", []))
+        split_failures.extend(res.get("split_failures", []))
 
         if succeeded:
             total_saved += res.get("variants_saved", 0)
@@ -848,6 +874,8 @@ def process_pending_laptops(
         # Apple rows left untouched: a code match on another machine, or a page
         # whose MacBook Pro line is unknown.
         "identity_conflicts": identity_conflicts,
+        # Apple pages whose size sections were not as expected: failed, not truncated.
+        "split_failures": split_failures,
         "pending_remaining": pending_remaining,
         "details": results_summary,
     }

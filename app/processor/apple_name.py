@@ -119,3 +119,50 @@ def identity(display_size_inch: Optional[float], processor_model: Optional[str],
         "chip": chip_of(processor_model),
         "line": line_of_code(model_code),
     }
+
+
+# Size sections per product page. The page lists each size's specs in turn, and before
+# 2026-11-03 the processor sent only the first 8,000 characters of the whole dump, so
+# every second size (16-inch MacBook Pro, 15-inch Air) never reached the LLM.
+_SIZES = {"MacBook Pro": 2, "MacBook Air": 2}
+SECTION_LIMIT = 12_000
+
+
+class SplitFailed(ValueError):
+    """The page does not have the size sections it should. Never sent as one blob
+    instead: that is the silent truncation this split exists to end."""
+
+
+def _tidy(text: str) -> str:
+    text = re.sub(r"[ \t\xa0]+", " ", text)
+    text = re.sub(r" ?\n ?", "\n", text)
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def size_sections(text: str, product: str) -> list[str]:
+    """One text per size: its specs up to "Operating System" (the rest is the macOS app
+    list, accessibility and environment copy), plus its "In the Box" paragraph. A page
+    with one size is returned whole."""
+    expected = _SIZES.get(product, 1)
+    if expected == 1:
+        return [text]
+    text = _tidy(text)
+    starts = [m.start() for m in re.finditer(r"\nFinish\n", text)]
+    weights = text.count("\nSize and Weight\n")
+    if len(starts) != expected or weights != expected:
+        raise SplitFailed(
+            f"{product}: expected {expected} size sections, found {len(starts)} 'Finish' "
+            f"and {weights} 'Size and Weight' headings"
+        )
+    sections = []
+    for i, start in enumerate(starts):
+        section = text[start: starts[i + 1] if i + 1 < len(starts) else len(text)]
+        if section.count("\nSize and Weight\n") != 1:
+            raise SplitFailed(f"{product}: size section {i + 1} has no 'Size and Weight' of its own")
+        stop = section.find("\nOperating System\n")
+        box = section.find("\nIn the Box\n")
+        core = (section[:stop] if stop > 0 else section) + (section[box:].split("\n\n")[0] if box > 0 else "")
+        if len(core) > SECTION_LIMIT:
+            raise SplitFailed(f"{product}: size section {i + 1} is {len(core)} characters, over {SECTION_LIMIT}")
+        sections.append(core)
+    return sections

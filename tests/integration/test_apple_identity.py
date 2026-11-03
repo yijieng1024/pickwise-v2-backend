@@ -44,18 +44,29 @@ def _variant(**fields) -> ExtractedLaptopVariant:
     return ExtractedLaptopVariant.model_construct(**base)
 
 
-def _run(session, monkeypatch, brand, url, *variants):
+def _size(inch: int) -> str:
+    return (f"\nFinish\nSilver\n\nChip\nApple M5 Pro chip\n\nSize and Weight\nWidth: {inch}cm\n"
+            f"\nOperating System\nmacOS\n\nIn the Box\n{inch}-inch MacBook Pro\n\nEnvironment\n")
+
+
+# A MacBook Pro page as the scraper stores it: two size sections.
+TWO_SIZES = {"scraped_features": ["Product image" + _size(14) + _size(16)]}
+
+
+def _run(session, monkeypatch, brand, url, *variants, dump=TWO_SIZES):
+    """The stub answers the first size section with *variants* and the second with none,
+    and records the specs text of every call."""
     calls = []
 
     class _StubLLM:
         def with_structured_output(self, _schema):
-            def extract(_):
-                calls.append(1)
-                return ExtractedLaptopFamily.model_construct(variants=list(variants))
+            def extract(inputs):
+                calls.append(inputs.to_string())
+                return ExtractedLaptopFamily.model_construct(variants=list(variants) if len(calls) == 1 else [])
             return RunnableLambda(extract)
 
     monkeypatch.setattr(processor, "build_llm", lambda *a, **k: _StubLLM())
-    raw = RawScrapLaptop(source_url=url, brand_id=brand.id, raw_product_name="MacBook Pro")
+    raw = RawScrapLaptop(source_url=url, brand_id=brand.id, raw_product_name="MacBook Pro", raw_specs_dump=dump)
     session.add(raw)
     session.commit()
     return processor.process_raw_laptop_data(str(raw.id), session), raw, calls
@@ -119,5 +130,31 @@ def test_unknown_macbook_pro_url_is_skipped_and_listed(session, apple, monkeypat
     ).all() == []
     [conflict] = result["identity_conflicts"]
     assert (conflict["raw_id"], conflict["source_url"]) == (str(raw.id), url)
+    session.refresh(raw)
+    assert raw.processing_status == "failed"
+
+
+def test_apple_page_is_extracted_one_size_at_a_time(session, apple, monkeypatch):
+    """The 16-inch half of the PROLED page lay past the 8,000-character cut and never
+    reached the LLM. Each size now gets its own call, with only its own section."""
+    result, _, calls = _run(session, monkeypatch, apple, PROLED, _variant())
+    assert result["status"] == "success", result
+    assert len(calls) == 2, "the page was not sent one size at a time"
+    assert "Width: 14cm" in calls[0] and "Width: 16cm" not in calls[0]
+    assert "Width: 16cm" in calls[1] and "Width: 14cm" not in calls[1]
+    assert "Environment" not in calls[0] + calls[1], "the copy after the specs was sent"
+
+
+def test_apple_page_that_does_not_split_fails_and_is_listed(session, apple, monkeypatch):
+    """A MacBook Pro page with one size section is a layout change, not a one-size
+    page: nothing is written, no LLM call, the row fails and the result says why."""
+    one = {"scraped_features": ["Product image" + _size(14)]}
+    result, raw, calls = _run(session, monkeypatch, apple, PROLED, _variant(), dump=one)
+
+    assert result["status"] == "skipped", result
+    assert calls == []
+    [failure] = result["split_failures"]
+    assert (failure["raw_id"], failure["source_url"]) == (str(raw.id), PROLED)
+    assert "expected 2 size sections" in failure["reason"]
     session.refresh(raw)
     assert raw.processing_status == "failed"
