@@ -721,6 +721,11 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 
 A laptop that fails stays inactive, and the notification says which condition failed.
 
+*ASUS website price (decided, Jack, 2026-11-03; not built)*: the ASUS website price is allowed only when the product page has a single configuration **and** no stored guide has that laptop. The price source is recorded as `website`
+- Multi-configuration pages keep the guide-only rule: the website shows a starting price, not the price of any one configuration
+- When a guide later covers the laptop, the normal guide rules apply
+- Example: ASUS Gaming V16 (V3607) is a single-configuration page, so its website price is used; ProArt P14/P16 RTX Spark are multi-configuration pages, so they wait for a guide
+
 **Background jobs (added 2026-10-25)**
 - Every long admin process runs as a background job instead of a request that waits: scrape, process (Gemini), embeddings, PickScore `generate-all`, review `process-bulk`, transcripts, the benchmark refresh (done 2026-11-01), and the feed crawler, which is still a plain request; the scheduled pipeline needs a record of it
 - Each job is recorded in a table: what it is, who or what started it (admin button or schedule), start and end time, status (queued, processing, completed, failed, cancelled, cancelling), progress, result summary and error. The admin shows this list, so a run can be checked without reading Render logs
