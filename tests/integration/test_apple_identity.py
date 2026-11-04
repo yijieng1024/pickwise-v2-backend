@@ -224,16 +224,16 @@ def test_code_parsed_fields_replace_the_llm_values(session, apple, monkeypatch):
     assert (row.weight_kg, row.display_resolution) == (1.62, "3024x1964")
 
 
-def test_failed_parse_is_null_and_listed_not_the_stored_value(session, apple, monkeypatch):
-    """A failed field is null even on update: keeping the stored (LLM-written) value would
-    be the fallback 10a rules out."""
+def test_failed_parse_keeps_the_stored_value_and_is_listed(session, apple, monkeypatch):
+    """A failed field keeps the stored value on update, like any other empty field
+    (decided 2026-11-04), and is still listed in field_parse_failures."""
     june = make_laptop(apple.id, model_code=CODE, processor_model="Apple M5 Pro (15-core)", display_size_inch=14.2,
                        power_supply_details="70W USB-C Power Adapter", max_ram_gb=48, weight_kg=1.6)
     session.add(june)
     session.commit()
     result, _, _ = _run(session, monkeypatch, apple, [_config()])  # TWO_SIZES has none of the headings
     session.refresh(june)
-    assert (june.power_supply_details, june.max_ram_gb, june.weight_kg) == (None, None, 0.0)
+    assert (june.power_supply_details, june.max_ram_gb) == ("70W USB-C Power Adapter", 48)
     [entry] = result["field_parse_failures"]
     assert entry["model_code"] == CODE
     assert {f["field"] for f in entry["failures"]} == {"max_ram_gb", "weight_kg", "power_supply_details",

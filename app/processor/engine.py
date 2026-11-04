@@ -323,14 +323,13 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                     ram_gb=config["ram_gb"], ssd_gb=config["ssd_gb"],
                     display_brightness_nits=brightness(line, template.display_brightness_nits),
                 )
-                # 10a: read by code, never by the LLM. A failed field is null and overwrites
-                # a stored value; the two NOT NULL columns take their schema defaults.
+                # 10a: read by code, never by the LLM. A failed field is null; on an update the
+                # stored value is kept like any other empty field (decided 2026-11-04).
                 parsed, failed = apple_fields.parse(apple_fields.section_for(sections, config["size"]), config, product)
                 data.update(parsed)
                 for key, missing in (("weight_kg", 0.0), ("fingerprint_reader", False)):
-                    if data[key] is None:
+                    if kind == "insert" and data[key] is None:
                         data[key] = missing
-                forced = {f["field"] for f in failed}
                 if failed:
                     parse_failures.append({"raw_id": raw_id, "source_url": buy["url"],
                                            "model_code": data["model_code"], "failures": failed})
@@ -352,7 +351,7 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                     data.pop("model_code")  # the lookup key, never overwritten
                     kept = []
                     for key, value in data.items():
-                        if key not in forced and _empty(value) and not _empty(getattr(laptop, key)):
+                        if _empty(value) and not _empty(getattr(laptop, key)):
                             kept.append(key)
                             continue
                         setattr(laptop, key, value)
