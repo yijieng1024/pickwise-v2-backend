@@ -1,0 +1,49 @@
+Memory
+8GB
+8GB unified memory
+8GB
+8GB unified memory
+
+Storage1
+256GB
+256GB SSD
+512GB
+512GB SSD
+
+Display
+Liquid Retina display
+13.0-inch (diagonal) LED-backlit display with IPS technology;2 2408x1506 native resolution at 219 pixels per inch
+500 nits brightness
+
+External Display Support
+Supports one external display with up to a native resolution of 4K at 60Hz4
+Simultaneously supports the built-in display at full native resolution
+USB 3 (USB-C) port supports native DisplayPort 1.4 speeds (up to HBR3)
+
+Keyboard and Trackpad
+Magic Keyboard
+78 (ANSI) or 79 (ISO) keys including 12 full‑height function keys
+–
+Not available, Touch ID
+Multi-Touch trackpad for precise cursor control and support for gestures
+Magic Keyboard with Touch ID
+78 (ANSI) or 79 (ISO) keys including 12 full‑height function keys
+Touch ID
+Multi-Touch trackpad for precise cursor control and support for gestures
+
+Size and Weight
+Height: 1.27cm
+Width: 29.75cm
+Depth: 20.64cm
+Weight: 1.23kg6
+Depth:
+20.64cm
+Width:
+29.75cm
+Height:
+1.27cm
+
+In the Box
+MacBook Neo
+20W USB-C Power Adapter
+USB-C Charge Cable (1.5m)

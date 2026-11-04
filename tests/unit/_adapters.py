@@ -688,3 +688,7 @@ from app.scripts import repair_apple_round3  # noqa: E402,F401
 
 # The Apple buy-page plan - app/processor/apple_buy.py
 from app.processor import apple_buy  # noqa: E402,F401
+
+
+# Apple fields read by code (10a) - app/processor/apple_fields.py
+from app.processor import apple_fields  # noqa: E402,F401

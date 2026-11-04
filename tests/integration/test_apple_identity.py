@@ -6,6 +6,8 @@ one LLM call per size section. Before this, the LLM chose the configurations fro
 specs page, which lists options per chip, not what Apple sells, and a PROLED page once
 overwrote a Liquid Retina row in place. The LLM is stubbed throughout.
 """
+from pathlib import Path
+
 import pytest
 from langchain_core.runnables import RunnableLambda
 
@@ -203,3 +205,36 @@ def test_bulk_job_result_lists_what_was_left_alone(session, apple, monkeypatch):
     result = processor.process_pending_laptops(session)
     assert [r["laptop_id"] for r in result["not_on_buy_page"]] == [str(cto.id)]
     assert result["matched_suspended"] == [] and "price_changes" in result
+
+
+_LR_PAGE = {"scraped_features": [(Path(__file__).parents[1] / "unit" / "fixtures" / "scraper"
+                                  / "apple_macbook_pro_liquid_retina_specs.txt").read_text(encoding="utf-8")]}
+
+
+def test_code_parsed_fields_replace_the_llm_values(session, apple, monkeypatch):
+    """10a: max RAM, charger, weight, displays and resolution come from the page text, not
+    from what the LLM said (the stub says max 128 and 70W, the 5c87abdd mistake)."""
+    template = _template(processor_model="Apple M5 Max chip", cpu_cores=18, gpu_cores=32, max_ram_gb=128,
+                         power_supply_details="70W USB-C Power Adapter", display_resolution="3024-by-1964")
+    result, _, _ = _run(session, monkeypatch, apple, [_config(chip="M5 Max", cpu_cores=18, gpu_cores=32, ram_gb=36,
+                                                              ssd_gb=2048)], template, specs_dump=_LR_PAGE)
+    assert result["status"] == "success" and result["field_parse_failures"] == [], result
+    [row] = _rows(session, apple)
+    assert (row.max_ram_gb, row.power_supply_details) == (36, "96W USB-C Power Adapter")
+    assert (row.weight_kg, row.display_resolution) == (1.62, "3024x1964")
+
+
+def test_failed_parse_is_null_and_listed_not_the_stored_value(session, apple, monkeypatch):
+    """A failed field is null even on update: keeping the stored (LLM-written) value would
+    be the fallback 10a rules out."""
+    june = make_laptop(apple.id, model_code=CODE, processor_model="Apple M5 Pro (15-core)", display_size_inch=14.2,
+                       power_supply_details="70W USB-C Power Adapter", max_ram_gb=48, weight_kg=1.6)
+    session.add(june)
+    session.commit()
+    result, _, _ = _run(session, monkeypatch, apple, [_config()])  # TWO_SIZES has none of the headings
+    session.refresh(june)
+    assert (june.power_supply_details, june.max_ram_gb, june.weight_kg) == (None, None, 0.0)
+    [entry] = result["field_parse_failures"]
+    assert entry["model_code"] == CODE
+    assert {f["field"] for f in entry["failures"]} == {"max_ram_gb", "weight_kg", "power_supply_details",
+                                                       "external_display_support", "display_resolution"}

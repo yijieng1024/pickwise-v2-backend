@@ -1,0 +1,662 @@
+Product image
+
+Finish
+Space Black Silver
+
+Chip
+Apple M6 chip
+12-core CPU with:
+2 super cores
+4 performance cores
+6 efficiency cores
+12-core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+Dual 16-core Neural Engine
+Up to 170GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes, and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode
+and decode engine
+AV1 decode
+—
+Other configurations not available
+Apple M5 Pro chip
+15-core CPU with:
+5 super cores
+10 performance cores
+—
+Efficiency cores not available
+16-core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+307GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes, and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode
+and decode engine
+AV1 decode
+Configurable to:
+M5 Pro with 18-core CPU and 20-core GPU
+Apple M5 Max chip
+18-core CPU with:
+6 super cores
+12 performance cores
+—
+Efficiency cores not available
+32-core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+460GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes, and ProRes RAW
+Video decode engine
+Two video encode engines
+Two ProRes encode and decode engines
+AV1 decode
+Configurable to:
+M5 Max with 18-core CPU and 40-core GPU (614GB/s memory bandwidth)
+
+Memory
+M6
+16GB unified memory (153GB/s memory bandwidth)
+24GB or 32GB unified memory (170GB/s memory bandwidth)
+M5 Pro with 16-core GPU
+24GB or 48GB unified memory
+M5 Pro with 20-core GPU
+24GB, 48GB, or 64GB unified memory
+M5 Max with 32-core GPU
+36GB unified memory
+M5 Max with 40-core GPU
+48GB, 64GB, or 128GB unified memory
+
+Storage1
+M6
+1TB, 2TB, or 4TB SSD
+M5 Pro
+1TB, 2TB, or 4TB SSD
+M5 Max
+2TB, 4TB, or 8TB SSD
+
+Display
+Liquid Retina XDR display
+14.2-inch (diagonal) Liquid Retina XDR display;2 3024-by-1964 native resolution at 254 pixels per inch
+XDR (Extreme Dynamic Range)
+1,000,000:1 contrast ratio
+XDR brightness: up to 1,000 nits sustained full-screen,3 1,600 nits peak (HDR content only)
+SDR brightness: up to 1,000 nits (outdoor)
+1 nit minimum brightness
+Color
+1 billion colors
+P3 wide color gamut
+True Tone technology
+Refresh rates
+ProMotion technology with adaptive refresh rates up to 120Hz
+Fixed refresh rates: 47.95Hz, 48.00Hz, 50.00Hz, 59.94Hz, 60.00Hz
+Configurable with:
+Nano-texture display
+
+Battery and Power
+M64
+Up to 24 hours video streaming
+Up to 16 hours wireless web
+72.4-watt-hour lithium-polymer battery
+Supports charging via a USB‑C power adapter or other USB PD power source
+Minimum wattage recommended to charge the device: 60W
+Fast-charge capable with 96W or higher USB PD power source
+M5 Pro5
+Up to 22 hours video streaming
+Up to 14 hours wireless web
+72.4-watt-hour lithium-polymer battery
+Supports charging via a USB‑C power adapter or other USB PD power source
+Minimum wattage recommended to charge the device: 70W
+Fast-charge capable with 96W or higher USB PD power source
+M5 Max5
+Up to 20 hours video streaming
+Up to 13 hours wireless web
+72.4-watt-hour lithium-polymer battery
+Supports charging via a USB‑C power adapter or other USB PD power source
+Minimum wattage recommended to charge the device: 70W
+Fast-charge capable with 96W or higher USB PD power source
+
+Charging and Expansion
+SDXC card slot
+HDMI port
+3.5mm headphone jack
+MagSafe 3 port
+M6
+Three Thunderbolt 4 (USB-C) ports with support for:
+Charging
+DisplayPort
+Thunderbolt 4 (up to 40Gb/s)
+USB 4 (up to 40Gb/s)
+MagSafe 3 Thunderbolt 4 3.5mm
+headphone jack
+SDXC Thunderbolt 4 HDMI
+M5 Pro and M5 Max
+Three Thunderbolt 5 (USB-C) ports with support for:
+Charging
+DisplayPort
+Thunderbolt 5 (up to 120Gb/s)
+USB 4 (up to 120Gb/s)
+MagSafe 3 Thunderbolt 5 3.5mm
+headphone jack
+SDXC Thunderbolt 5 HDMI
+
+External Display Support
+M6
+Supports up to two external displays over any combination of Thunderbolt and HDMI ports:
+Two displays up to a native resolution of 6K at 60Hz or 4K at 165Hz or
+One display up to a native resolution of 8K at 60Hz or 5K at 120Hz or 4K at 240Hz
+Supports up to two external displays over a single Thunderbolt port
+Simultaneously supports the built-in display at full native resolution
+Thunderbolt 4 (USB-C) ports support native DisplayPort 1.4 speeds
+M5 Pro
+Supports up to three external displays over any combination of Thunderbolt and HDMI ports:
+Three displays up to a native resolution of 6K at 60Hz or 4K at 144Hz or
+One display up to a native resolution of 8K at 60Hz or 5K at 120Hz or 4K at 240Hz plus a second display up to a native resolution of 5K at 120Hz or 4K at 200Hz
+Supports up to three external displays over a single Thunderbolt port
+Simultaneously supports the built-in display at full native resolution
+M5 Max
+Supports up to four external displays over any combination of Thunderbolt and HDMI ports:
+Four displays up to a native resolution of 6K at 60Hz or 4K at 144Hz or
+Two displays up to a native resolution of 8K at 60Hz or 5K at 120Hz or 4K at 240Hz
+Supports up to four external displays over a single Thunderbolt port
+Simultaneously supports the built-in display at full native resolution
+Thunderbolt 5 (USB-C) ports support native DisplayPort 2.1 speeds
+Learn more about connecting a display to your Mac
+
+Reference Modes
+Available reference modes:
+Apple XDR Display (P3-1,600 nits)
+Apple Display (P3-600 nits)
+HDR Video (P3-ST 2084)
+HDTV Video (BT.709-BT.1886)
+NTSC Video (BT.601 SMPTE-C)
+PAL and SECAM Video (BT.601 EBU)
+Digital Cinema (P3-DCI)
+Digital Cinema (P3-D65)
+Design and Print (P3-D50)
+Photography (P3-D65)
+Internet and Web (sRGB)
+
+Video Playback
+Supported formats include HEVC, H.264, AV1, and ProRes
+HDR with Dolby Vision, HDR10+/HDR10, and HLG
+
+Audio Playback
+Supported formats include AAC, MP3, Apple Lossless, FLAC, Dolby Digital, Dolby Digital Plus, and Dolby Atmos
+
+Keyboard and Trackpad
+Backlit Magic Keyboard with:
+78 (ANSI) or 79 (ISO) keys including 12 full-height function keys
+Touch ID
+Ambient light sensor
+Force Touch trackpad for precise cursor control and pressure-sensing capabilities; enables Force clicks, accelerators, pressure-sensitive drawing, and Multi-Touch gestures
+Force Touch trackpad
+
+Wireless
+Apple N1 wireless networking chip
+Wi-Fi 7 (802.11be)6
+Bluetooth 6
+Thread networking technology
+
+Camera
+12MP Center Stage camera with support for Desk View
+1080p HD video recording
+Advanced image signal processor with computational video
+
+Audio
+High-fidelity six-speaker sound system with force-cancelling woofers
+Wide stereo sound
+Support for Spatial Audio when playing music or video with Dolby Atmos on built-in speakers
+Spatial Audio with dynamic head tracking when using supported models of AirPods, AirPods Pro, and AirPods Max7
+Studio-quality three-mic array with high signal-to-noise ratio and directional beamforming
+Voice Isolation and Wide Spectrum microphone modes for enhanced voice clarity in audio and video calls
+3.5mm headphone jack with advanced support for high-impedance headphones
+HDMI port supports multichannel audio output
+
+Operating Requirements
+Line voltage: 100V to 240V AC
+Frequency: 50Hz to 60Hz
+Operating temperature: 10° to 35° C
+Storage temperature: –25° to 45° C
+Relative humidity: 0% to 90% noncondensing
+Operating altitude: tested up to 3,000 meters
+Maximum storage altitude: 4,500 meters
+Maximum shipping altitude: 10,500 meters
+
+Size and Weight
+Height: 1.55cm
+Width: 31.26cm
+Depth: 22.12cm
+Weight (M6): 1.55kg8
+Weight (M5 Pro): 1.60kg8
+Weight (M5 Max): 1.62kg8
+Depth:
+22.12cm
+Width:
+31.26cm
+Height:
+1.55cm
+
+Operating System
+macOS
+macOS is the most advanced desktop operating system in the world. Siri AI is a powerful and capable assistant with personal context understanding, broad world knowledge, and onscreen awareness. Express yourself through photos and images, save time with Safari, and get more done with Apple Intelligence seamlessly integrated into your everyday apps and experiences. And iPhone Mirroring,9 window tiling, Sidecar, and more help you stay productive.
+
+Apple
+Intelligence
+and Siri AI10
+The next generation of Apple Intelligence is centered around you, integrated into your apps, and built with privacy. Apple Intelligence powers Siri AI — an entirely new version of Siri that’s more personal, conversational, and powerful, along with helpful features across apps.
+Learn more
+
+Accessibility
+Accessibility features help people with disabilities get the most out of their new MacBook Pro. With built-in support for vision, hearing, mobility, and learning, you can create and do amazing things.
+Learn more
+Features include:
+VoiceOver
+Zoom
+Motion, display, and text settings
+Accessibility Reader
+Accessibility Keyboard
+Switch Control
+Closed Captions
+Background Sounds
+Personal Voice and Live Speech
+
+Built-in Apps11
+App Store
+Books
+Calendar
+Contacts
+FaceTime
+Find My
+Freeform
+Games
+GarageBand
+Home
+iMovie
+iPhone Mirroring
+Journal
+Keynote
+Mail
+Maps
+Messages
+Music
+Notes
+Numbers
+Pages
+Passwords
+Phone
+Photo Booth
+Photos
+Podcasts
+Preview
+QuickTime Player
+Reminders
+Safari
+Shortcuts
+Stocks
+Time Machine
+Tips
+TV
+Voice Memos
+Weather
+
+In the Box
+M6
+14-inch MacBook Pro
+70W USB-C Power Adapter
+USB-C to MagSafe 3 Cable (2m)
+Polishing cloth (only with nano-texture display option)
+M5 Pro with 15‐core CPU
+14-inch MacBook Pro
+70W USB-C Power Adapter
+USB-C to MagSafe 3 Cable (2m)
+Polishing cloth (only with nano-texture display option)
+M5 Pro with 18‐core CPU or M5 Max
+14-inch MacBook Pro
+96W USB-C Power Adapter
+USB-C to MagSafe 3 Cable (2m)
+Polishing cloth (only with nano-texture display option)
+
+MacBook Pro
+and
+the
+Environment
+Progress toward Apple 2030
+Apple 2030 is our goal to be carbon‑neutral across our value chain. We design our products to be less carbon intensive by prioritizing the use of recycled and renewable content and low‑carbon materials while focusing on the energy efficiency of our software and hardware.
+See Apple’s commitment See the 14-inch MacBook Pro (M6) Product Environmental Report (PDF)
+- opens in new tab
+See the 14-inch MacBook Pro (M5 Pro or M5 Max) Product Environmental Report (PDF)
+- opens in new tab
+Materials
+The 14‑inch MacBook Pro is made with 45% recycled content,12 including:
+100% recycled aluminum in the enclosure
+100% recycled cobalt and 95% recycled lithium in the battery
+100% recycled copper in multiple thermal module components
+100% recycled gold plating and tin solder in all Apple-designed printed circuit boards
+100% recycled rare earth elements in all magnets
+80% recycled steel in multiple components including the keyboard feature plate
+Packaging
+100% fiber-based packaging13
+Energy
+ENERGY STAR® certified14
+Smarter chemistry15
+All of the materials used in Apple products, accessories, and packaging are covered by the requirements of our Regulated Substances Specification (PDF)
+opens in new tab
+, which was one of the first in industry to restrict the use of key substances of concern. See the latest Environmental Progress Report (PDF)
+opens in new tab
+to understand Apple’s recent efforts in phasing out these chemistries.
+
+Product image
+
+Finish
+Space Black Silver
+
+Chip
+Apple M5 Pro chip
+18-core CPU with:
+6 super cores
+12 performance cores
+20-core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+307GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes, and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode
+and decode engine
+AV1 decode
+Apple M5 Max chip
+18-core CPU with:
+6 super cores
+12 performance cores
+32-core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+460GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes, and ProRes RAW
+Video decode engine
+Two video encode engines
+Two ProRes encode and decode engines
+AV1 decode
+Apple M5 Max chip
+18-core CPU with:
+6 super cores
+12 performance cores
+40-core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+614GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes, and ProRes RAW
+Video decode engine
+Two video encode engines
+Two ProRes encode and decode engines
+AV1 decode
+
+Memory
+M5 Pro
+24GB, 48GB, or 64GB unified memory
+M5 Max with 32-core GPU
+36GB unified memory
+M5 Max with 40-core GPU
+48GB, 64GB, or 128GB unified memory
+
+Storage1
+M5 Pro
+1TB, 2TB, or 4TB SSD
+M5 Max with 32-core GPU
+2TB, 4TB, or 8TB SSD
+M5 Max with 40-core GPU
+2TB, 4TB, or 8TB SSD
+
+Display
+Liquid Retina XDR display
+16.2-inch (diagonal) Liquid Retina XDR display;2 3456-by-2234 native resolution at 254 pixels per inch
+XDR (Extreme Dynamic Range)
+1,000,000:1 contrast ratio
+XDR brightness: up to 1,000 nits sustained full-screen,3 1,600 nits peak (HDR content only)
+SDR brightness: up to 1,000 nits (outdoor)3
+1 nit minimum brightness
+Color
+1 billion colors
+P3 wide color gamut
+True Tone technology
+Refresh rates
+ProMotion technology with adaptive refresh rates up to 120Hz
+Fixed refresh rates: 47.95Hz, 48.00Hz, 50.00Hz, 59.94Hz, 60.00Hz
+Configurable with:
+Nano-texture display
+
+Battery and Power16
+M5 Pro
+Up to 24 hours video streaming
+Up to 17 hours wireless web
+100-watt-hour lithium-polymer battery16
+Supports charging via a USB‑C power adapter or other USB PD power source
+Minimum wattage recommended to charge the device: 94W
+Fast-charge capable with 140W or higher USB PD power source
+M5 Max
+Up to 22 hours video streaming
+Up to 16 hours wireless web
+100-watt-hour lithium-polymer battery16
+Supports charging via a USB‑C power adapter or other USB PD power source
+Minimum wattage recommended to charge the device: 70W
+Fast-charge capable with 140W or higher USB PD power source
+
+Charging and Expansion
+SDXC card slot
+HDMI port
+3.5mm headphone jack
+MagSafe 3 port
+Three Thunderbolt 5 (USB-C) ports with support for:
+Charging
+DisplayPort
+Thunderbolt 5 (up to 120Gb/s)
+USB 4 (up to 120Gb/s)
+MagSafe 3 Thunderbolt 5 3.5mm
+headphone jack
+SDXC Thunderbolt 5 HDMI
+
+External Display Support
+M5 Pro
+Supports up to three external displays over any combination of Thunderbolt and HDMI ports:
+Three displays up to a native resolution of 6K at 60Hz or 4K at 144Hz or
+One display up to a native resolution of 8K at 60Hz or 5K at 120Hz or 4K at 240Hz plus a second display up to a native resolution of 5K at 120Hz or 4K at 200Hz
+Supports up to three external displays over a single Thunderbolt port
+Simultaneously supports the built-in display at full native resolution
+M5 Max
+Supports up to four external displays over any combination of Thunderbolt and HDMI ports:
+Four displays up to a native resolution of 6K at 60Hz or 4K at 144Hz or
+Two displays up to a native resolution of 8K at 60Hz or 5K at 120Hz or 4K at 240Hz
+Supports up to four external displays over a single Thunderbolt port
+Simultaneously supports the built-in display at full native resolution
+Thunderbolt 5 (USB-C) ports support native DisplayPort 2.1 speeds
+Learn more about connecting a display to your Mac
+
+Reference Modes
+Available reference modes:
+Apple XDR Display (P3-1,600 nits)
+Apple Display (P3-600 nits)
+HDR Video (P3-ST 2084)
+HDTV Video (BT.709-BT.1886)
+NTSC Video (BT.601 SMPTE-C)
+PAL and SECAM Video (BT.601 EBU)
+Digital Cinema (P3-DCI)
+Digital Cinema (P3-D65)
+Design and Print (P3-D50)
+Photography (P3-D65)
+Internet and Web (sRGB)
+
+Video Playback
+Supported formats include HEVC, H.264, AV1, and ProRes
+HDR with Dolby Vision, HDR10+/HDR10, and HLG
+
+Audio Playback
+Supported formats include AAC, MP3, Apple Lossless, FLAC, Dolby Digital, Dolby Digital Plus, and Dolby Atmos
+
+Keyboard and Trackpad
+Backlit Magic Keyboard with:
+78 (ANSI) or 79 (ISO) keys including 12 full-height function keys
+Touch ID
+Ambient light sensor
+Force Touch trackpad for precise cursor control and pressure-sensing capabilities; enables Force clicks, accelerators, pressure-sensitive drawing, and Multi-Touch gestures
+Force Touch trackpad
+
+Wireless
+Apple N1 wireless networking chip
+Wi-Fi 7 (802.11be)6
+Bluetooth 6
+Thread networking technology
+
+Camera
+12MP Center Stage camera with support for Desk View
+1080p HD video recording
+Advanced image signal processor with computational video
+
+Audio
+High-fidelity six-speaker sound system with force-cancelling woofers
+Wide stereo sound
+Support for Spatial Audio when playing music or video with Dolby Atmos on built-in speakers
+Spatial Audio with dynamic head tracking when using supported models of AirPods, AirPods Pro, and AirPods Max7
+Studio-quality three-mic array with high signal-to-noise ratio and directional beamforming
+Voice Isolation and Wide Spectrum microphone modes for enhanced voice clarity in audio and video calls
+3.5mm headphone jack with advanced support for high-impedance headphones
+HDMI port supports multichannel audio output
+
+Operating Requirements
+Line voltage: 100V to 240V AC
+Frequency: 50Hz to 60Hz
+Operating temperature: 10° to 35° C
+Storage temperature: –25° to 45° C
+Relative humidity: 0% to 90% noncondensing
+Operating altitude: tested up to 3,000 meters
+Maximum storage altitude: 4,500 meters
+Maximum shipping altitude: 10,500 meters
+
+Size and Weight
+Height: 1.68cm
+Width: 35.57cm
+Depth: 24.81cm
+Weight (M5 Pro): 2.14kg8
+Weight (M5 Max): 2.15kg8
+Depth:
+24.81cm
+Width:
+35.57cm
+Height:
+1.68cm
+
+Operating System
+macOS
+macOS is the most advanced desktop operating system in the world. Siri AI is a powerful and capable assistant with personal context understanding, broad world knowledge, and onscreen awareness. Express yourself through photos and images, save time with Safari, and get more done with Apple Intelligence seamlessly integrated into your everyday apps and experiences. And iPhone Mirroring,9 window tiling, Sidecar, and more help you stay productive.
+
+Apple
+Intelligence and Siri AI10
+The next generation of Apple Intelligence is centered around you, integrated into your apps, and built with privacy. Apple Intelligence powers Siri AI — an entirely new version of Siri that’s more personal, conversational, and powerful, along with helpful features across apps.
+Learn more
+
+Accessibility
+Accessibility features help people with disabilities get the most out of their new MacBook Pro. With built-in support for vision, hearing, mobility, and learning, you can create and do amazing things.
+Learn more
+Features include:
+VoiceOver
+Zoom
+Motion, display, and text settings
+Accessibility Reader
+Accessibility Keyboard
+Switch Control
+Closed Captions
+Background Sounds
+Personal Voice and Live Speech
+
+Built-in Apps11
+App Store
+Books
+Calendar
+Contacts
+FaceTime
+Find My
+Freeform
+Games
+GarageBand
+Home
+iMovie
+iPhone Mirroring
+Journal
+Keynote
+Mail
+Maps
+Messages
+Music
+Notes
+Numbers
+Pages
+Passwords
+Phone
+Photo Booth
+Photos
+Podcasts
+Preview
+QuickTime Player
+Reminders
+Safari
+Shortcuts
+Stocks
+Time Machine
+Tips
+TV
+Voice Memos
+Weather
+
+In the Box
+16-inch MacBook Pro
+140W USB-C Power Adapter
+USB-C to MagSafe 3 Cable (2m)
+Polishing cloth (only with nano-texture display option)
+
+MacBook Pro
+and
+the
+Environment
+The 16-inch MacBook Pro is designed to reduce environmental impact:17
+See the 16-inch MacBook Pro Product Environmental Report (PDF)
+- opens in new tab
+Progress toward Apple 2030
+Apple 2030 is our commitment to be carbon‑neutral for our entire carbon footprint. Our plan to decarbonize products is rigorous and focuses on transitioning to low‑carbon electricity, designing with recycled and low‑carbon materials, and prioritizing lower‑carbon ways of shipping products, like ocean freight.
+See Apple’s commitment
+Materials
+The 16‑inch MacBook Pro is made with 45% recycled content,12 including:
+100% recycled aluminum in the enclosure and thermal module stage
+100% recycled cobalt and 95% recycled lithium in the battery
+100% recycled copper in multiple printed circuit boards and thermal module components
+100% recycled gold plating and tin solder in all Apple-designed printed circuit boards
+100% recycled rare earth elements in all magnets
+80% or more recycled steel in the keyboard feature plate and speaker components
+Energy
+50% of manufacturing electricity for the 16-inch MacBook Pro is sourced from low-carbon electricity18
+ENERGY STAR® certified14
+Packaging
+100% fiber-based packaging13
+Waste
+No established final assembly sites generate waste sent to landfill as part of Apple’s Zero Waste Program19
+Smarter chemistry15
+All of the materials used in Apple products, accessories, and packaging are covered by the requirements of our Regulated Substances Specification (PDF)
+opens in new tab
+, which was one of the first in industry to restrict the use of key substances of concern. See the latest Environmental Progress Report (PDF)
+opens in new tab
+to understand Apple’s recent efforts in phasing out these chemistries.

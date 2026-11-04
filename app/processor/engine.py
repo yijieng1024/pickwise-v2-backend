@@ -22,7 +22,7 @@ from app.laptops.price_guide import sku_key
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
 from app.laptops.brand_model import LaptopBrand
-from app.processor import apple_buy
+from app.processor import apple_buy, apple_fields
 from app.processor.apple_name import (
     SECTION_LIMIT,
     SplitFailed,
@@ -244,7 +244,7 @@ def _variant_fields(variant, brand_id, image_urls, raw_specs_dump) -> dict:
 
 # Lists a record's result may carry, collected into the bulk job's result as they are.
 _RESULT_LISTS = (
-    "identity_conflicts", "split_failures", "fields_kept", "apple_configs_skipped",
+    "identity_conflicts", "split_failures", "field_parse_failures", "fields_kept", "apple_configs_skipped",
     "not_on_buy_page", "matched_suspended", "price_changes", "prices_not_overwritten", "unresolved_configs",
 )
 
@@ -301,6 +301,7 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
         now = datetime.now(timezone.utc)
         saved = updated = categories_linked = 0
         fields_kept: list[dict] = []
+        parse_failures: list[dict] = []
         skipped: list[dict] = []
         for kind, entries in (("insert", planned["inserts"]), ("update", planned["updates"])):
             for entry in entries:
@@ -322,6 +323,17 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                     ram_gb=config["ram_gb"], ssd_gb=config["ssd_gb"],
                     display_brightness_nits=brightness(line, template.display_brightness_nits),
                 )
+                # 10a: read by code, never by the LLM. A failed field is null and overwrites
+                # a stored value; the two NOT NULL columns take their schema defaults.
+                parsed, failed = apple_fields.parse(apple_fields.section_for(sections, config["size"]), config, product)
+                data.update(parsed)
+                for key, missing in (("weight_kg", 0.0), ("fingerprint_reader", False)):
+                    if data[key] is None:
+                        data[key] = missing
+                forced = {f["field"] for f in failed}
+                if failed:
+                    parse_failures.append({"raw_id": raw_id, "source_url": buy["url"],
+                                           "model_code": data["model_code"], "failures": failed})
                 price = config.get("price_rm") or 0.0
                 data.pop("price_rm", None)
                 if kind == "insert":
@@ -340,7 +352,7 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                     data.pop("model_code")  # the lookup key, never overwritten
                     kept = []
                     for key, value in data.items():
-                        if _empty(value) and not _empty(getattr(laptop, key)):
+                        if key not in forced and _empty(value) and not _empty(getattr(laptop, key)):
                             kept.append(key)
                             continue
                         setattr(laptop, key, value)
@@ -368,6 +380,7 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
             "variants_updated": updated,
             "categories_linked": categories_linked,
             "fields_kept": fields_kept,
+            "field_parse_failures": parse_failures,
             "apple_configs_skipped": skipped,
             "unresolved_configs": [{**c, "raw_id": raw_id} for c in unresolved],
             **{key: planned[key] for key in ("not_on_buy_page", "matched_suspended", "identity_conflicts",
