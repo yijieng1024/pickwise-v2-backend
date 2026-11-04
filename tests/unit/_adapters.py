@@ -696,3 +696,9 @@ from app.processor import apple_fields  # noqa: E402,F401
 
 # The round 4 Apple repair - app/scripts/repair_apple_round4.py
 from app.scripts import repair_apple_round4  # noqa: E402,F401
+
+
+# lookup_laptop (10b step c) - app/agent/tools/laptop_lookup.py, and the market price
+# catalog layer it must not change
+from app.agent.tools import laptop_lookup as lookup_laptop_tool  # noqa: E402,F401
+from app.agent.tools import market_price  # noqa: E402,F401

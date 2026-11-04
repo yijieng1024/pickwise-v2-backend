@@ -1,4 +1,5 @@
 from app.agent.tools.laptop_tools import calculate_custom_apple_price, get_review_evidence
+from app.agent.tools.laptop_lookup import lookup_laptop
 from app.agent.tools.market_price import search_malaysian_market_price
 from app.agent.tools.search_laptops import make_search_laptops, search_laptops
 
@@ -7,6 +8,7 @@ ALL_TOOLS = [
     calculate_custom_apple_price,
     get_review_evidence,
     search_malaysian_market_price,
+    lookup_laptop,
 ]
 
 __all__ = [
@@ -15,5 +17,6 @@ __all__ = [
     "calculate_custom_apple_price",
     "get_review_evidence",
     "search_malaysian_market_price",
+    "lookup_laptop",
     "ALL_TOOLS",
 ]
