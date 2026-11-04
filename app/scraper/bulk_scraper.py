@@ -32,6 +32,7 @@ from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
 from app.processor.apple_name import SPECS_PAGES
+from app.scraper.apple_options_fetch import run_options_step
 from app.scraper.apple_scraper import crawl_apple_specs_links, scrape_apple_buy_page, scrape_official_website
 from app.scraper.asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
 from app.scraper.acer_scraper import crawl_acer_specs_links, scrape_acer_laptop_specs
@@ -136,6 +137,9 @@ class BulkScrapeReport:
     cancelled: bool = False
     log_file: Optional[str] = None
     results: List[UrlResult] = field(default_factory=list)
+    #: Step 10c: Apple build-to-order options, fetched after a run that scraped an Apple
+    #: buy page. None when no buy page was scraped.
+    apple_options: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +348,18 @@ async def _process_target(
         )
 
 
+async def _apple_options_after_buy_pages(session: Session, report: BulkScrapeReport) -> None:
+    """Step 10c: after a run that scraped an Apple buy page, fetch every standard config's
+    options. Its failure is reported, never the scrape's."""
+    if report.cancelled or not any(r.url in SPECS_PAGES and r.status == "succeeded" for r in report.results):
+        return
+    try:
+        report.apple_options = await run_options_step(session)
+    except Exception as exc:
+        session.rollback()
+        report.apple_options = {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def _finalise(report: BulkScrapeReport, run_ts: datetime) -> BulkScrapeReport:
     """Write the failure log (if needed) and emit the console summary."""
     if report.failed > 0:
@@ -415,6 +431,7 @@ async def run_bulk_scrape(
             report.cancelled = True
             break
 
+    await _apple_options_after_buy_pages(session, report)
     # 4. Write failure log if any URLs failed
     return _finalise(report, run_ts)
 
@@ -479,4 +496,5 @@ async def run_scrape_for_targets(
             report.cancelled = True
             break
 
+    await _apple_options_after_buy_pages(session, report)
     return _finalise(report, run_ts)

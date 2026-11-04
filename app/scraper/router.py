@@ -628,6 +628,7 @@ def _report_payload(report, total_key: str) -> dict:
         "skipped": report.skipped,
         "cancelled": report.cancelled,
         "log_file": report.log_file,
+        "apple_options": report.apple_options,
         "results": [
             {"url": r.url, "status": r.status, "error": r.error}
             for r in report.results
