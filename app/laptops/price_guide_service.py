@@ -53,13 +53,13 @@ def decide(stored_price: Optional[float], latest_source: Optional[str], guide_pr
 
 
 def _catalog(session: Session) -> list[Laptop]:
-    """ASUS laptops (ROG included), minus the retired archive: a discontinued
-    machine does not need a price."""
+    """ASUS laptops (ROG included), minus the rows that never need a price found:
+    discontinued (no longer sold) and suspended (hidden), ADR-0009 Amendment II."""
     return list(session.exec(
         select(Laptop)
         .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
         .where(func.lower(LaptopBrand.name) == "asus")
-        .where(Laptop.status != LaptopStatus.SUSPENDED.value)
+        .where(Laptop.status.notin_([LaptopStatus.SUSPENDED.value, LaptopStatus.DISCONTINUED.value]))  # type: ignore[attr-defined]
         .order_by(Laptop.id)
     ).all())
 

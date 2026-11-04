@@ -769,3 +769,14 @@ def test_no_token_is_a_clear_400(admin_client, monkeypatch):
 
     assert response.status_code == 400
     assert "GITHUB_DISPATCH_TOKEN" in response.json()["detail"]
+
+
+def test_a_discontinued_laptop_is_left_out(session, brand):
+    """No longer sold, so no price to find (ADR-0009 Amendment II)."""
+    laptop = _laptop(session, brand, status=LaptopStatus.DISCONTINUED.value)
+    guide = _guide(session, (SKU, 32999.0))
+
+    assert _apply(session, guide)["filled"] == 0
+
+    session.refresh(laptop)
+    assert laptop.price_rm == 0.0
