@@ -177,6 +177,35 @@ def unlisted(options: list[Option], page: "ConfigurePage") -> list[tuple[str, st
     return [key for key in page.labels if key[0] in _TRIGGER_GROUPS and key not in listed]
 
 
+def offered(group: str, value: str, chips: Mapping[tuple[int, int], Any]) -> bool:
+    """Apple's API lists every chip of the collection on every size (the Air 15 gets the
+    13-inch-only 10-core / 8-core GPU chip). A chip counts only if the size's specs page
+    lists it (decided 2026-11-04); `chips` is `chip_strings` of that section."""
+    return group != "chip" or cores_of(value) in chips
+
+
+def own_shares(listed: list[Option], switches: Mapping[tuple[str, str], Switch]) -> list[Option]:
+    """Options reached through a forced change, each priced at its own share: the switch's
+    price less the add-ons of what it forces (decided 2026-11-04), so that a configuration's
+    price is the sum of its options' add-ons. 36GB on the Pro 14 M5 Pro is +7,300 as a
+    switch and forces M5 Max (+3,700), 2TB (+2,250) and 96W (+80): its share is +1,270. An
+    unpriced group (the Air's chip) adds nothing. A switch can force another switched
+    option, so shares are settled in rounds; a set that only forces itself is refused."""
+    known = {(o.group, o.value): o.add_on_rm or 0.0 for o in listed}
+    shares: dict[tuple[str, str], float] = {}
+    pending = dict(switches)
+    while pending:
+        settled = [key for key, s in pending.items()
+                   if all((r.forced_group, r.forced_value) in known for r in s.rules)]
+        if not settled:
+            raise OptionsParseError(f"cannot price {sorted(pending)}: what they force has no price")
+        for key in settled:
+            s = pending.pop(key)
+            known[key] = shares[key] = round(
+                s.add_on_rm - sum(known[(r.forced_group, r.forced_value)] for r in s.rules), 2)
+    return [Option(group, value, shares[(group, value)], False, False) for group, value in switches]
+
+
 # --------------------------------------------------------------------------- configure page
 
 def _json_after(page: str, marker: str) -> Any:

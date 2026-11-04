@@ -170,16 +170,87 @@ def test_one_machine_gets_every_option_rule_label_and_chip_string():
     triggers = [("memory", "24gb"), ("memory", "32gb"), ("storage", "1tb"), ("storage", "2tb"), ("storage", "4tb")]
     assert sorted((r["trigger_group"], r["trigger_value"]) for r in machine["rules"]) == sorted(triggers)
     assert {(r["forced_group"], r["forced_value"]) for r in machine["rules"]} == {("chip", "10-10")}
-    assert machine["labels_missing"] == [] and machine["chips_missing"] == []
+    assert machine["labels_missing"] == [] and machine["chip_not_offered"] == []
     # The chip option is asked too (on the Pro a chip can force memory); here it forces nothing.
     assert fetched["calls"] == 8 == len(fake.calls), "configure page + update-config + 6 switcher calls"
 
 
-def test_a_missing_specs_section_leaves_chip_strings_null_and_listed():
+def _section(specs: str, product: str, size: int):
+    return apple_fields.section_for(apple_name.size_sections(fixture(specs), product), size)
+
+
+def test_a_machine_whose_own_chip_is_not_on_its_specs_page_fails():
     fetched = apple_options_fetch.fetch_all([_air_target(section=None)], FakeApple(), pause_s=0)
-    machine = fetched["machines"]["air13"]
-    assert machine["chips_missing"] == ["10-8", "10-10"]
-    assert all(o["cpu_model"] is None for o in machine["options"] if o["option_group"] == "chip")
+    assert fetched["machines"] == {}
+    assert "own chip" in fetched["options_failed"][0]["reason"]
+
+
+@pytest.mark.parametrize("specs, product, size, kept, dropped", [
+    ("apple_macbook_air_specs.txt", "MacBook Air", 15, ["10-10"], ["10-8"]),
+    ("apple_macbook_air_specs.txt", "MacBook Air", 13, ["10-8", "10-10"], []),
+    ("apple_macbook_pro_liquid_retina_specs.txt", "MacBook Pro", 16,
+     ["m5pro-18-20", "m5max-18-32", "m5max-18-40"], ["m5pro-15-16", "m6-12-12"]),
+    ("apple_macbook_pro_liquid_retina_specs.txt", "MacBook Pro", 14,
+     ["m6-12-12", "m5pro-15-16", "m5pro-18-20"], []),
+])
+def test_a_chip_counts_only_where_its_sizes_specs_page_lists_it(specs, product, size, kept, dropped):
+    chips = apple_options.chip_strings(_section(specs, product, size))
+    assert [v for v in kept + dropped if apple_options.offered("chip", v, chips)] == kept
+    assert apple_options.offered("memory", "64gb", chips), "only chips are filtered"
+
+
+def test_the_air_15_drops_the_13_inch_chip_and_its_rules():
+    fake = FakeApple()
+    fake.update_config = fixture("apple_update_config_air13_1tb.json")  # 10-10 / 1TB, lists 10-8 too
+    target = _air_target(section=_section("apple_macbook_air_specs.txt", "MacBook Air", 15))
+    machine = apple_options_fetch.fetch_all([target], fake, pause_s=0)["machines"]["air13"]
+    assert machine["chip_not_offered"] == ["10-8"]
+    assert [o["value"] for o in machine["options"] if o["option_group"] == "chip"] == ["10-10"]
+    assert not any("10-8" in (r["trigger_value"], r["forced_value"]) for r in machine["rules"])
+    assert not any("uv.processor-cpuCoreCount-gpuCoreCount=10-8" in url for url in fake.calls),         "a chip the size does not have was asked about"
+
+
+def test_a_chip_with_no_label_on_the_page_gets_one_from_the_specs_page():
+    fake = FakeApple()
+    fake.configure = fake.configure.replace('"10-10": {"dimensionComponents"', '"x": {"dimensionComponents"')
+    machine = apple_options_fetch.fetch_all([_air_target()], fake, pause_s=0)["machines"]["air13"]
+    chip = next(o for o in machine["options"] if o["value"] == "10-10")
+    assert chip["label"] == "10-core CPU, 10-core GPU"
+    assert machine["labels_missing"] == []
+
+
+def _switch(add_on, *forced):
+    return apple_options.Switch([apple_options.Rule("memory", "36gb", g, v) for g, v in forced], add_on)
+
+
+def test_a_switched_option_is_priced_at_its_own_share():
+    # Pro 14 M5 Pro 15c/16g / 24GB / 1TB, from the 2026-11-04 dry run.
+    listed = [apple_options.Option("chip", "m5max-18-32", 3700.0, False, False),
+              apple_options.Option("storage", "2tb", 2250.0, False, False),
+              apple_options.Option("adapter", "96w", 80.0, False, False)]
+    switches = {("memory", "36gb"): _switch(7300.0, ("chip", "m5max-18-32"), ("storage", "2tb"), ("adapter", "96w"))}
+    [share] = apple_options.own_shares(listed, switches)
+    assert (share.group, share.value, share.add_on_rm) == ("memory", "36gb", 1270.0)
+
+
+def test_an_unpriced_forced_chip_adds_nothing():
+    listed = [apple_options.Option("chip", "10-10", None, False, False)]
+    [share] = apple_options.own_shares(listed, {("memory", "24gb"): _switch(900.0, ("chip", "10-10"))})
+    assert share.add_on_rm == 900.0
+
+
+def test_a_switch_forcing_another_switched_option_settles_in_rounds():
+    switches = {("memory", "36gb"): _switch(7300.0, ("storage", "8tb")),
+                ("storage", "8tb"): _switch(6000.0)}
+    shares = {o.value: o.add_on_rm for o in apple_options.own_shares([], switches)}
+    assert shares == {"36gb": 1300.0, "8tb": 6000.0}
+
+
+def test_switches_that_only_force_each_other_are_refused():
+    switches = {("memory", "36gb"): _switch(100.0, ("storage", "8tb")),
+                ("storage", "8tb"): _switch(100.0, ("memory", "36gb"))}
+    with pytest.raises(apple_options.OptionsParseError):
+        apple_options.own_shares([], switches)
 
 
 def test_one_machines_failure_is_listed_and_the_rest_carry_on():

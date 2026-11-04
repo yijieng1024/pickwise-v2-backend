@@ -14,7 +14,13 @@ which the switcher also prices), a few seconds apart.
   only make the block worse. Machines not reached keep their stored options.
 - Any other failure for one machine (a call failed, a response did not parse) keeps
   that machine's stored options and lists it in `options_failed`.
-- A label or chip CPU/GPU string that cannot be found is left null and listed.
+- MacBook Neo is skipped: it has no build-to-order (Jack, 2026-11-04).
+- Apple lists every chip of the collection on every size, so a chip option is kept only
+  if the size's specs page lists it; the rest, and their rules, are dropped and listed in
+  `chip_not_offered` (decided 2026-11-04). A label that cannot be found is left null and
+  listed; a chip with no label on the page gets one from the specs page.
+- An option reached only through a forced change is priced at its own share
+  (`apple_options.own_shares`), so add-ons sum.
 
 Reads are short and committed before the network part, so no transaction idles
 across minutes of HTTP; the write replaces each fetched machine's rows.
@@ -40,6 +46,8 @@ from app.scraper.models import RawScrapLaptop
 BASE_URL = "https://www.apple.com"
 PAUSE_S = 3.0
 _FETCHED_STATUSES = (LaptopStatus.ACTIVE.value, LaptopStatus.INACTIVE.value)
+# Only its two standard configs, no build-to-order (Jack, 2026-11-04): skipped, not failed.
+NO_BUILD_TO_ORDER = {"https://www.apple.com/my/shop/buy-mac/macbook-neo"}
 
 Get = Callable[[str], str]
 
@@ -74,10 +82,14 @@ def _latest_raw(session: Session, url: str) -> Optional[RawScrapLaptop]:
 def read_targets(session: Session) -> tuple[list[dict], list[dict]]:
     """The standard configs to fetch, and the ones that cannot be (listed as failed)."""
     pages: dict[str, dict] = {}    # part number -> {url, size, section}
+    no_options: set[str] = set()   # part numbers on a buy page with no build-to-order
     for buy_url, specs_url in SPECS_PAGES.items():
         raw = _latest_raw(session, buy_url)
         buy = (raw.raw_specs_dump or {}).get("buy_page") if raw else None
         if not buy:
+            continue
+        if buy_url in NO_BUILD_TO_ORDER:
+            no_options.update(p for c in buy.get("configs") or [] for p in c.get("part_numbers") or [])
             continue
         specs = _latest_raw(session, specs_url)
         features = ((specs.raw_specs_dump or {}).get("scraped_features") or []) if specs else []
@@ -100,8 +112,8 @@ def read_targets(session: Session) -> tuple[list[dict], list[dict]]:
     ).all()
     targets, failed = [], []
     for laptop_id, model_code, status, parts in rows:
-        if not parts:
-            continue  # build-to-order rows: no standard config of their own
+        if not parts or any(p in no_options for p in parts):
+            continue  # build-to-order rows (no standard config of their own), and Neo
         page = next((pages[p] for p in parts if p in pages), None)
         entry = {"laptop_id": str(laptop_id), "model_code": model_code, "status": status}
         if page is None:
@@ -126,33 +138,49 @@ def fetch_machine(target: Mapping, get: Get, pause: Callable[[], None]) -> dict:
         except json.JSONDecodeError as exc:
             raise apple_options.OptionsParseError(f"not JSON from {path.split('?')[0]}") from exc
 
-    options = apple_options.parse_update_config(call(page.update_path))
+    # Chips this size really has, from its specs page: the rest are not asked about at all.
+    chips = apple_options.chip_strings(target.get("section"))
+
+    def is_offered(group: str, value: str) -> bool:
+        return apple_options.offered(group, value, chips)
+
+    listed = apple_options.parse_update_config(call(page.update_path))
+    if any(o.is_included and not is_offered(o.group, o.value) for o in listed):
+        raise apple_options.OptionsParseError("its own chip is not on its size's specs page")
+    unlisted = apple_options.unlisted(listed, page)
+    not_offered = sorted({o.value for o in listed if not is_offered(o.group, o.value)}
+                         | {v for g, v in unlisted if not is_offered(g, v)})
+    options = [o for o in listed if is_offered(o.group, o.value)]
+
     rules = []
     for option in apple_options.triggers(options):
         rules += apple_options.parse_dependency_switcher(
             call(page.switcher_path, option.group, option.value), option.group, option.value).rules
-    for group, value in apple_options.unlisted(options, page):
-        switch = apple_options.parse_dependency_switcher(call(page.switcher_path, group, value), group, value)
-        rules += switch.rules
-        options.append(apple_options.Option(group, value, switch.add_on_rm, False, False))
+    switches = {}
+    for group, value in unlisted:
+        if is_offered(group, value):
+            switches[(group, value)] = apple_options.parse_dependency_switcher(
+                call(page.switcher_path, group, value), group, value)
+            rules += switches[(group, value)].rules
+    options += apple_options.own_shares(options, switches)
+    rules = [r for r in dict.fromkeys(rules)
+             if is_offered(r.trigger_group, r.trigger_value) and is_offered(r.forced_group, r.forced_value)]
 
-    chips = apple_options.chip_strings(target.get("section"))
-    rows, labels_missing, chips_missing = [], [], []
+    rows, labels_missing = [], []
     for o in options:
         cpu_model = gpu_model = None
+        label = page.labels.get((o.group, o.value))
         if o.group == "chip":
             cores = apple_options.cores_of(o.value)
-            cpu_model, gpu_model = chips.get(cores, (None, None)) if cores else (None, None)
-            if cpu_model is None:
-                chips_missing.append(o.value)
-        label = page.labels.get((o.group, o.value))
+            cpu_model, gpu_model = chips[cores]
+            label = label or f"{cores[0]}-core CPU, {cores[1]}-core GPU"  # the Pro 14's M6 has none
         if label is None:
             labels_missing.append(f"{o.group}:{o.value}")
         rows.append({"option_group": o.group, "value": o.value, "label": label, "add_on_rm": o.add_on_rm,
                      "is_included": o.is_included, "is_blocked": o.is_blocked,
                      "cpu_model": cpu_model, "gpu_model": gpu_model})
-    return {"options": rows, "rules": [asdict(r) for r in dict.fromkeys(rules)],
-            "labels_missing": labels_missing, "chips_missing": chips_missing}
+    return {"options": rows, "rules": [asdict(r) for r in rules],
+            "labels_missing": labels_missing, "chip_not_offered": not_offered}
 
 
 def fetch_all(targets: list[dict], get: Get = http_get, pause_s: float = PAUSE_S) -> dict:
@@ -204,8 +232,8 @@ def summary(targets_failed: list[dict], fetched: dict) -> dict:
         "rules": sum(len(m["rules"]) for m in machines),
         "labels_missing": [{"model_code": m["model_code"], "options": m["labels_missing"]}
                            for m in machines if m["labels_missing"]],
-        "chip_strings_missing": [{"model_code": m["model_code"], "chips": m["chips_missing"]}
-                                 for m in machines if m["chips_missing"]],
+        "chip_not_offered": [{"model_code": m["model_code"], "chips": m["chip_not_offered"]}
+                             for m in machines if m["chip_not_offered"]],
         "options_failed": targets_failed + fetched["options_failed"],
         "stopped": fetched["stopped"],
         "apple_calls": fetched["calls"],

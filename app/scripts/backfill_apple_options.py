@@ -82,8 +82,8 @@ def main() -> int:
         result = run(session, args.apply)
     engine.dispose()
 
-    print(json.dumps({k: v for k, v in result.items() if k not in ("labels_missing", "chip_strings_missing")}, indent=2))
-    for key in ("labels_missing", "chip_strings_missing"):
+    print(json.dumps({k: v for k, v in result.items() if k not in ("labels_missing", "chip_not_offered")}, indent=2))
+    for key in ("labels_missing", "chip_not_offered"):
         for entry in result[key]:
             print(f"{key}: {entry}")
     print("written" if args.apply else "nothing written")

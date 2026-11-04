@@ -20,6 +20,7 @@ from tests.integration.conftest import make_laptop
 pytestmark = pytest.mark.integration
 
 PART = "MDH74ZP/A"
+NEO = "MHFJ4ZP/A"
 
 
 @pytest.fixture
@@ -40,10 +41,18 @@ def air13(session):
     laptop = make_laptop(apple.id, model_code="apple-macbook-air-13-m5-10c-8g-16gb-512gb",
                          product_name="MacBook Air 13", processor_model="Apple M5 (10-core)",
                          gpu_model="8-core GPU", display_size_inch=13.6, part_numbers=[PART])
-    # Not fetched: a build-to-order row (no part numbers) and a suspended standard config.
+    # Not fetched: a build-to-order row (no part numbers), a suspended standard config,
+    # and a Neo, which has no build-to-order (neither failed nor fetched).
     bto = make_laptop(apple.id, part_numbers=None)
     gone = make_laptop(apple.id, part_numbers=["MXXX4ZP/A"], status=LaptopStatus.SUSPENDED.value)
-    session.add_all([laptop, bto, gone])
+    neo_buy = "https://www.apple.com/my/shop/buy-mac/macbook-neo"
+    session.add(RawScrapLaptop(
+        source_url=neo_buy, brand_id=apple.id, raw_product_name="Buy MacBook Neo", raw_prices=[],
+        raw_specs_dump={"buy_page": {"url": neo_buy, "specs_url": "https://www.apple.com/my/macbook-neo/specs/",
+                                     "configs": [{"ssd_gb": 256, "slugs": ["silver-256gb"], "part_numbers": [NEO]}]}},
+    ))
+    neo = make_laptop(apple.id, part_numbers=[NEO], product_name="MacBook Neo")
+    session.add_all([laptop, bto, gone, neo])
     session.commit()
     return laptop
 
@@ -53,7 +62,7 @@ def test_apply_writes_options_and_rules_and_a_rerun_replaces_them(session, air13
     result = backfill.run(session, write=True, get=fake, pause_s=0, backups=tmp_path)
 
     assert result["machines"] == 1 and result["options_failed"] == [] and result["stopped"] is None
-    assert result["apple_calls"] == 8
+    assert result["apple_calls"] == 8, "only the Air was fetched: no call for the Neo"
     options = session.exec(select(LaptopOption).where(LaptopOption.laptop_id == air13.id)).all()
     by_key = {(o.option_group, o.value): o for o in options}
     assert len(options) == 18
