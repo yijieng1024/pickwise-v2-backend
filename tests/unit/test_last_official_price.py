@@ -50,3 +50,9 @@ def test_an_active_laptop_carries_its_price_not_a_last_price():
 def test_a_zero_row_in_history_is_not_a_price():
     history = [(8299.0, _at(22), None), (0.0, _at(28), "page")]
     assert lm.last_official_price(0.0, None, history) == (8299.0, _at(22))
+
+
+def test_naive_history_dates_compare_with_an_aware_check():
+    """recorded_at comes back naive, price_checked_at aware: production crashed on this."""
+    naive = datetime(2026, 6, 25)
+    assert lm.last_official_price(8299.0, _at(29), [(8299.0, naive, None)]) == (8299.0, _at(29))

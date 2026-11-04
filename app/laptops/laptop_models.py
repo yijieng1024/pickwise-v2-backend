@@ -295,7 +295,10 @@ def last_official_price(price_rm, price_checked_at, history) -> tuple[Optional[f
     history: (price_rm, recorded_at, source) rows. The newest official row, or price_rm
     with price_checked_at when that check is newer and the newest row of all is official
     (price_rm is that row's price). RM 0 is no price, never shown: (None, None)."""
-    rows = sorted(history, key=lambda r: r[1])
+    utc = lambda d: d if d is None or d.tzinfo else d.replace(tzinfo=timezone.utc)  # noqa: E731
+    # recorded_at is a naive UTC column, price_checked_at an aware one.
+    price_checked_at = utc(price_checked_at)
+    rows = sorted(((p, utc(at), src) for p, at, src in history), key=lambda r: r[1])
     found = [(p, at) for p, at, src in rows if src in OFFICIAL_SOURCES and p]
     if price_rm and price_checked_at and (not rows or rows[-1][2] in OFFICIAL_SOURCES)             and (not found or price_checked_at > found[-1][1]):
         found.append((price_rm, price_checked_at))
