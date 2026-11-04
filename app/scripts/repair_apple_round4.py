@@ -71,7 +71,7 @@ LLM_FIXES = {
          ["Hardware-accelerated H.264, HEVC, ProRes, and ProRes RAW", "Video decode engine",
           "Two video encode engines", "Two ProRes encode and decode engines", "AV1 decode"]),
 }
-CHECK = {C5: {"max_ram_gb": 36, "power_supply_details": "96W USB-C Power Adapter"}}
+CHECK = {C5: {"max_ram_gb": 36, "power_supply_details": "96W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)"}}
 
 
 class Refused(RuntimeError):

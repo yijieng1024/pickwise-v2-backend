@@ -40,7 +40,7 @@ def test_m5_max_14_is_36gb_max_and_96w():
     fields, failures = apple_fields.parse(_section(LR, 14), _config("M5 Max", 18, 32), "MacBook Pro")
     assert failures == []
     assert fields["max_ram_gb"] == 36
-    assert fields["power_supply_details"] == "96W USB-C Power Adapter"
+    assert fields["power_supply_details"] == "96W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)"
     assert fields["weight_kg"] == 1.62, "footnote digit not stripped from 1.62kg8"
     assert fields["display_resolution"] == "3024x1964"
     assert fields["external_display_support"].startswith("Supports up to four external displays")
@@ -51,8 +51,8 @@ def test_m5_pro_15_core_charger_is_70w_and_18_core_is_96w():
     18-core CPU or M5 Max"."""
     pro15, _ = apple_fields.parse(_section(LR, 14), _config("M5 Pro", 15, 16), "MacBook Pro")
     pro18, _ = apple_fields.parse(_section(LR, 14), _config("M5 Pro", 18, 20), "MacBook Pro")
-    assert pro15["power_supply_details"] == "70W USB-C Power Adapter"
-    assert pro18["power_supply_details"] == "96W USB-C Power Adapter"
+    assert pro15["power_supply_details"] == "70W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)"
+    assert pro18["power_supply_details"] == "96W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)"
     assert (pro15["max_ram_gb"], pro18["max_ram_gb"]) == (48, 64), "memory is keyed by GPU cores"
 
 
@@ -60,7 +60,7 @@ def test_m6_reads_its_own_lines():
     fields, failures = apple_fields.parse(_section(LR, 14), _config("M6", 12, 12), "MacBook Pro")
     assert failures == []
     assert (fields["max_ram_gb"], fields["weight_kg"]) == (32, 1.55), "153GB/s bandwidth read as memory?"
-    assert fields["power_supply_details"] == "70W USB-C Power Adapter"
+    assert fields["power_supply_details"] == "70W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)"
     assert fields["external_display_support"].startswith("Supports up to two external displays")
 
 
@@ -68,14 +68,14 @@ def test_16_inch_section_is_its_own():
     fields, failures = apple_fields.parse(_section(LR, 16), _config("M5 Max", 18, 40, size=16), "MacBook Pro")
     assert failures == []
     assert (fields["max_ram_gb"], fields["weight_kg"], fields["display_resolution"]) == (128, 2.15, "3456x2234")
-    assert fields["power_supply_details"] == "140W USB-C Power Adapter"
+    assert fields["power_supply_details"] == "140W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)"
 
 
 def test_proled_resolution_and_charger_wording():
     fields, failures = apple_fields.parse(_section(PROLED, 14), _config("M5 Pro", 15, 16), "MacBook Pro")
     assert failures == []
     assert fields["display_resolution"] == "3024x1986"
-    assert fields["power_supply_details"] == "70W Power Adapter"
+    assert fields["power_supply_details"] == "70W Power Adapter, USB-C to MagSafe 3 Cable (2m)"
     assert fields["weight_kg"] == 1.38
 
 
@@ -88,7 +88,7 @@ def test_neo_touch_id_by_storage_column(ssd, touch_id):
     assert (fields["max_ram_gb"], fields["weight_kg"], fields["display_resolution"]) == (8, 1.23, "2408x1506")
     assert fields["external_display_support"].startswith("Supports one external display")
     # The live page has "In the Box" (2026-11-04), after the macOS app list.
-    assert fields["power_supply_details"] == "20W USB-C Power Adapter"
+    assert fields["power_supply_details"] == "20W USB-C Power Adapter, USB-C Charge Cable (1.5m)"
     assert failures == []
 
 
@@ -137,4 +137,13 @@ def test_air_configurable_size_is_not_a_new_column():
     fields, failures = apple_fields.parse(section, config, "MacBook Air")
     assert failures == []
     assert fields["max_ram_gb"] == 32
-    assert fields["power_supply_details"] == "40W Dynamic Power Adapter with 60W Max"
+    assert fields["power_supply_details"] == "40W Dynamic Power Adapter with 60W Max, USB-C to MagSafe 3 Cable (2m)"
+
+
+def test_charger_without_its_cable_fails():
+    """The cable is part of the value (decided 2026-11-04): a page that drops it is a
+    failure, never a bare adapter line."""
+    section = _section(LR, 14).replace("USB-C to MagSafe 3 Cable (2m)", "Polishing cloth")
+    fields, failures = apple_fields.parse(section, _config("M6", 12, 12), "MacBook Pro")
+    assert fields["power_supply_details"] is None
+    assert [f["field"] for f in failures] == ["power_supply_details"]

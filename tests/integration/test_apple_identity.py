@@ -220,7 +220,7 @@ def test_code_parsed_fields_replace_the_llm_values(session, apple, monkeypatch):
                                                               ssd_gb=2048)], template, specs_dump=_LR_PAGE)
     assert result["status"] == "success" and result["field_parse_failures"] == [], result
     [row] = _rows(session, apple)
-    assert (row.max_ram_gb, row.power_supply_details) == (36, "96W USB-C Power Adapter")
+    assert (row.max_ram_gb, row.power_supply_details) == (36, "96W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)")
     assert (row.weight_kg, row.display_resolution) == (1.62, "3024x1964")
 
 

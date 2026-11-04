@@ -52,7 +52,7 @@ def _diff(result, key):
 def test_5c87abdd_gets_36gb_and_96w_from_the_parser():
     diff = _diff(r4.plan(_rows(), TEXTS), "5c87abdd-")
     assert diff["max_ram_gb"] == (128, 36)
-    assert diff["power_supply_details"] == ("70W USB-C Power Adapter", "96W USB-C Power Adapter")
+    assert diff["power_supply_details"] == ("70W USB-C Power Adapter", "96W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)")
 
 
 def test_5c87abdd_check_refuses_when_the_parser_disagrees():
@@ -70,7 +70,7 @@ def test_build_to_order_row_is_skipped():
 
 def test_build_to_order_exception_changes_only_its_named_field():
     result = r4.plan(_rows(), TEXTS)
-    assert _diff(result, "f24b8f91-") == {"power_supply_details": ("Supports charging via USB-C", "70W USB-C Power Adapter")}
+    assert _diff(result, "f24b8f91-") == {"power_supply_details": ("Supports charging via USB-C", "70W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)")}
     assert set(_diff(result, "9d521cf2-")) == {"media_engine_details"}, "max_ram_gb 999 must stay on a BTO row"
 
 
@@ -103,7 +103,7 @@ def test_failed_parse_changes_nothing_and_is_listed():
 
 def test_matching_values_are_not_changed():
     same = _row("5f0c1326-", "apple-macbook-pro-14-liquid-retina-m5-pro-15c-16g-48gb-1024gb", 14.2, "M5 Pro", 15, 16,
-                48, 1024, power_supply_details="70W USB-C Power Adapter")
+                48, 1024, power_supply_details="70W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)")
     assert _diff(r4.plan(_rows(**{"5f0c1326-": same}), TEXTS), "5f0c1326-") == {}
 
 

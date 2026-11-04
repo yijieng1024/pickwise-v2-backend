@@ -27,6 +27,7 @@ _LABEL = re.compile(rf"^{_ALT}(?: (?:or|and) {_ALT})*$")
 _ALT_FIND = re.compile(_ALT)
 _GB = re.compile(r"(\d+)GB(?!/s)")
 _ADAPTER = re.compile(r"^\d+W .*Power Adapter.*$")
+_CABLE = re.compile(r"^USB-C .*Cable\b.*$")
 _DISPLAYS = re.compile(r"Supports (?:up to )?(?:one|two|three|four|five|six|\d+) external displays?")
 _RESOLUTION = re.compile(r"(\d{3,4})(?:-by-|x)(\d{3,4}) native resolution")  # Pro "-by-", Neo "x"
 _WEIGHT = re.compile(rf"^Weight(?: \((.+)\))?: (\d+(?:\.\d+)?) ?kg\d*$")
@@ -118,8 +119,18 @@ def _weight(text: str, config: Mapping) -> float:
 
 
 def _charger(text: str, config: Mapping) -> str:
-    return _one([line for body in _chip_lines(_block(text, "In the Box"), config)
-                 for line in body if _ADAPTER.match(line)])
+    """The adapter and the charging cable from In the Box (decided 2026-11-04), e.g.
+    "70W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)". Not the laptop itself,
+    not the polishing cloth."""
+    values = []
+    for body in _chip_lines(_block(text, "In the Box"), config):
+        adapter = _one([line for line in body if _ADAPTER.match(line)])
+        try:
+            cable = _one([line for line in body if _CABLE.match(line)])
+        except Failed as e:
+            raise Failed(f"cable: {e}")
+        values.append(f"{adapter}, {cable}")
+    return _one(values)
 
 
 def _displays(text: str, config: Mapping) -> str:
