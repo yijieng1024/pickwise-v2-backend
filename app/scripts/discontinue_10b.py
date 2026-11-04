@@ -21,6 +21,7 @@ from sqlalchemy import create_engine, select
 from sqlmodel import Session
 
 from app.common.db_target import host_of, write_target
+from app.laptops.brand_model import LaptopBrand  # noqa: F401 - laptops.brand_id resolves on flush
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, last_official_price
 
 REPO = Path(__file__).resolve().parents[2]
