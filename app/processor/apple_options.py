@@ -1,13 +1,18 @@
 """
 Apple's configurator responses (step 10c, decided 2026-11-04), parsed into options and rules.
 
-`cto/update-config` lists every option of a standard config with a `priceDelta` relative
-to the kit that was sent, and flags the standard config's own value as `isDefault`. The
-add-on stored is relative to the standard config, so each delta has the default's delta
-subtracted: the same numbers come out whichever kit the call was made from.
+`cto/update-config` lists the options compatible with the kit that was sent, each with a
+`priceDelta` relative to that kit, and marks the kit's own values `isSelected`. The kit
+sent is the standard config, so a selected value is what it includes, and the add-on is
+the delta minus the selected one's (zero when the kit was sent unchanged). Not
+`isDefault`: that marks the collection's cheapest base (the 13-inch Air's 10-8 / 512GB)
+on every standard config of the collection (seen in the 10c dry run, 2026-11-04).
 
-`cto/dependency-switcher` answers "what happens if I pick X" with the kit before and
-after. Anything that changed besides X itself is a forced change, i.e. a rule.
+An option the configure page shows but update-config does not list (24GB on the 10-8
+Air, which needs the 10-core GPU chip) is reached through `cto/dependency-switcher`: it
+answers "what happens if I pick X" with the kit and price before and after. Anything
+that changed besides X itself is a forced change, i.e. a rule, and the price difference
+is X's add-on.
 
 The configure page (one standard config's buy page) gives the kit to send
 (`warmStateBootstrap.preselectedDimensions`), the two endpoints, and the labels. The
@@ -66,6 +71,12 @@ class Rule:
 
 
 @dataclass(frozen=True)
+class Switch:
+    rules: list[Rule]
+    add_on_rm: float   # the whole kit's price change, forced changes included
+
+
+@dataclass(frozen=True)
 class ConfigurePage:
     kit: dict[str, str]                 # Apple form field -> value, the standard config
     update_path: str                    # "/my/shop/api/cto/update-config?collection=...&fae=true"
@@ -107,16 +118,16 @@ def parse_update_config(payload: Any) -> list[Option]:
             continue
         try:
             compatible = entry["compatibleOptions"]
-            defaults = [value for value, o in compatible.items() if o["isDefault"]]
-            if len(defaults) != 1:
-                raise OptionsParseError(f"{key}: {len(defaults)} default options, expected 1")
+            selected = [value for value, o in compatible.items() if o["isSelected"]]
+            if len(selected) != 1:
+                raise OptionsParseError(f"{key}: {len(selected)} selected options, expected 1")
             priced = [o.get("priceDelta") is not None for o in compatible.values()]
             if any(priced) and not all(priced):
                 raise OptionsParseError(f"{key}: some options have a priceDelta and some do not")
-            base = _delta(compatible[defaults[0]]["priceDelta"]) if all(priced) else None
+            base = _delta(compatible[selected[0]]["priceDelta"]) if all(priced) else None
             for value, o in compatible.items():
                 add_on = None if base is None else round(_delta(o["priceDelta"]) - base, 2)
-                options.append(Option(group, value, add_on, bool(o["isDefault"]), bool(o["isBlocked"])))
+                options.append(Option(group, value, add_on, value == selected[0], bool(o["isBlocked"])))
         except (KeyError, TypeError, AttributeError) as exc:
             raise OptionsParseError(f"{key}: unexpected shape ({exc!r})") from exc
 
@@ -125,33 +136,45 @@ def parse_update_config(payload: Any) -> list[Option]:
     return options
 
 
-def _kit(overlay: dict, which: str) -> dict[str, str]:
+def _kit(overlay: dict, which: str) -> tuple[dict[str, str], float]:
     dimensions = overlay[which]["kitParts"]["dimensions"]
-    return {key: d["dimensionValue"] for key, d in dimensions.items()}
+    price = overlay[which]["priceData"]["amount"]
+    if not isinstance(price, (int, float)):
+        raise OptionsParseError(f"{which} price {price!r} is not a number")
+    return {key: d["dimensionValue"] for key, d in dimensions.items()}, float(price)
 
 
-def parse_dependency_switcher(payload: Any, trigger_group: str, trigger_value: str) -> list[Rule]:
-    """The forced changes when `trigger_group` is set to `trigger_value`; [] when none."""
+def parse_dependency_switcher(payload: Any, trigger_group: str, trigger_value: str) -> Switch:
+    """The forced changes when `trigger_group` is set to `trigger_value` ([] when none),
+    and what the switch costs."""
     try:
         overlay = payload["body"]["overlayContent"]
-        before, after = _kit(overlay, "currentKit"), _kit(overlay, "selectedKit")
+        (before, before_rm), (after, after_rm) = _kit(overlay, "currentKit"), _kit(overlay, "selectedKit")
     except (KeyError, TypeError) as exc:
         raise OptionsParseError("no currentKit/selectedKit in dependency-switcher response") from exc
     keys = [k for k in after if group_of(k) == trigger_group]
     if len(keys) != 1 or after[keys[0]] != trigger_value:
         found = {k: after[k] for k in keys}
         raise OptionsParseError(f"selected kit has {found}, not the requested {trigger_group}={trigger_value!r}")
-    return [
+    rules = [
         Rule(trigger_group, trigger_value, group, v)
         for k, v in after.items()
         if (group := group_of(k)) is not None and k != keys[0] and before.get(k) != v
     ]
+    return Switch(rules, round(after_rm - before_rm, 2))
 
 
 def triggers(options: list[Option]) -> list[Option]:
-    """The options worth a dependency-switcher call: ones the standard config does not
-    already have and can take."""
+    """The listed options worth a dependency-switcher call: ones the standard config does
+    not already have and can take."""
     return [o for o in options if o.group in _TRIGGER_GROUPS and not o.is_included and not o.is_blocked]
+
+
+def unlisted(options: list[Option], page: "ConfigurePage") -> list[tuple[str, str]]:
+    """(group, value) the configure page shows but update-config did not list: reachable
+    only through a forced change, so priced by the dependency-switcher."""
+    listed = {(o.group, o.value) for o in options}
+    return [key for key in page.labels if key[0] in _TRIGGER_GROUPS and key not in listed]
 
 
 # --------------------------------------------------------------------------- configure page

@@ -4,7 +4,9 @@ Apple build-to-order options for every standard config (step 10c, decided 2026-1
 Runs after the Apple buy page scrape, in the same job, and from
 app/scripts/backfill_apple_options.py. Per standard config (an Apple row with part
 numbers, active or inactive): its configure page, one `update-config` call, and one
-`dependency-switcher` call per option that can force a change, a few seconds apart.
+`dependency-switcher` call per option that can force a change (each listed one the
+config does not have, and each one the page shows but update-config does not list,
+which the switcher also prices), a few seconds apart.
 
 - The configure page is found through the newest stored buy-page raw row, which lists
   each configuration's slugs and part numbers in the same order.
@@ -128,7 +130,11 @@ def fetch_machine(target: Mapping, get: Get, pause: Callable[[], None]) -> dict:
     rules = []
     for option in apple_options.triggers(options):
         rules += apple_options.parse_dependency_switcher(
-            call(page.switcher_path, option.group, option.value), option.group, option.value)
+            call(page.switcher_path, option.group, option.value), option.group, option.value).rules
+    for group, value in apple_options.unlisted(options, page):
+        switch = apple_options.parse_dependency_switcher(call(page.switcher_path, group, value), group, value)
+        rules += switch.rules
+        options.append(apple_options.Option(group, value, switch.add_on_rm, False, False))
 
     chips = apple_options.chip_strings(target.get("section"))
     rows, labels_missing, chips_missing = [], [], []

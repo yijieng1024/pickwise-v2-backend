@@ -13,6 +13,8 @@ FIXTURES = Path(__file__).parent / "unit" / "fixtures" / "scraper"
 AIR_BUY = "https://www.apple.com/my/shop/buy-mac/macbook-air"
 AIR_SPECS = "https://www.apple.com/my/macbook-air/specs/"
 AIR13_SLUG = "13-inch-silver-m5-chip-10-core-cpu-8-core-gpu-16gb-memory-512gb-storage"
+# What each option adds to the RM 5,499 base, as the real calls priced them.
+ADD_ONS = {"24gb": 900.0, "32gb": 1800.0, "1tb": 1350.0, "2tb": 3600.0, "4tb": 8100.0}
 
 
 def fixture(name: str) -> str:
@@ -42,6 +44,9 @@ class FakeApple:
                     or dims["storage-dimensionCapacity"]["dimensionValue"] != "512gb"):
                 dims["processor-cpuCoreCount-gpuCoreCount"]["dimensionValue"] = "10-10"
             overlay["selectedKit"]["kitParts"]["dimensions"] = dims
+            overlay["currentKit"]["priceData"]["amount"] = 5499.0
+            overlay["selectedKit"]["priceData"]["amount"] = 5499.0 + sum(
+                ADD_ONS.get(value, 0.0) for key, value in parse_qsl(parsed.query) if key.startswith("uv."))
             return json.dumps(answer)
         if "/shop/buy-mac/" in parsed.path:
             return self.configure

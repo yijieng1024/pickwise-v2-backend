@@ -1,6 +1,6 @@
-"""Apple configurator responses (step 10c). Fixtures are the real responses from the
-2026-11-04 trial on the MacBook Air 13 (M5, 10-core CPU / 8-core GPU, 16GB, 512GB,
-RM 5,499). No database, no network."""
+"""Apple configurator responses (step 10c). Fixtures are real responses from 2026-11-04 on
+the MacBook Air 13 (M5): its 10-8 / 16GB / 512GB base (RM 5,499) and its 10-10 / 16GB / 1TB
+standard config (RM 6,849), each sent as itself. No database, no network."""
 import copy
 import json
 from pathlib import Path
@@ -16,11 +16,11 @@ def _load(name: str) -> dict:
     return json.loads((_DIR / name).read_text(encoding="utf-8"))
 
 
-# Sent as the standard kit with 1TB requested; Apple reset it, so deltas are already
-# relative to the standard config.
+# The 10-8 base: update-config lists only 16GB and 512GB, the rest needs the 10-10 chip.
 STANDARD = _load("apple_update_config_air13_standard.json")
-# Sent as a 24GB / 1TB kit: Apple's deltas are relative to that kit (24GB is 0, 16GB -900).
-FROM_24GB = _load("apple_update_config_air13_24gb.json")
+# The 10-10 / 1TB standard config: Apple marks the base's 512GB `isDefault`, its own 1TB
+# `isSelected`, and prices relative to 1TB (512GB is -1,350).
+ONE_TB = _load("apple_update_config_air13_1tb.json")
 SWITCH_24GB = _load("apple_dependency_switcher_air13_24gb.json")
 SWITCH_70W = _load("apple_dependency_switcher_air13_70w.json")
 
@@ -33,14 +33,17 @@ def _add_ons(options, group):
     return {o.value: o.add_on_rm for o in options if o.group == group}
 
 
-def test_add_ons_are_relative_to_the_standard_config_whichever_kit_was_sent():
-    expected_memory = {"16gb": 0.0, "24gb": 900.0, "32gb": 1800.0}
-    expected_storage = {"512gb": 0.0, "1tb": 1350.0, "2tb": 3600.0, "4tb": 8100.0}
-    for payload in (STANDARD, FROM_24GB):
-        options = apple_options.parse_update_config(payload)
-        assert _add_ons(options, "memory") == expected_memory
-        assert _add_ons(options, "storage") == expected_storage
-        assert _add_ons(options, "adapter") == {"40w": 0.0, "35w": 50.0, "70w": 50.0}
+def test_add_ons_are_relative_to_the_standard_config_sent():
+    options = apple_options.parse_update_config(ONE_TB)
+    assert _add_ons(options, "memory") == {"16gb": 0.0, "24gb": 900.0, "32gb": 1800.0}
+    assert _add_ons(options, "storage") == {"512gb": -1350.0, "1tb": 0.0, "2tb": 2250.0, "4tb": 6750.0}
+    assert _add_ons(options, "adapter") == {"40w": 0.0, "35w": 50.0, "70w": 50.0}
+
+
+def test_the_base_lists_only_what_its_chip_takes():
+    options = apple_options.parse_update_config(STANDARD)
+    assert _add_ons(options, "memory") == {"16gb": 0.0}
+    assert _add_ons(options, "storage") == {"512gb": 0.0}
 
 
 def test_unpriced_groups_have_no_add_on():
@@ -50,29 +53,30 @@ def test_unpriced_groups_have_no_add_on():
     assert {o.group for o in options} == {"chip", "memory", "storage", "adapter", "keyboard"}
 
 
-def test_included_options_are_the_standard_configs_own():
-    for payload in (STANDARD, FROM_24GB):
-        included = {(o.group, o.value) for o in apple_options.parse_update_config(payload) if o.is_included}
-        assert included == {("chip", "10-8"), ("memory", "16gb"), ("storage", "512gb"),
-                            ("adapter", "40w"), ("keyboard", "none")}
+def test_included_options_are_the_standard_configs_own_not_apples_default():
+    included = {(o.group, o.value) for o in apple_options.parse_update_config(ONE_TB) if o.is_included}
+    assert included == {("chip", "10-10"), ("memory", "16gb"), ("storage", "1tb"),
+                        ("adapter", "40w"), ("keyboard", "none")}
 
 
 def test_blocked_options_are_flagged():
-    # The trial saw no blocked option on this machine, so one is marked by hand.
-    payload = copy.deepcopy(STANDARD)
+    # No real response had a blocked option, so one is marked by hand.
+    payload = copy.deepcopy(ONE_TB)
     payload["body"]["options"]["storage-dimensionCapacity"]["compatibleOptions"]["4tb"]["isBlocked"] = True
     options = _by_key(apple_options.parse_update_config(payload))
     assert options[("storage", "4tb")].is_blocked
     assert [k for k, o in options.items() if o.is_blocked] == [("storage", "4tb")]
 
 
-def test_24gb_on_the_13_inch_forces_the_10_core_gpu_chip():
-    rules = apple_options.parse_dependency_switcher(SWITCH_24GB, "memory", "24gb")
-    assert rules == [apple_options.Rule("memory", "24gb", "chip", "10-10")]
+def test_24gb_on_the_13_inch_forces_the_10_core_gpu_chip_for_900():
+    switch = apple_options.parse_dependency_switcher(SWITCH_24GB, "memory", "24gb")
+    assert switch.rules == [apple_options.Rule("memory", "24gb", "chip", "10-10")]
+    assert switch.add_on_rm == 900.0, "RM 6,399 against the base's RM 5,499"
 
 
 def test_an_option_with_no_forced_change_gives_no_rule():
-    assert apple_options.parse_dependency_switcher(SWITCH_70W, "adapter", "70w") == []
+    switch = apple_options.parse_dependency_switcher(SWITCH_70W, "adapter", "70w")
+    assert switch.rules == [] and switch.add_on_rm == 50.0
 
 
 @pytest.mark.parametrize("payload", [
@@ -87,7 +91,7 @@ def test_malformed_update_config_fails_cleanly(payload):
 
 
 def test_unreadable_price_fails_cleanly():
-    payload = copy.deepcopy(STANDARD)
+    payload = copy.deepcopy(ONE_TB)
     payload["body"]["options"]["memory-dimensionMemory"]["compatibleOptions"]["24gb"]["priceDelta"] = "RM 900"
     with pytest.raises(apple_options.OptionsParseError):
         apple_options.parse_update_config(payload)
@@ -164,7 +168,7 @@ def test_one_machine_gets_every_option_rule_label_and_chip_string():
     assert by_key[("chip", "10-10")]["cpu_model"] == "Apple M5 (10-core)"
     assert by_key[("chip", "10-10")]["gpu_model"] == "10-core GPU"
     triggers = [("memory", "24gb"), ("memory", "32gb"), ("storage", "1tb"), ("storage", "2tb"), ("storage", "4tb")]
-    assert [(r["trigger_group"], r["trigger_value"]) for r in machine["rules"]] == triggers
+    assert sorted((r["trigger_group"], r["trigger_value"]) for r in machine["rules"]) == sorted(triggers)
     assert {(r["forced_group"], r["forced_value"]) for r in machine["rules"]} == {("chip", "10-10")}
     assert machine["labels_missing"] == [] and machine["chips_missing"] == []
     # The chip option is asked too (on the Pro a chip can force memory); here it forces nothing.
