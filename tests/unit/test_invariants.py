@@ -8,6 +8,9 @@ a dict lookup that misses just returns None and carries on.
 Cheapest tests in the project and they catch the nastiest class of bug.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
 from ._adapters import (
@@ -22,6 +25,7 @@ from ._adapters import (
     min_viable_score,
     portability_multipliers,
     purpose_modifiers,
+    resolve_gpu,
     use_case_priorities,
     use_case_slugs,
 )
@@ -139,29 +143,21 @@ def test_portability_multipliers_exact():
 # Apple GPU equivalence map
 # --------------------------------------------------------------------------
 
-EXPECTED_APPLE_MAP = {
-    "5-core": ("Intel UHD Graphics", 1533),
-    "8-core": ("Intel Arc 140T GPU", 6607),
-    "10-core": ("Adreno X2-90", 7618),
-    "12-core": ("Arc B390", 9000),  # M6, ADR-0010 Amendment III
-    "16-core": ("RTX 5050 Laptop", 14176),
-    "20-core": ("RTX 4060 Laptop", 17367),
-    "32-core": ("RTX 5070 Laptop", 19146),
-    "40-core": ("RTX 5070 Ti Laptop", 22465),
-}
+_PASSMARK = json.loads((Path(__file__).parent / "fixtures" / "passmark_apple_2026-11-04.json").read_text(encoding="utf-8"))
+_GPU_ROWS = [tuple(r) for r in _PASSMARK["gpu"]]
 
 
 def test_apple_map_is_monotonic_in_core_count():
-    """More GPU cores must never resolve to a weaker part. Currently true by
-    hand-checking; this makes it true by construction."""
-    entries = []
-    for key, target in apple_gpu_map().items():
-        cores = int("".join(c for c in key.split("-")[0] if c.isdigit()))
-        entries.append((cores, key, target))
-    entries.sort()
-    marks = [EXPECTED_APPLE_MAP.get(k, (None, None))[1] for _c, k, _t in entries]
-    known = [m for m in marks if m is not None]
-    assert known == sorted(known)
+    """More GPU cores must never resolve to a weaker part. Each key goes through the
+    runtime path (resolve_gpu_benchmark) against production's PassMark rows of
+    2026-11-04, so a swapped target or a moved mark fails here.
+
+    Until 2026-11-05 this looked up "8-core" in a map keyed "8 core gpu", found
+    nothing, and compared an empty list: it could not fail."""
+    by_cores = sorted(apple_gpu_map(), key=lambda key: int(key.split()[0]))
+    marks = [resolve_gpu(key, "", _GPU_ROWS)["score"] for key in by_cores]
+    assert None not in marks, dict(zip(by_cores, marks))
+    assert len(marks) == 8 and marks == sorted(set(marks)), dict(zip(by_cores, marks))
 
 
 def test_apple_map_has_no_unexpected_entries():
