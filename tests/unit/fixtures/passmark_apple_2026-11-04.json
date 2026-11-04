@@ -1,0 +1,455 @@
+{
+"source": "production cpu_benchmarks / gpu_benchmarks (PassMark), 2026-11-04",
+"cpu": [
+[
+"Apple A11 Bionic",
+4448
+],
+[
+"Apple A12 Bionic",
+5066
+],
+[
+"Apple A12X Bionic",
+10999
+],
+[
+"Apple A12Z Bionic",
+9365
+],
+[
+"Apple A13 Bionic",
+5809
+],
+[
+"Apple A14 Bionic",
+8542
+],
+[
+"Apple A15 Bionic",
+9858
+],
+[
+"Apple A16",
+9820
+],
+[
+"Apple A16 Bionic",
+10854
+],
+[
+"Apple A17 Pro",
+12159
+],
+[
+"Apple A18",
+12352
+],
+[
+"Apple A18 Pro",
+12806
+],
+[
+"Apple A18 Pro (MacBook Neo)",
+11824
+],
+[
+"Apple A19",
+14238
+],
+[
+"Apple A19 Pro",
+14763
+],
+[
+"Apple A8",
+1533
+],
+[
+"Apple A8X",
+2389
+],
+[
+"Apple A9",
+2077
+],
+[
+"Apple A9X",
+2510
+],
+[
+"Apple M1 8 Core 3200 MHz",
+14121
+],
+[
+"Apple M1 Max 10 Core 3200 MHz",
+22155
+],
+[
+"Apple M1 Pro 10 Core 3200 MHz",
+21934
+],
+[
+"Apple M1 Pro 8 Core 3200 MHz",
+17185
+],
+[
+"Apple M1 Ultra 20 Core",
+41396
+],
+[
+"Apple M2 8 Core 3500 MHz",
+15642
+],
+[
+"Apple M2 Max 12 Core 3680 MHz",
+26839
+],
+[
+"Apple M2 Pro 10 Core 3480 MHz",
+21970
+],
+[
+"Apple M2 Pro 12 Core 3480 MHz",
+26730
+],
+[
+"Apple M2 Ultra 24 Core",
+50753
+],
+[
+"Apple M3 8 Core",
+19056
+],
+[
+"Apple M3 Max 14 Core",
+36228
+],
+[
+"Apple M3 Max 16 Core",
+41210
+],
+[
+"Apple M3 Pro 11 Core",
+24787
+],
+[
+"Apple M3 Pro 12 Core",
+24108
+],
+[
+"Apple M3 Ultra 28 Core",
+68607
+],
+[
+"Apple M3 Ultra 32 Core",
+72850
+],
+[
+"Apple M4 10 Core",
+23566
+],
+[
+"Apple M4 8 Core",
+20702
+],
+[
+"Apple M4 9 Core",
+22184
+],
+[
+"Apple M4 Max 14 Core",
+38348
+],
+[
+"Apple M4 Max 16 Core",
+43862
+],
+[
+"Apple M4 Pro 12 Core",
+32723
+],
+[
+"Apple M4 Pro 14 Core",
+37932
+],
+[
+"Apple M5 10 Core",
+26767
+],
+[
+"Apple M5 Max 18 Core",
+57655
+],
+[
+"Apple M5 Pro 15 Core",
+49047
+],
+[
+"Apple M5 Pro 18 Core",
+57244
+],
+[
+"ARM Apple M1 (Virtual) 4 Core 0 MHz",
+10123
+],
+[
+"ARM Apple M1 Max (Virtual) 10 Core 0 MHz",
+21197
+],
+[
+"ARM Apple M5 Ultra 30 Core 0 MHz",
+75204
+],
+[
+"ARM Apple M5 Ultra 36 Core 0 MHz",
+87327
+],
+[
+"ARM Apple M6 12 Core 0 MHz",
+35823
+]
+],
+"gpu": [
+[
+"GeForce RTX 4050 Laptop GPU",
+14189
+],
+[
+"GeForce RTX 4060 Laptop GPU",
+17306
+],
+[
+"GeForce RTX 4070 Laptop GPU",
+19460
+],
+[
+"GeForce RTX 5050 Laptop GPU",
+13969
+],
+[
+"GeForce RTX 5060 Laptop GPU",
+16776
+],
+[
+"GeForce RTX 5070 Laptop GPU",
+19185
+],
+[
+"GeForce RTX 5070 Ti Laptop GPU",
+22531
+],
+[
+"Intel Arc",
+5478
+],
+[
+"Intel Arc 130T GPU",
+6054
+],
+[
+"Intel Arc 130V GPU",
+4518
+],
+[
+"Intel Arc 140T",
+5634
+],
+[
+"Intel Arc 140T GPU",
+6577
+],
+[
+"Intel Arc 140V GPU",
+5147
+],
+[
+"Intel Arc 140V GPU RI",
+4831
+],
+[
+"Intel Arc A310",
+5462
+],
+[
+"Intel Arc A310 LP",
+4872
+],
+[
+"Intel Arc A370M",
+5115
+],
+[
+"Intel Arc A380",
+6329
+],
+[
+"Intel Arc A380E",
+6290
+],
+[
+"Intel Arc A530M",
+8010
+],
+[
+"Intel Arc A580",
+12075
+],
+[
+"Intel Arc A730M",
+9808
+],
+[
+"Intel Arc A750",
+12639
+],
+[
+"Intel Arc A770",
+13379
+],
+[
+"Intel Arc A770M",
+11931
+],
+[
+"Intel Arc B370 GPU",
+8482
+],
+[
+"Intel Arc B390 GPU",
+9000
+],
+[
+"Intel Arc B570",
+14138
+],
+[
+"Intel Arc B580",
+16109
+],
+[
+"Intel Arc GPU",
+9445
+],
+[
+"Intel Arc Pro",
+5786
+],
+[
+"Intel Arc Pro 130T GPU",
+6126
+],
+[
+"Intel Arc Pro 140T GPU",
+6585
+],
+[
+"Intel Arc Pro A30M",
+6063
+],
+[
+"Intel Arc Pro A40/A50",
+5746
+],
+[
+"Intel Arc Pro A60",
+9797
+],
+[
+"Intel Arc Pro B370 GPU",
+9118
+],
+[
+"Intel Arc Pro B390 GPU",
+9680
+],
+[
+"Intel Arc Pro B50",
+12771
+],
+[
+"Intel Arc Pro B60",
+14584
+],
+[
+"Intel Arc Pro B70",
+18639
+],
+[
+"Intel UHD Graphics",
+1542
+],
+[
+"Intel UHD Graphics 600",
+310
+],
+[
+"Intel UHD Graphics 605",
+363
+],
+[
+"Intel UHD Graphics 610",
+681
+],
+[
+"Intel UHD Graphics 615",
+713
+],
+[
+"Intel UHD Graphics 617",
+804
+],
+[
+"Intel UHD Graphics 620",
+1038
+],
+[
+"Intel UHD Graphics 630",
+1223
+],
+[
+"Intel UHD Graphics 710",
+1045
+],
+[
+"Intel UHD Graphics 730",
+1544
+],
+[
+"Intel UHD Graphics 750",
+1682
+],
+[
+"Intel UHD Graphics 770",
+1908
+],
+[
+"Intel UHD Graphics P630",
+1731
+],
+[
+"Intel UHD Graphics P750",
+1668
+],
+[
+"Qualcomm Adreno X1-45 GPU",
+1904
+],
+[
+"Qualcomm Adreno X1-85 GPU",
+3077
+],
+[
+"Qualcomm Adreno X2-45 GPU",
+3478
+],
+[
+"Qualcomm Adreno X2-85 GPU",
+5575
+],
+[
+"Qualcomm Adreno X2-90 GPU",
+7722
+]
+]
+}

@@ -45,7 +45,7 @@ SCORING = (
      "weight_kg": _dist(1.2, 1.6, 2.5), "battery_wh": _dist(50.0, 72.0, 100.0),
      "cpu_mark": _dist(20000.0, 35823.0, 57244.0), "gpu_mark": _dist(5000.0, 9584.0, 20000.0)},
     [("ARM Apple M6 12 Core 0 MHz", 35823), ("Apple M5 Pro 18 Core", 57244)],
-    [("GeForce RTX 4060 Laptop GPU", 17306)],  # the 20-core Apple GPU's equivalent; nothing for 12-core
+    [("GeForce RTX 4060 Laptop GPU", 17306), ("Intel Arc B390 GPU", 9000)],  # the 20- and 12-core Apple GPUs' equivalents
 )
 PRO14 = laptop_models.Laptop(
     id=uuid.uuid4(), brand_id=uuid.uuid4(), model_code="apple-macbook-pro-14-liquid-retina-m6-12c-12g-16gb-1024gb",
@@ -53,8 +53,16 @@ PRO14 = laptop_models.Laptop(
     ram_gb=16, ssd_gb=1024, display_size_inch=14.2, weight_kg=1.55, battery_wh=72.4)
 
 
-def test_a_chip_with_only_its_gpu_unresolved_scores_with_the_flagged_neutral_like_the_detail_page():
+def test_the_m6_scores_on_its_own_benchmarks():
     chip = {"cpu_model": "Apple M6 (12-core)", "gpu_model": "12-core GPU"}
+    scores, reason = options_service.live_scores(PRO14, chip, {"memory": "32gb", "storage": "4tb"}, 16849.0, SCORING)
+    assert reason is None
+    assert all(isinstance(s["score"], int) for s in scores)
+    assert not any(s["flags"]["gpu_benchmark_unresolved"] or s["flags"]["cpu_benchmark_unresolved"] for s in scores)
+
+
+def test_a_chip_with_only_its_gpu_unresolved_scores_with_the_flagged_neutral_like_the_detail_page():
+    chip = {"cpu_model": "Apple M5 Pro (18-core)", "gpu_model": "14-core GPU"}  # no Apple GPU equivalent
     scores, reason = options_service.live_scores(PRO14, chip, {"memory": "32gb", "storage": "4tb"}, 16849.0, SCORING)
     assert reason is None
     assert all(isinstance(s["score"], int) and s["flags"]["gpu_benchmark_unresolved"] for s in scores)

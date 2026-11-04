@@ -76,6 +76,9 @@ _CORE_COUNT = re.compile(r"\(?(\d+)(?:\s*[-\u2011\u2013]\s*|\s+)core\)?")
 _QUALCOMM_PART = re.compile(r"\b(x[12][ep]?)[ \-\u2011\u2013]*(\d{2})[ \-\u2011\u2013]*(\d{3})\b")
 
 
+_ARM_APPLE = re.compile(r"^arm (apple .*?)(?: 0 mhz)?$")
+
+
 def _normalize(s: str) -> str:
     s = s.translate(_JUNK)
     s = unicodedata.normalize("NFKD", s)    
@@ -97,6 +100,11 @@ def _normalize(s: str) -> str:
     # After the collapse: it only removes separators, so it adds no whitespace
     # for a second pass to act on.
     s = _QUALCOMM_PART.sub(r"\1\2\3", s)
+    # PassMark writes some Apple rows "ARM Apple M6 12 Core 0 MHz", others "Apple M5 10 Core";
+    # the catalog writes neither the prefix nor the clock, so those rows only fuzzy-matched
+    # (M6 at 0.90, the CPU threshold). Apple rows only, 5 of 6,084, no collisions; a general
+    # "ARM"/"0 MHz" strip would rewrite 313 rows (ADR-0010 Amendment III).
+    s = _ARM_APPLE.sub(r"\1", s)
     return s.strip()
 
 def has_anchor_token(model_string: str) -> bool:
@@ -115,6 +123,7 @@ _APPLE_GPU_EQUIVALENT: dict[str, str] = {
     # Measured on both sides -- Apple score vs anchor score, Steel Nomad Light
     "40 core gpu": "GeForce RTX 5070 Ti Laptop GPU",  # 17022 vs 17324 (-1.7%), Steel Nomad 4158 vs 3865
     "20 core gpu": "GeForce RTX 4060 Laptop GPU",     # 10018 vs 9584 (+4.5%); RTX 3080 Laptop 10323 is a near tie the other way
+    "12 core gpu": "Intel Arc B390 GPU",              # M6, Steel Nomad 1515 vs 1539 (-1.6%); SNL 7069 vs 5927 (ADR-0010 Amendment III)
     "10 core gpu": "Qualcomm Adreno X2-90 GPU",       # Steel Nomad 1125 vs 1180
     "8 core gpu":  "Intel Arc 140T GPU",           # Steel Nomad 1030 vs 1025
 

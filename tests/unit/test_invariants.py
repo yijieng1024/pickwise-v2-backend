@@ -143,6 +143,7 @@ EXPECTED_APPLE_MAP = {
     "5-core": ("Intel UHD Graphics", 1533),
     "8-core": ("Intel Arc 140T GPU", 6607),
     "10-core": ("Adreno X2-90", 7618),
+    "12-core": ("Arc B390", 9000),  # M6, ADR-0010 Amendment III
     "16-core": ("RTX 5050 Laptop", 14176),
     "20-core": ("RTX 4060 Laptop", 17367),
     "32-core": ("RTX 5070 Laptop", 19146),
@@ -164,9 +165,10 @@ def test_apple_map_is_monotonic_in_core_count():
 
 
 def test_apple_map_has_no_unexpected_entries():
-    """Seven entries, each with a hand-verified Steel Nomad anchor. A new entry
+    """Eight entries, each with a hand-verified Steel Nomad anchor (the M6, ADR-0010
+    Amendment III, made it eight). A new entry
     appearing without going through that method should fail loudly."""
-    assert len(apple_gpu_map()) == 7
+    assert len(apple_gpu_map()) == 8
 
 
 def test_apple_map_targets_are_names_not_numbers():
