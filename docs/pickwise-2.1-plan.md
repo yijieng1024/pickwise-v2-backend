@@ -736,6 +736,8 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 - Rules for the code-parsed fields (`max_ram_gb`, `weight_kg`, `power_supply_details`, `external_display_support`, `display_resolution`, Touch ID), decided 2026-11-04:
   - Failed = no heading, no line for this chip, or more than one different value
   - Failed → the field stays null and is listed in a new result list `field_parse_failures`, beside `split_failures`. No LLM fallback
+  - On an update, a failed field keeps the stored value, the same rule as `fields_kept`, and is still listed in `field_parse_failures` (decided 2026-11-04). Keeping a stored value is not an LLM fallback
+  - `laptops.weight_kg` and `laptops.fingerprint_reader` are nullable (migration `e4b8d2f6a9c1`, decided 2026-11-04), so a failed parse on a new row writes null, not 0.0 / False, which would read as a measured weight and a confirmed "no Touch ID". Backend readers handle null; the frontend still types both as non-null
   - Footnote digits are stripped (`1.55kg8` → 1.55)
 - Repair: `repair_apple_round4.py`. Dry run table first → Jack OK → `--apply`, with a before/after snapshot in `backups/`
 - Rows to fix:
