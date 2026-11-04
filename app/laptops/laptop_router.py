@@ -5,7 +5,7 @@ from app.database import get_session
 from app.laptops.laptop_models import (
     Laptop, LaptopRead, LaptopDetailRead, LaptopCreate, LaptopUpdate, LaptopPriceHistory,
     LaptopPriceHistoryRead, LaptopEmbedding, LaptopStatus, HybridSearchRequest, LaptopSearchResult,
-    PriceSource,
+    PriceSource, last_official_price,
 )
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_model import LaptopFamily
@@ -240,7 +240,13 @@ def get_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
         laptop.gpu_model,
         family.name if family else None,
     )
-    return LaptopDetailRead.model_validate(laptop, update=marketplace_links(query))
+    extra = marketplace_links(query)
+    if laptop.status == LaptopStatus.DISCONTINUED.value:
+        price, at = last_official_price(
+            laptop.price_rm, laptop.price_checked_at,
+            [(h.price_rm, h.recorded_at, h.source) for h in laptop.price_history])
+        extra |= {"last_official_price_rm": price, "last_official_price_at": at}
+    return LaptopDetailRead.model_validate(laptop, update=extra)
 
 @router.put("/{laptop_id}", response_model=LaptopRead, dependencies=[Depends(get_current_admin)])
 def update_laptop(

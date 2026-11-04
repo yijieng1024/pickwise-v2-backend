@@ -246,6 +246,9 @@ class LaptopDetailRead(LaptopRead):
     # Marketplace search links (GET /laptops/{id} only). No prices from them.
     shopee_search_url: str
     lazada_search_url: str
+    # Discontinued only; null otherwise, and null when there is no recorded price.
+    last_official_price_rm: Optional[float] = None
+    last_official_price_at: Optional[datetime] = None
 
 class LaptopCreate(LaptopBase):
     pass
@@ -280,6 +283,23 @@ class PriceSource(str, Enum):
     APPLE_BUY_PAGE = "apple-buy-page"  # Apple's own price, from the Apple MY buy page
     GUIDE = "guide"  # a product guide import
     MANUAL = "manual"  # typed in by an admin
+
+
+# Every price before 2026-11-01 (null source) came from a maker's site or Jack, so all
+# of these count; a source added later is not official until it is listed here.
+OFFICIAL_SOURCES = {None, *(s.value for s in PriceSource)}
+
+
+def last_official_price(price_rm, price_checked_at, history) -> tuple[Optional[float], Optional[datetime]]:
+    """The discontinued details page's "Last official price" (ADR-0009 Amendment II).
+    history: (price_rm, recorded_at, source) rows. The newest official row, or price_rm
+    with price_checked_at when that check is newer and the newest row of all is official
+    (price_rm is that row's price). RM 0 is no price, never shown: (None, None)."""
+    rows = sorted(history, key=lambda r: r[1])
+    found = [(p, at) for p, at, src in rows if src in OFFICIAL_SOURCES and p]
+    if price_rm and price_checked_at and (not rows or rows[-1][2] in OFFICIAL_SOURCES)             and (not found or price_checked_at > found[-1][1]):
+        found.append((price_rm, price_checked_at))
+    return found[-1] if found else (None, None)
 
 
 class LaptopPriceHistory(SQLModel, table=True):

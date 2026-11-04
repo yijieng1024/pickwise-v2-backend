@@ -352,3 +352,30 @@ def test_ranking_omits_a_withheld_score(session, brand):
     assert len(stored) == 1
     assert stored[0].score is None
     assert stored[0].flags["score_withheld"] is True
+
+
+def test_details_page_last_official_price(session, admin_client, brand):
+    """GET /laptops/{id}: discontinued carries its last official price and date,
+    RM 0 with no history carries none, active carries neither (ADR-0009 Amendment II)."""
+    from datetime import datetime, timezone
+    from app.laptops.laptop_models import LaptopPriceHistory
+    from tests.integration.conftest import make_laptop
+
+    priced = make_laptop(brand.id, status="discontinued", price_rm=8299)
+    unpriced = make_laptop(brand.id, status="discontinued", price_rm=0)
+    active = make_laptop(brand.id, price_rm=4999)
+    session.add_all([priced, unpriced, active])
+    session.commit()
+    june = datetime(2026, 6, 25, tzinfo=timezone.utc)
+    session.add_all([LaptopPriceHistory(laptop_id=priced.id, price_rm=8299, recorded_at=june),
+                     LaptopPriceHistory(laptop_id=active.id, price_rm=4999, recorded_at=june)])
+    session.commit()
+
+    def get(laptop):
+        r = admin_client.get(f"/api/v2/laptops/{laptop.id}")
+        assert r.status_code == 200, r.text
+        return r.json()["last_official_price_rm"], (r.json()["last_official_price_at"] or "")[:10]
+
+    assert get(priced) == (8299, "2026-06-25")
+    assert get(unpriced) == (None, "")
+    assert get(active) == (None, "")
