@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.laptops.laptop_models import Laptop, LaptopLastPriceRead, last_official_fields
+from app.laptops.laptop_models import Laptop, LaptopLastPriceRead, LaptopStatus, last_official_fields
 from app.saved.models import SavedLaptop
 from app.users.auth import get_current_user
 from app.users.models import User
@@ -18,11 +18,13 @@ def list_saved(
     current_user: User = Depends(get_current_user),
 ):
     """The user's saved laptops as full laptop records, newest saved first. A
-    discontinued one carries its last official price, as on its details page."""
+    discontinued one carries its last official price, as on its details page. Suspended
+    ones are left out: suspended is hidden everywhere (ADR-0009 Amendment II)."""
     laptops = session.exec(
         select(Laptop)
         .join(SavedLaptop, SavedLaptop.laptop_id == Laptop.id)  # type: ignore[arg-type]
         .where(SavedLaptop.user_id == current_user.id)
+        .where(Laptop.status != LaptopStatus.SUSPENDED.value)
         .order_by(SavedLaptop.created_at.desc())  # type: ignore[attr-defined]
     ).all()
     return [LaptopLastPriceRead.model_validate(l, update=last_official_fields(l)) for l in laptops]

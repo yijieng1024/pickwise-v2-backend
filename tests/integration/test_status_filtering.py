@@ -390,12 +390,14 @@ def test_saved_list_carries_the_last_official_price(session, admin_client, brand
 
     gone = make_laptop(brand.id, status="discontinued", price_rm=8299)
     active = make_laptop(brand.id, price_rm=4999)
-    session.add_all([gone, active])
+    hidden = make_laptop(brand.id, status="suspended", price_rm=4999)
+    session.add_all([gone, active, hidden])
     session.commit()
     session.add_all([LaptopPriceHistory(laptop_id=gone.id, price_rm=8299,
                                         recorded_at=datetime(2026, 6, 25, tzinfo=timezone.utc)),
                      SavedLaptop(user_id=admin_user.id, laptop_id=gone.id),
-                     SavedLaptop(user_id=admin_user.id, laptop_id=active.id)])
+                     SavedLaptop(user_id=admin_user.id, laptop_id=active.id),
+                     SavedLaptop(user_id=admin_user.id, laptop_id=hidden.id)])
     session.commit()
     r = admin_client.get("/api/v2/saved/")
     assert r.status_code == 200, r.text
@@ -403,3 +405,4 @@ def test_saved_list_carries_the_last_official_price(session, admin_client, brand
     assert rows[str(gone.id)]["last_official_price_rm"] == 8299
     assert rows[str(gone.id)]["last_official_price_at"].startswith("2026-06-25")
     assert rows[str(active.id)]["last_official_price_rm"] is None
+    assert str(hidden.id) not in rows, "a SUSPENDED laptop was on the Saved list"
