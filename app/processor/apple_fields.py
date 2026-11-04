@@ -28,7 +28,6 @@ _ALT_FIND = re.compile(_ALT)
 _GB = re.compile(r"(\d+)GB(?!/s)")
 _ADAPTER = re.compile(r"^\d+W .*Power Adapter.*$")
 _CABLE = re.compile(r"^USB-C .*Cable\b.*$")
-_DISPLAYS = re.compile(r"Supports (?:up to )?(?:one|two|three|four|five|six|\d+) external displays?")
 _RESOLUTION = re.compile(r"(\d{3,4})(?:-by-|x)(\d{3,4}) native resolution")  # Pro "-by-", Neo "x"
 _WEIGHT = re.compile(rf"^Weight(?: \((.+)\))?: (\d+(?:\.\d+)?) ?kg\d*$")
 _SIZE = re.compile(r"(\d+)(?:\.\d)?-inch \(diagonal\)")
@@ -133,10 +132,25 @@ def _charger(text: str, config: Mapping) -> str:
     return _one(values)
 
 
+def _display_line(line: str) -> Optional[str]:
+    """An external-display line, tidied, or None (decided 2026-11-04): kept are how many
+    displays, their resolution and refresh, and the ports they use; dropped are the
+    built-in display, port speed lines and links. A footnote digit after a unit goes
+    ("60Hz4"), and so does what only joined it to the next line (":", "or")."""
+    if not re.search(r"\bdisplays?\b", line) or "built-in" in line or "speeds" in line or line.startswith("Learn more"):
+        return None
+    line = re.sub(r"(?<=[a-z])\d{1,2}$", "", line)
+    return re.sub(r"(?:\s+or|\s*[:;,])+$", "", line).strip()
+
+
 def _displays(text: str, config: Mapping) -> str:
-    bodies = _chip_lines(_block(text, "External Display Support", "Display Support"), config)
-    _one([m.group(0) for body in bodies for line in body for m in [_DISPLAYS.search(line)] if m])
-    return _one(["; ".join(line for line in body if not line.startswith("Learn more")) for body in bodies])
+    values = []
+    for body in _chip_lines(_block(text, "External Display Support", "Display Support"), config):
+        kept = [k for k in map(_display_line, body) if k]
+        if not kept:
+            raise Failed("no external display line")
+        values.append("; ".join(kept))
+    return _one(values)
 
 
 def _resolution(text: str, config: Mapping) -> str:

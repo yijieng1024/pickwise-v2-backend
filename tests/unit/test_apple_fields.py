@@ -147,3 +147,39 @@ def test_charger_without_its_cable_fails():
     fields, failures = apple_fields.parse(section, _config("M6", 12, 12), "MacBook Pro")
     assert fields["power_supply_details"] is None
     assert [f["field"] for f in failures] == ["power_supply_details"]
+
+
+PRO_M5_PRO_DISPLAYS = (
+    "Supports up to three external displays over any combination of Thunderbolt and HDMI ports; "
+    "Three displays up to a native resolution of 6K at 60Hz or 4K at 144Hz; "
+    "One display up to a native resolution of 8K at 60Hz or 5K at 120Hz or 4K at 240Hz plus a second display "
+    "up to a native resolution of 5K at 120Hz or 4K at 200Hz; "
+    "Supports up to three external displays over a single Thunderbolt port")
+
+
+def test_displays_drop_built_in_port_speed_and_link_lines():
+    """External-display lines only (decided 2026-11-04)."""
+    fields, _ = apple_fields.parse(_section(LR, 14), _config("M5 Max", 18, 32), "MacBook Pro")
+    value = fields["external_display_support"]
+    for dropped in ("built-in display", "DisplayPort 2.1 speeds", "Learn more"):
+        assert dropped not in value
+
+
+def test_displays_strip_the_footnote_digit():
+    config = {"size": 13, "chip": "A18 Pro", "cpu_cores": 6, "gpu_cores": 5, "ram_gb": 8, "ssd_gb": 256}
+    fields, _ = apple_fields.parse(_text(NEO), config, "MacBook Neo")
+    assert fields["external_display_support"] == \
+        "Supports one external display with up to a native resolution of 4K at 60Hz", "60Hz4 kept its footnote"
+
+
+def test_displays_join_with_one_separator_and_no_stray_punctuation():
+    fields, _ = apple_fields.parse(_section(LR, 14), _config("M5 Pro", 15, 16), "MacBook Pro")
+    assert fields["external_display_support"] == PRO_M5_PRO_DISPLAYS
+
+
+def test_no_external_display_line_fails():
+    section = _section(LR, 14).replace("external displays", "screens").replace("displays up to", "screens up to") \
+        .replace("display up to", "screen up to")
+    fields, failures = apple_fields.parse(section, _config("M6", 12, 12), "MacBook Pro")
+    assert fields["external_display_support"] is None
+    assert {"field": "external_display_support", "reason": "no external display line"} in failures

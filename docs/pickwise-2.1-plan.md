@@ -728,7 +728,9 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 
 ### Apple fields parsed by code (step 10a, decided 2026-11-03)
 
-- Code parses the Apple specs page, not the LLM: max RAM (Memory section), weight, charger (In the Box), number of external displays
+- Code parses the Apple specs page, not the LLM: max RAM (Memory section), weight, charger (In the Box), external displays
+- External displays (decided 2026-11-04): code text from the page, external-display lines only. Kept: how many displays, their resolution and refresh, the ports they use. Dropped: the built-in display line, port speed lines, links. Footnote digits stripped (`60Hz4` → `60Hz`), lines joined with one `; ` and no stray `:` or `or`. No external-display line → failure, same rules
+- Charger (decided 2026-11-04): the adapter line and the charging cable line from In the Box for that chip, e.g. "70W USB-C Power Adapter, USB-C to MagSafe 3 Cable (2m)". Not the laptop itself or other items
 - Display resolution (decided 2026-11-04): parsed by code from the Display section, format `WxH`. Replaces "standardise to 3456x2234", which was wrong: that is only the 16-inch resolution
 - Touch ID (decided 2026-11-04): from the Neo specs page's per-column text ("Not available" / "Touch ID"), mapped to the storage configuration. Not the buy page, which does not show it. Air and Pro: not needed
 - Charger (decided 2026-11-04): parsed by code, matching chip + CPU cores to the In the Box line
