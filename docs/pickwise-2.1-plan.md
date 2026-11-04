@@ -809,6 +809,11 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 19. **Total** = the chip kit's price + the chosen options' add-ons on that kit. An option the chosen chip does not allow is a chip change: the cheapest chip kit that allows every choice. Checked against Apple's own totals on 5 combinations (Pro 14 M6 + 32GB + 4TB, Pro 14 PROLED M5 Pro 18c/20g + 64GB + 2TB, Pro 16 PROLED M5 Max 40g + 128GB + 8TB, Pro 14 Liquid Retina M5 Pro + 48GB + 2TB, Pro 16 Liquid Retina M5 Max 32g + 36GB + 4TB): all equal
 20. **Storage:** `laptop_options` keyed by product, size, line and chip (no `laptop_id`), with `kit_price_rm` on each kit's chip row; `laptop_option_rules` is dropped. A laptop finds its kits by its own product, size, line and chip. Kept: `chip_not_offered`, Neo skipped, `options_failed` (per chip kit) on failure
 
+*Decided 2026-11-04/05 (Jack): the configurator's score and the M6.*
+21. **Live Pick Score** (`GET /laptops/{id}/configure`): the standard row copied in memory with RAM, storage, CPU, GPU and price replaced, scored by the normal engine against the unchanged catalog ranges; never saved. Same rule as the detail page: one unresolved benchmark scores a flagged neutral 50, both unresolved withhold the score (null, with the reason).
+22. **M6 benchmarks** (ADR-0010 Amendment III): the 12-core GPU is aliased to Intel Arc B390 (Steel Nomad 1,515 vs 1,539); the CPU resolves exactly once "ARM" and "0 MHz" are dropped from "ARM Apple" rows.
+23. **No early Pick Score regeneration.** The M6 alias waits for the planned full recalculation (after the ASUS 20 and the new Apple machines are priced). Until then the 3 standard M6 rows show the stored flagged-neutral GPU score, while the configurator scores the M6 live on the Arc B390 alias, so the same machine can show two different scores.
+
 ### Scheduled scraping + notifications
 
 **Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked).
