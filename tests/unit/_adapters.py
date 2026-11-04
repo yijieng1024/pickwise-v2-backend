@@ -702,3 +702,7 @@ from app.scripts import repair_apple_round4  # noqa: E402,F401
 # catalog layer it must not change
 from app.agent.tools import laptop_lookup as lookup_laptop_tool  # noqa: E402,F401
 from app.agent.tools import market_price  # noqa: E402,F401
+
+
+# 10b step (f) - app/scripts/discontinue_10b.py
+from app.scripts import discontinue_10b  # noqa: E402,F401
