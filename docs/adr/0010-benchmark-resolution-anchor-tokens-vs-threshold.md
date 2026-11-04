@@ -555,3 +555,51 @@ bare 50.0. The CPU threshold question above lands in the same place. Until a
 `gpu_resolution` field exists on `PickScoreResponse.flags`, the golden snapshot
 records each laptop's resolved `cpu_mark` and `gpu_mark` so a diff shows
 `6607 → null` even when no flag does — a workaround, not an answer.
+
+## Amendment III — 2026-11-04: the Apple M6 (Jack's decision)
+
+The M6 entered through the Apple build-to-order configurator (step 10c): it is a
+chip kit on the MacBook Pro 14 Liquid Retina, `Apple M6 (12-core)` with a
+`12-core GPU`. Neither half resolved properly.
+
+### GPU: `12 core gpu` → Intel Arc B390 GPU
+
+Same method as the existing `_APPLE_GPU_EQUIVALENT` entries: the laptop part
+nearest the Apple GPU on a benchmark both have run on Notebookcheck, stored by
+card name and resolved against PassMark at runtime. The M6 12-core GPU scored
+**Steel Nomad 1,515** and **Steel Nomad Light 7,069** in Notebookcheck's Mac mini
+M6 review. The candidates:
+
+| Card | Steel Nomad | Steel Nomad Light | PassMark G3D |
+|---|---|---|---|
+| Intel Arc B390 (12 Xe3) | 1,539 (−1.6%) | 5,927 (+19%) | 9,000 |
+| GeForce RTX 4050 Laptop | 1,613 (−6%) | 6,206 (+14%) | 14,189 |
+| GeForce RTX 5050 Laptop | 1,814 (−16%) | 7,470 (−5%) | 13,969 |
+
+The two tests disagree, so the choice was made on two grounds. Steel Nomad is
+the test the 10- and 8-core entries were anchored on, and the B390 is nearest on
+it. It also keeps the Apple ladder in order: 10-core 7,722 < M6 9,000 < M5 Pro
+16-core 13,969. The RTX 4050's PassMark mark would put the M6 above the 16-core,
+and the RTX 5050 would tie it, since the derived 16-core entry already points
+there. On Notebookcheck's figures the M6 sits about 18% below the 16-core
+(derived as 0.857 × 10,018 Steel Nomad Light).
+
+Sources:
+- https://www.notebookcheck.net/Compact-powerhouse-with-the-2-nm-M6-SoC-Apple-Mac-mini-2026-Review.1401148.0.html
+- https://www.notebookcheck.net/Apple-M6-12-Core-GPU-Benchmarks-and-Specs.1401995.0.html
+
+### CPU: drop "ARM" and "0 MHz" from Apple rows only
+
+PassMark already has the M6, as `ARM Apple M6 12 Core 0 MHz` (35,823), but
+writes it with a prefix and a clock the catalog never uses, so it matched at
+0.90: exactly `CPU_CONFIDENCE_THRESHOLD`, one string edit from being gated.
+`_normalize` now drops both from names starting "arm apple". That changes 5
+of 6,084 CPU rows (M1 Virtual ×2, M5 Ultra ×2, M6), none of which then collides
+with another row. A general "ARM"/"0 MHz" strip was rejected: it would rewrite
+313 rows, almost all non-Apple ARM parts nobody has checked.
+
+`tests/unit/test_apple_m6_benchmarks.py` holds all of this against production's
+PassMark rows of 2026-11-04: the GPU resolves to the B390 by name, the CPU at 1.0,
+the ladder order, and no collisions. Pick Scores were not regenerated with this
+change; the M6 standard configs keep their flagged-neutral GPU score until the
+next `generate-all`.
