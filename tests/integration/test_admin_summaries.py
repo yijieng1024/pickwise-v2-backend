@@ -42,6 +42,7 @@ def test_awaiting_price_is_inactive_with_price_zero_only(admin_client, session, 
         make_laptop(brand.id, status=LaptopStatus.ACTIVE.value, price_rm=0),  # demoted to inactive by the write event
         make_laptop(brand.id, status=LaptopStatus.INACTIVE.value, price_rm=3999),  # delisted, not awaiting a price
         make_laptop(brand.id, status=LaptopStatus.SUSPENDED.value, price_rm=0),  # retired
+        make_laptop(brand.id, status=LaptopStatus.DISCONTINUED.value, price_rm=8299),  # no longer sold
     ])
     session.commit()
 
@@ -49,6 +50,7 @@ def test_awaiting_price_is_inactive_with_price_zero_only(admin_client, session, 
 
     assert body["attention"]["awaiting_price"] == 2
     assert body["catalog"]["inactive"] == 3 and body["catalog"]["suspended"] == 1
+    assert body["catalog"]["discontinued"] == 1
 
 
 def test_shares_count_active_laptops_only(admin_client, session, brand):

@@ -249,6 +249,7 @@ def dashboard_summary(session: Session = Depends(get_session)) -> dict:
         "catalog": {
             "active": counts.get(LaptopStatus.ACTIVE.value, 0),
             "inactive": counts.get(LaptopStatus.INACTIVE.value, 0),
+            "discontinued": counts.get(LaptopStatus.DISCONTINUED.value, 0),
             "suspended": counts.get(LaptopStatus.SUSPENDED.value, 0),
             "active_with_pickscore": generated,
             "active_with_embedding": with_embedding,
