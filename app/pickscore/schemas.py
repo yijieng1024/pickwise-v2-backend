@@ -16,7 +16,7 @@ class ScorableProduct:
     ram_gb: int
     storage_gb: int
     storage_type: Optional[str]
-    weight_kg: float
+    weight_kg: Optional[float]  # None scores a neutral 50, like any missing factor
     battery_wh: float
     display_size_inch: float
 

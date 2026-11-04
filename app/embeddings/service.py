@@ -81,7 +81,7 @@ def build_laptop_embedding_text(laptop: Laptop, brand_name: str) -> str:
         + (f" {laptop.display_resolution}" if laptop.display_resolution else "")
         + (f" {laptop.display_type}" if laptop.display_type else "")
         + (f" {laptop.display_refresh_rate_hz}Hz" if laptop.display_refresh_rate_hz else ""),
-        f"Weight: {laptop.weight_kg}kg",
+        f"Weight: {laptop.weight_kg}kg" if laptop.weight_kg is not None else "Weight: unknown",
         f"Battery: {laptop.battery_wh}Wh",
     ]
 

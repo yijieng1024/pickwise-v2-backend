@@ -195,9 +195,8 @@ def _relational_fallback(
     # relational problem, and it put every weight-constrained fallback back
     # under the gate (0.58 x 0.7 = 0.406).
     #
-    # On NULLs: both weight_kg and price_rm are NOT NULL on `laptops`, so the
-    # "row with an unknown weight" case does not arise. If either is ever made
-    # nullable, SQL drops those rows here (NULL <= x is NULL, not true), which
+    # On NULLs: weight_kg is nullable since 10a (2026-11-04: a failed Apple parse),
+    # and SQL drops those rows here (NULL <= x is NULL, not true), which
     # is the behaviour to want anyway -- an unknown weight is not evidence that
     # a laptop is light, and this is already the degraded path.
     if weight_max is not None:

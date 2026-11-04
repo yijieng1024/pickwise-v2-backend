@@ -319,7 +319,7 @@ def _pool_block(conv_laptops: list[ConversationLaptop], session: Session) -> Opt
         lines.append(
             f"- laptop_id={laptop.id} | {laptop.product_name} | RM {laptop.price_rm:.0f} | "
             f"{laptop.processor_model} | {laptop.gpu_model} | {laptop.ram_gb}GB RAM | "
-            f"{laptop.weight_kg}kg"
+            + (f"{laptop.weight_kg}kg" if laptop.weight_kg is not None else "weight unknown")
         )
     if not lines:
         return None

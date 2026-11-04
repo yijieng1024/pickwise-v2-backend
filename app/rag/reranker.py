@@ -90,13 +90,18 @@ def _budget_penalty(price: float, budget: Optional[float]) -> tuple[float, list[
     return 0.1, [f"price RM {price:.0f} is {over_ratio*100:.0f}% over budget (hard penalty)"]
 
 
-def _weight_penalty(weight_kg: float, weight_limit: Optional[float]) -> tuple[float, list[str]]:
+def _weight_penalty(weight_kg: Optional[float], weight_limit: Optional[float]) -> tuple[float, list[str]]:
     """
     Only active when the user explicitly asked for a portable laptop.
     Over the limit by ≤20% → 0.7 multiplier.
     Over the limit by >20% → 0.2 multiplier (heavy gaming laptops penalised hard).
     """
-    if weight_limit is None or weight_kg <= weight_limit:
+    if weight_limit is None:
+        return 1.0, []
+    if weight_kg is None:
+        # Unknown is not evidence of light: the soft penalty, not a pass.
+        return 0.7, [f"weight unknown, limit {weight_limit}kg (soft penalty)"]
+    if weight_kg <= weight_limit:
         return 1.0, []
 
     over_ratio = (weight_kg - weight_limit) / weight_limit

@@ -327,9 +327,6 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                 # stored value is kept like any other empty field (decided 2026-11-04).
                 parsed, failed = apple_fields.parse(apple_fields.section_for(sections, config["size"]), config, product)
                 data.update(parsed)
-                for key, missing in (("weight_kg", 0.0), ("fingerprint_reader", False)):
-                    if kind == "insert" and data[key] is None:
-                        data[key] = missing
                 if failed:
                     parse_failures.append({"raw_id": raw_id, "source_url": buy["url"],
                                            "model_code": data["model_code"], "failures": failed})

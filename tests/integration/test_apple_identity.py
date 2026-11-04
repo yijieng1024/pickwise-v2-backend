@@ -238,3 +238,11 @@ def test_failed_parse_keeps_the_stored_value_and_is_listed(session, apple, monke
     assert entry["model_code"] == CODE
     assert {f["field"] for f in entry["failures"]} == {"max_ram_gb", "weight_kg", "power_supply_details",
                                                        "external_display_support", "display_resolution"}
+
+
+def test_failed_parse_on_a_new_row_writes_null(session, apple, monkeypatch):
+    """Not 0.0 or False: those read as a measured weight and a confirmed "no Touch ID"
+    (columns nullable since migration e4b8d2f6a9c1)."""
+    result, _, _ = _run(session, monkeypatch, apple, [_config()])  # TWO_SIZES has none of the headings
+    [row] = _rows(session, apple)
+    assert (row.weight_kg, row.max_ram_gb) == (None, None), result["field_parse_failures"]

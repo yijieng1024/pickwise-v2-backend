@@ -97,7 +97,7 @@ class LaptopBase(SQLModel):
     external_display_support: Optional[str] = None
 
     # Part 6: Build, Battery & Connectivity
-    weight_kg: float
+    weight_kg: Optional[float]  # null = unknown (an Apple parse that failed, 10a)
     dimensions_cm: Optional[str] = None
     battery_wh: float 
     power_supply_details: Optional[str] = None 
@@ -112,7 +112,7 @@ class LaptopBase(SQLModel):
     audio_details: Optional[str] = None
     camera_details: Optional[str] = None
     facial_recognition: bool = Field(default=False)
-    fingerprint_reader: bool = Field(default=False)
+    fingerprint_reader: Optional[bool] = Field(default=False)  # null = unknown, 10a
 
     # Part 8: Security, Certifications & Extras
     security_features: Optional[str] = None  # Captures TPM, BIOS protection, McAfee
