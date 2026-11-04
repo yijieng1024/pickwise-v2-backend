@@ -76,7 +76,7 @@ def plan(
 
     result: dict[str, list] = {
         "inserts": [], "updates": [], "matched_suspended": [], "identity_conflicts": [],
-        "price_changes": [], "prices_not_overwritten": [], "not_on_buy_page": [],
+        "price_changes": [], "prices_not_overwritten": [], "not_on_buy_page": [], "relisted": [],
     }
     matched = set()
     for config in configs:
@@ -96,6 +96,10 @@ def plan(
                 "laptop_id": str(row["id"]), "model_code": row["model_code"], "existing": was, "incoming": now,
             })
             continue
+        # On sale again (ADR-0009 II): back to active, updated, and listed for step 11.
+        relist = row["status"] == "discontinued"
+        if relist:
+            result["relisted"].append({"laptop_id": str(row["id"]), "model_code": row["model_code"]})
         price = config.get("price_rm")
         source = latest_source.get(row["id"])
         write_price = bool(price) and price != row["price_rm"] and (not row["price_rm"] or source in REPLACEABLE_SOURCES)
@@ -107,7 +111,7 @@ def plan(
             )
         result["updates"].append({
             "laptop_id": str(row["id"]), "model_code": row["model_code"], "status": row["status"],
-            "config": dict(config), "write_price": write_price,
+            "config": dict(config), "write_price": write_price, "relist": relist,
         })
 
     result["not_on_buy_page"] = [

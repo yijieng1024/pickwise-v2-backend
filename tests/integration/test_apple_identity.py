@@ -246,3 +246,15 @@ def test_failed_parse_on_a_new_row_writes_null(session, apple, monkeypatch):
     result, _, _ = _run(session, monkeypatch, apple, [_config()])  # TWO_SIZES has none of the headings
     [row] = _rows(session, apple)
     assert (row.weight_kg, row.max_ram_gb) == (None, None), result["field_parse_failures"]
+
+
+def test_discontinued_row_on_the_buy_page_goes_back_to_active(session, apple, monkeypatch):
+    """ADR-0009 Amendment II: a discontinued machine on the buy page again is on sale."""
+    old = make_laptop(apple.id, model_code=CODE, processor_model="Apple M5 Pro (15-core)", display_size_inch=14.2,
+                      price_rm=9999.0, status="discontinued")
+    session.add(old)
+    session.commit()
+    result, _, _ = _run(session, monkeypatch, apple, [_config()])
+    session.refresh(old)
+    assert (old.status, old.price_rm) == ("active", 10299.0)
+    assert result["relisted"] == [{"laptop_id": str(old.id), "model_code": CODE}]

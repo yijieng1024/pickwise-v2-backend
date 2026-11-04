@@ -115,3 +115,18 @@ def test_rows_not_on_the_buy_page_are_listed_by_page():
     result = _plan(rows)
     assert [r["laptop_id"] for r in result["not_on_buy_page"]] == ["cto"], (
         "a row from another page was listed, or the build-to-order row was not")
+
+
+def test_discontinued_match_is_relisted_and_updated():
+    """On sale again (ADR-0009 Amendment II): updated, marked to go back to active, and
+    listed in relisted. A suspended match is still left alone (test above)."""
+    result = _plan([_row("d", status="discontinued")])
+    [update] = result["updates"]
+    assert (update["laptop_id"], update["relist"]) == ("d", True)
+    assert result["relisted"] == [{"laptop_id": "d", "model_code": CODE}]
+    assert result["matched_suspended"] == []
+
+
+def test_active_match_is_not_relisted():
+    result = _plan([_row("a")])
+    assert result["updates"][0]["relist"] is False and result["relisted"] == []

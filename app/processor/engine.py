@@ -17,7 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.logger import get_logger
 from app.laptops.family_service import resolve_family_id
-from app.laptops.laptop_models import Laptop, LaptopPriceHistory, PriceSource
+from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, PriceSource
 from app.laptops.price_guide import sku_key
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
@@ -245,7 +245,7 @@ def _variant_fields(variant, brand_id, image_urls, raw_specs_dump) -> dict:
 # Lists a record's result may carry, collected into the bulk job's result as they are.
 _RESULT_LISTS = (
     "identity_conflicts", "split_failures", "field_parse_failures", "fields_kept", "apple_configs_skipped",
-    "not_on_buy_page", "matched_suspended", "price_changes", "prices_not_overwritten", "unresolved_configs",
+    "not_on_buy_page", "matched_suspended", "relisted", "price_changes", "prices_not_overwritten", "unresolved_configs",
 )
 
 # Prepended to each specs-page size section on a buy-page run: the configurations are
@@ -355,6 +355,8 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                     if kept:
                         fields_kept.append({"laptop_id": str(laptop.id), "model_code": laptop.model_code, "fields": kept})
                     laptop.part_numbers = list(dict.fromkeys((laptop.part_numbers or []) + (config.get("part_numbers") or [])))
+                    if entry["relist"]:
+                        laptop.status = LaptopStatus.ACTIVE.value  # an unpriced row still drops to inactive
                     if entry["write_price"]:
                         laptop.price_rm = price
                         session.add(LaptopPriceHistory(laptop_id=laptop.id, price_rm=price,
@@ -379,7 +381,7 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
             "field_parse_failures": parse_failures,
             "apple_configs_skipped": skipped,
             "unresolved_configs": [{**c, "raw_id": raw_id} for c in unresolved],
-            **{key: planned[key] for key in ("not_on_buy_page", "matched_suspended", "identity_conflicts",
+            **{key: planned[key] for key in ("not_on_buy_page", "matched_suspended", "relisted", "identity_conflicts",
                                               "price_changes", "prices_not_overwritten")},
         }
     except Exception as e:
