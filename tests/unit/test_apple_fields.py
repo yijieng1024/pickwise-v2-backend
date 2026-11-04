@@ -126,3 +126,15 @@ def test_no_section_for_the_size_fails_every_field():
     assert set(fields) == set(apple_fields._PARSERS)
     assert all(v is None for v in fields.values())
     assert {f["reason"] for f in failures} == {"no specs section for 15-inch"}
+
+
+def test_air_configurable_size_is_not_a_new_column():
+    """Air's 24GB column reads "24GB / 24GB unified memory / Configurable to: / 32GB": the
+    lone 32GB is an option, not a column opening on 32GB with nothing above 24."""
+    air = _text("apple_macbook_air_specs.txt")
+    section = apple_fields.section_for(apple_name.size_sections(air, "MacBook Air"), 15)
+    config = {"size": 15, "chip": "M5", "cpu_cores": 10, "gpu_cores": 10, "ram_gb": 24, "ssd_gb": 1024}
+    fields, failures = apple_fields.parse(section, config, "MacBook Air")
+    assert failures == []
+    assert fields["max_ram_gb"] == 32
+    assert fields["power_supply_details"] == "40W Dynamic Power Adapter with 60W Max"

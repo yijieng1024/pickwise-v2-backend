@@ -1,0 +1,546 @@
+Product image
+
+Finish
+Sky Blue Silver Starlight Midnight
+
+Price
+
+Chip
+Apple M5 chip
+10-core CPU with 4 super cores and 6 efficiency cores
+8‑core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+153GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode and decode engine
+AV1 decode
+Configurable to:
+M5 with 10‑core CPU and 10‑core GPU
+Apple M5 chip
+10-core CPU with 4 super cores and 6 efficiency cores
+10‑core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+153GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode and decode engine
+AV1 decode
+Apple M5 chip
+10-core CPU with 4 super cores and 6 efficiency cores
+10‑core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+153GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode and decode engine
+AV1 decode
+
+Memory
+16GB
+16GB unified memory
+Configurable to:
+24GB or 32GB
+16GB
+16GB unified memory
+Configurable to:
+24GB or 32GB
+24GB
+24GB unified memory
+Configurable to:
+32GB
+
+Storage1
+512GB
+512GB SSD
+Configurable to:
+1TB, 2TB or 4TB
+1TB
+1TB SSD
+Configurable to:
+2TB or 4TB
+1TB
+1TB SSD
+Configurable to:
+2TB or 4TB
+
+Display
+Liquid Retina display
+13.6-inch (diagonal) LED-backlit display with IPS technology;2 2560x1664 native resolution at 224 pixels per inch
+500 nits brightness
+Colour
+Support for 1 billion colours
+Wide colour (P3)
+True Tone technology
+
+Battery and Power3
+Up to 18 hours video streaming
+Up to 15 hours wireless web
+Built-in 53.8‑watt‑hour lithium‑polymer battery
+40W Dynamic Power Adapter with 60W Max
+USB-C to MagSafe 3 Cable (2m)
+Fast-charge capable with 70W or higher USB PD power source
+
+Charging and Expansion
+MagSafe 3 charging port
+3.5mm headphone jack
+Two Thunderbolt 4 (USB-C) ports with support for:
+Charging
+DisplayPort
+Thunderbolt 4 (up to 40Gb/s)
+USB 4 (up to 40Gb/s)
+MagSafe 3 3.5mm headphone jack Thunderbolt 4 (USB-C)
+
+External Display Support
+Supports up to two external displays:
+Two displays up to a native resolution of 6K at 60Hz or 4K at 144Hz
+One display up to a native resolution of 8K at 60Hz or 5K at 120Hz or 4K at 240Hz
+Supports up to two external displays over a single Thunderbolt port
+Simultaneously supports the built-in display at full native resolution
+Thunderbolt 4 (USB‑C) ports support native DisplayPort 1.4 speeds (up to HBR3) with DSC capability
+
+Video Playback
+Supported formats include HEVC, H.264, AV1 and ProRes
+HDR with Dolby Vision, HDR10+/HDR10 and HLG
+
+Audio Playback
+Supported formats include AAC, MP3, Apple Lossless, FLAC, Dolby Digital, Dolby Digital Plus and Dolby Atmos
+
+Keyboard and Trackpad
+Backlit Magic Keyboard with:
+78 (ANSI) or 79 (ISO) keys including 12 full-height function keys
+Touch ID
+Ambient light sensor
+Force Touch trackpad for precise cursor control and pressure‑sensing capabilities; enables Force clicks, accelerators, pressure‑sensitive drawing and Multi‑Touch gestures
+
+Wireless
+Apple N1 wireless networking chip
+Wi-Fi 7 (802.11be)4
+Bluetooth 6
+Thread networking technology
+
+Camera
+12MP Center Stage camera with support for Desk View
+1080p HD video recording
+Advanced image signal processor with computational video
+
+Audio
+Four-speaker sound system
+Support for Spatial Audio when playing music or video with Dolby Atmos on built-in speakers
+Spatial Audio with dynamic head tracking when using supported models of AirPods,
+AirPods Pro and AirPods Max5
+Three-mic array with directional beamforming
+Voice Isolation and Wide Spectrum microphone modes for enhanced voice clarity in audio and video calls
+3.5mm headphone jack with advanced support for high‑impedance headphones
+
+Operating Requirements
+Line voltage: 100V to 240V AC
+Frequency: 50Hz to 60Hz
+Operating temperature: 10° to 35° C
+Storage temperature: –25° to 45° C
+Relative humidity: 0% to 90% non-condensing
+Operating altitude: tested up to 3,000 metres
+Maximum storage altitude: 4,500 metres
+Maximum shipping altitude: 10,500 metres
+
+Size and Weight
+Height: 1.13cm
+Width: 30.41cm
+Depth: 21.5cm
+Weight: 1.23kg6
+Depth:
+21.5cm
+Width:
+30.41cm
+Height:
+1.13cm
+
+Operating System
+macOS
+macOS is the most advanced desktop operating system in the world. Siri AI7 is a powerful and capable assistant with personal context understanding, broad world knowledge and onscreen awareness. Express yourself through photos and images, save time with Safari and get more done with Apple Intelligence7 seamlessly integrated into your everyday apps and experiences. And iPhone Mirroring, window tiling, Sidecar and more help you stay productive.
+
+Apple Intelligence7
+Apple Intelligence is the personal intelligence system that helps you write, express yourself and get things done effortlessly. With groundbreaking privacy protections, it gives you peace of mind that no one else can access your data — not even Apple.
+Learn more
+
+Accessibility
+Accessibility features help people with disabilities get the most out of their new MacBook Air. With built‑in support for vision, hearing, mobility and learning, you can create and do amazing things.
+Learn more
+Features include:
+VoiceOver
+Zoom
+Motion, display and text settings
+Accessibility Reader
+Accessibility Keyboard
+Switch Control
+Closed Captions
+Background Sounds
+Personal Voice and Live Speech
+
+Built‑in Apps8
+App Store
+Books
+Calendar
+Contacts
+FaceTime
+Find My
+Freeform
+Games
+GarageBand
+Home
+iMovie
+iPhone Mirroring
+Journal
+Keynote
+Mail
+Maps
+Messages
+Music
+Notes
+Numbers
+Pages
+Passwords
+Phone
+Photo Booth
+Photos
+Podcasts
+Preview
+QuickTime Player
+Reminders
+Safari
+Shortcuts
+Stocks
+Time Machine
+Tips
+TV
+Voice Memos
+Weather
+
+In the Box
+13-inch MacBook Air
+40W Dynamic Power Adapter with 60W Max
+USB-C to MagSafe 3 Cable (2m)
+
+Limited Warranty and Service
+Your MacBook Air comes with 90 days of complimentary technical support and a one‑year limited warranty. Purchase AppleCare+ for Mac to extend your coverage to three years from your AppleCare+ purchase date and add unlimited repairs for accidental damage from handling, each subject to a service fee of RM 469 for screen damage or external enclosure damage, or RM 1,429 for other repairable accidental damage.
+Learn more
+
+Configure to Order
+Configure your MacBook Air with
+these options at apple.com:
+Options for model starting at
+M5 with 10‑core CPU and 10‑core GPU
+24GB or 32GB unified memory
+1TB, 2TB or 4TB SSD
+35W Dual USB‑C Port Power Adapter or
+70W USB‑C Power Adapter
+Options for model starting at
+24GB or 32GB unified memory
+2TB or 4TB SSD
+35W Dual USB‑C Port Power Adapter or
+70W USB-C Power Adapter
+Options for model starting at
+32GB unified memory
+2TB or 4TB SSD
+35W Dual USB‑C Port Power Adapter or
+70W USB‑C Power Adapter
+
+MacBook Air and the Environment
+MacBook Air is designed to reduce environmental impact:9
+See the MacBook Air Product Environmental Report (PDF)
+- opens in new tab
+Progress towards Apple 2030
+Apple 2030 is our commitment to be carbon-neutral for our entire carbon footprint. Our plan to decarbonise products is rigorous and focuses on transitioning to low-carbon electricity, designing with recycled and low-carbon materials, and prioritising lower-carbon ways of shipping products, like ocean freight.
+See Apple’s commitment
+Materials
+MacBook Air is made with 55% recycled content,10 including:
+100% recycled aluminium in the enclosure and trackpad gel plate
+100% recycled cobalt and 95% recycled lithium in the battery
+100% recycled gold plating in all Apple‑designed printed circuit boards and all connectors
+100% recycled rare earth elements in all magnets
+100% recycled tin solder in all Apple‑designed printed circuit boards
+90% recycled steel in the keyboard feature plate and trackpad beam
+Energy
+50% of manufacturing electricity for MacBook Air is sourced from low-carbon electricity11
+ENERGY STAR® certified12
+Packaging
+100% fibre-based packaging13
+Waste
+No established final assembly sites generate waste sent to landfill as part of Apple’s Zero Waste Programme14
+Smarter chemistry15
+All of the materials used in Apple products, accessories and packaging are covered by the requirements of our Regulated Substances Specification
+(PDF) opens in new tab
+, which was one of the first in industry to restrict the use of key substances of concern. See the latest Environmental Progress Report
+(PDF) opens in new tab
+to understand Apple’s recent efforts in phasing out these chemistries.
+
+Finish
+Sky Blue Silver Starlight Midnight
+
+Price
+
+Chip
+Apple M5 chip
+10-core CPU with 4 super cores and 6 efficiency cores
+10‑core GPU
+Neural Accelerators
+Hardware-accelerated ray tracing
+16-core Neural Engine
+153GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode and decode engine
+AV1 decode
+
+Memory
+16GB
+16GB unified memory
+Configurable to:
+24GB or 32GB
+16GB
+16GB unified memory
+Configurable to:
+24GB or 32GB
+24GB
+24GB unified memory
+Configurable to:
+32GB
+
+Storage1
+512GB
+512GB SSD
+Configurable to:
+1TB, 2TB or 4TB
+1TB
+1TB SSD
+Configurable to:
+2TB or 4TB
+1TB
+1TB SSD
+Configurable to:
+2TB or 4TB
+
+Display
+Liquid Retina display
+15.3-inch (diagonal) LED-backlit display with IPS technology;2
+2880x1864 native resolution at 224 pixels per inch
+500 nits brightness
+Colour
+Support for 1 billion colours
+Wide colour (P3)
+True Tone technology
+
+Battery and Power3
+Up to 18 hours video streaming
+Up to 15 hours wireless web
+Built-in 66.5‑watt‑hour lithium‑polymer battery
+40W Dynamic Power Adapter with 60W Max
+USB-C to MagSafe 3 Cable (2m)
+Fast-charge capable with 70W or higher USB PD power source
+
+Charging and Expansion
+MagSafe 3 charging port
+3.5mm headphone jack
+Two Thunderbolt 4 (USB-C) ports with support for:
+Charging
+DisplayPort
+Thunderbolt 4 (up to 40Gb/s)
+USB 4 (up to 40Gb/s)
+MagSafe 3 3.5mm headphone jack Thunderbolt 4 (USB-C)
+
+External Display Support
+Supports up to two external displays:
+Two displays up to a native resolution of 6K at 60Hz or 4K at 144Hz
+One display up to a native resolution of 8K at 60Hz or 5K at 120Hz or 4K at 240Hz
+Supports up to two external displays over a single Thunderbolt port
+Simultaneously supports the built-in display at full native resolution
+Thunderbolt 4 (USB‑C) ports support native DisplayPort 1.4 speeds (up to HBR3) with DSC capability
+
+Video Playback
+Supported formats include HEVC, H.264, AV1 and ProRes
+HDR with Dolby Vision, HDR10+/HDR10 and HLG
+
+Audio Playback
+Supported formats include AAC, MP3, Apple Lossless, FLAC,
+Dolby Digital, Dolby Digital Plus and Dolby Atmos
+
+Keyboard and Trackpad
+Backlit Magic Keyboard with:
+78 (ANSI) or 79 (ISO) keys including 12 full-height function keys
+Touch ID
+Ambient light sensor
+Force Touch trackpad for precise cursor control and pressure-sensing capabilities; enables Force clicks, accelerators, pressure-sensitive drawing and Multi‑Touch gestures
+
+Wireless
+Apple N1 wireless networking chip
+Wi-Fi 7 (802.11be)4
+Bluetooth 6
+Thread networking technology
+
+Camera
+12MP Center Stage camera with support for Desk View
+1080p HD video recording
+Advanced image signal processor with computational video
+
+Audio
+Six-speaker sound system with force-cancelling woofers
+Support for Spatial Audio when playing music or video with Dolby Atmos on built-in speakers
+Spatial Audio with dynamic head tracking when using supported models of AirPods,
+AirPods Pro and AirPods Max5
+Three-mic array with directional beamforming
+Voice Isolation and Wide Spectrum microphone modes for enhanced voice clarity in audio and video calls
+3.5mm headphone jack with advanced support for high‑impedance headphones
+
+Operating Requirements
+Line voltage: 100V to 240V AC
+Frequency: 50Hz to 60Hz
+Operating temperature: 10° to 35° C
+Storage temperature: –25° to 45° C
+Relative humidity: 0% to 90% non-condensing
+Operating altitude: tested up to 3,000 metres
+Maximum storage altitude: 4,500 metres
+Maximum shipping altitude: 10,500 metres
+
+Size and Weight
+Height: 1.15cm
+Width: 34.04cm
+Depth: 23.76cm
+Weight: 1.51kg6
+Depth:
+23.76cm
+Width:
+34.04cm
+Height:
+1.15cm
+
+Operating System
+macOS
+macOS is the most advanced desktop operating system in the world. Siri AI7 is a powerful and capable assistant with personal context understanding, broad world knowledge and onscreen awareness. Express yourself through photos and images, save time with Safari and get more done with Apple Intelligence7 seamlessly integrated into your everyday apps and experiences. And iPhone Mirroring, window tiling, Sidecar and more help you stay productive.
+
+Apple Intelligence7
+Apple Intelligence is the personal intelligence system that helps you write, express yourself and get things done effortlessly. With groundbreaking privacy protections, it gives you peace of mind that no one else can access your data — not even Apple.
+Learn more
+
+Accessibility
+Accessibility features help people with disabilities get the most out of their new MacBook Air. With built-in support for vision, hearing, mobility and learning, you can create and do amazing things.
+Learn more
+Features include:
+VoiceOver
+Zoom
+Motion, display and text settings
+Accessibility Reader
+Accessibility Keyboard
+Switch Control
+Closed Captions
+Background Sounds
+Personal Voice and Live Speech
+
+Built‑in Apps8
+App Store
+Books
+Calendar
+Contacts
+FaceTime
+Find My
+Freeform
+Games
+GarageBand
+Home
+iMovie
+iPhone Mirroring
+Journal
+Keynote
+Mail
+Maps
+Messages
+Music
+Notes
+Numbers
+Pages
+Passwords
+Phone
+Photo Booth
+Photos
+Podcasts
+Preview
+QuickTime Player
+Reminders
+Safari
+Shortcuts
+Stocks
+Time Machine
+Tips
+TV
+Voice Memos
+Weather
+
+In the Box
+15-inch MacBook Air
+40W Dynamic Power Adapter with 60W Max
+USB-C to MagSafe 3 Cable (2m)
+
+Limited Warranty and Service
+Your MacBook Air comes with 90 days of complimentary technical support and a one‑year limited warranty. Purchase AppleCare+ for Mac to extend your coverage to three years from your AppleCare+ purchase date and add unlimited repairs for accidental damage from handling, each subject to a service fee of RM 469 for screen damage or external enclosure damage, or RM 1,429 for other repairable accidental damage.
+Learn more
+
+Configure to Order
+Configure your MacBook Air with
+these options at apple.com:
+Options for model starting at
+24GB or 32GB unified memory
+1TB, 2TB or 4TB SSD
+35W Dual USB‑C Port Power Adapter or
+70W USB‑C Power Adapter
+Options for model starting at
+24GB or 32GB unified memory
+2TB or 4TB SSD
+35W Dual USB‑C Port Power Adapter or
+70W USB-C Power Adapter
+Options for model starting at
+32GB unified memory
+2TB or 4TB SSD
+35W Dual USB‑C Port Power Adapter or
+70W USB‑C Power Adapter
+
+MacBook Air and the Environment
+MacBook Air is designed to reduce environmental impact:9
+See the MacBook Air Product Environmental Report (PDF)
+- opens in new tab
+Progress towards Apple 2030
+Apple 2030 is our commitment to be carbon-neutral for our entire carbon footprint. Our plan to decarbonise products is rigorous and focuses on transitioning to low-carbon electricity, designing with recycled and low-carbon materials, and prioritising lower-carbon ways of shipping products, like ocean freight.
+See Apple’s commitment
+Materials
+MacBook Air is made with 55% recycled content,10 including:
+100% recycled aluminium in the enclosure and trackpad gel plate
+100% recycled cobalt and 95% recycled lithium in the battery
+100% recycled gold plating in all Apple‑designed printed circuit boards and all connectors
+100% recycled rare earth elements in all magnets
+100% recycled tin solder in all Apple‑designed printed circuit boards
+90% recycled steel in the keyboard feature plate and trackpad beam
+Energy
+50% of manufacturing electricity for MacBook Air is sourced from low-carbon electricity11
+ENERGY STAR® certified12
+Packaging
+100% fibre-based packaging13
+Waste
+No established final assembly sites generate waste sent to landfill as part of Apple’s Zero Waste Programme14
+Smarter chemistry15
+All of the materials used in Apple products, accessories and packaging are covered by the requirements of our Regulated Substances Specification
+(PDF) opens in new tab
+, which was one of the first in industry to restrict the use of key substances of concern. See the latest Environmental Progress Report
+(PDF) opens in new tab
+to understand Apple’s recent efforts in phasing out these chemistries.

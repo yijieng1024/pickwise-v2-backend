@@ -96,8 +96,12 @@ def _max_ram(text: str, config: Mapping) -> int:
         return max((int(g) for line in lines for g in _GB.findall(line)), default=None)
     values = []
     for body in _chip_lines(_block(text, "Memory"), config):
-        # An unlabelled body is one column per configuration, each opening on its base size.
-        cols = _columns(body, re.compile(r"^\d+GB$")) or [body]
+        # An unlabelled body is one column per configuration, each opening on its base size
+        # followed by "<size> unified memory"; a lone "32GB" after "Configurable to:" is an
+        # option inside a column, not a new one (Air, 2026-11-04).
+        opens = {line for line, nxt in zip(body, body[1:]) if re.fullmatch(r"\d+GB", line)
+                 and nxt.startswith(f"{line} unified memory")}
+        cols = _columns(body, re.compile("^(?:" + "|".join(map(re.escape, opens)) + ")$")) if opens else [body]
         values += [v for v in map(most, cols) if v is not None]
     return _one(values)
 
