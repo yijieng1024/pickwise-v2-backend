@@ -785,12 +785,14 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 2. **Add-on prices:** first a read-only trial of Apple's configurator API on one machine (MacBook Air 13 standard config), then decide how prices are stored
 3. **Existing rows:** all 134 `laptop_customizations` rows are replaced (bad data, wrong categories)
 4. **Build-to-order rows:** the 10 build-to-order Mac rows become "standard config + options", not rows of their own. The Pick Score of a chosen configuration is calculated live with the same formula, but configured results are **not** added to the catalog ranking ranges (ranges stay standard configs only)
+5. **Source of options (decided 2026-11-04, after the trial):** add-on prices and combination rules come from Apple's `cto/update-config` and `cto/dependency-switcher` (plain GETs, the same calls the buy page makes). Trial on the MacBook Air 13 (4 calls, all 200, no blocking): one `update-config` call returns every option's add-on price relative to the configuration sent, and prices add up exactly; `dependency-switcher` returns the forced changes (24GB or 1TB on the 13-inch switches to the 10-core GPU chip at no extra cost). On failure the stored options are kept and the machine is listed in a result list `options_failed` for step 11's notifications
+6. **When it runs:** inside the weekly Apple buy page run (step 11), after the buy page scrape
 
 ### Scheduled scraping + notifications
 
 **Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked).
 
-**Apple MY buy page:** its own weekly GitHub Actions run, separate from the general weekly scrape (Apple standard configs and RM prices come from the buy page).
+**Apple MY buy page:** its own weekly GitHub Actions run, separate from the general weekly scrape (Apple standard configs and RM prices come from the buy page). After the buy page scrape, the same run fetches each standard config's options, add-on prices and combination rules (step 10c); a failure keeps the stored options and lists the machine in `options_failed`.
 
 **Pipeline per run**
 1. Scrape → `raw_scrap_laptops`
@@ -834,7 +836,7 @@ A laptop that fails stays inactive, and the notification says which condition fa
 **Notifications (new feature)**
 - Email through Brevo (already set up for auth emails) + in-app notifications in the admin
 - Recipient: Jack (admin) only for now. Design the table so user notifications can be added later without a rewrite
-- Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed); processor result lists `model_codes_replaced`, `identity_conflicts`, `split_failures`, `field_parse_failures`, `matched_suspended`, `not_on_buy_page`, `relisted` when not empty
+- Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed); processor result lists `model_codes_replaced`, `identity_conflicts`, `split_failures`, `field_parse_failures`, `matched_suspended`, `not_on_buy_page`, `relisted`, `options_failed` when not empty
 
 ### Price
 - Details page shows the official price + a "Last Checked" date. Price history only records changes, so a separate last-checked timestamp is needed; until scheduled scraping (step 9) is live it reflects the last manual scrape
