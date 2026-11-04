@@ -22,13 +22,13 @@ from typing import Iterable, Mapping, Optional
 
 from langchain_core.tools import tool
 from rapidfuzz import fuzz
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlmodel import Session
 
 from app.database import engine
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_model import LaptopFamily
-from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus
+from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, last_official_price
 
 FLOOR = 75  # the catalog layer's _CATALOG_THRESHOLD
 CLOSE = 10
@@ -56,8 +56,11 @@ def _config(row: Mapping) -> dict:
     out = {"laptop_id": str(row["id"]), "product_name": row["product_name"], "status": row["status"]}
     if row["status"] == LaptopStatus.DISCONTINUED.value:
         out["no_longer_sold"] = True
-        out["last_official_price_rm"] = row.get("last_price_rm")
-        out["last_official_price_date"] = row.get("last_price_date")
+        if row.get("last_price_rm"):
+            out["last_official_price_rm"] = row["last_price_rm"]
+            out["last_official_price_date"] = row.get("last_price_date")
+        else:
+            out["last_official_price"] = "No recorded price"
     else:
         out["price_rm"] = row["price_rm"]
     return out
@@ -98,26 +101,28 @@ def rank(query: str, rows: Iterable[Mapping]) -> dict:
 
 
 def read_rows(session: Session) -> list[dict]:
-    """Active and discontinued laptops with brand, family and last price."""
-    latest = (select(LaptopPriceHistory.laptop_id, func.max(LaptopPriceHistory.recorded_at).label("at"))
-              .group_by(LaptopPriceHistory.laptop_id).subquery())
+    """Active and discontinued laptops with brand, family and, for discontinued ones,
+    the last official price (the details page's rule, laptop_models.last_official_price)."""
     stmt = (
         select(Laptop.id, Laptop.product_name, LaptopBrand.name.label("brand"), Laptop.status, Laptop.family_id,
                LaptopFamily.name.label("family_name"), Laptop.display_size_inch, Laptop.release_year,
-               Laptop.price_rm, LaptopPriceHistory.price_rm.label("last_price_rm"), latest.c.at)
+               Laptop.price_rm, Laptop.price_checked_at)
         .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
         .outerjoin(LaptopFamily, LaptopFamily.id == Laptop.family_id)
-        .outerjoin(latest, latest.c.laptop_id == Laptop.id)
-        .outerjoin(LaptopPriceHistory, (LaptopPriceHistory.laptop_id == Laptop.id)
-                   & (LaptopPriceHistory.recorded_at == latest.c.at))
         .where(Laptop.status.in_(_FOUND))  # type: ignore[attr-defined]
     )
-    rows = []
-    for r in session.execute(stmt).mappings():
-        row = dict(r)
-        at = row.pop("at")
+    rows = [dict(r) for r in session.execute(stmt).mappings()]
+    gone = [r["id"] for r in rows if r["status"] == LaptopStatus.DISCONTINUED.value]
+    history: dict = {}
+    if gone:
+        for h in session.execute(select(LaptopPriceHistory.laptop_id, LaptopPriceHistory.price_rm,
+                                        LaptopPriceHistory.recorded_at, LaptopPriceHistory.source)
+                                 .where(LaptopPriceHistory.laptop_id.in_(gone))):  # type: ignore[attr-defined]
+            history.setdefault(h.laptop_id, []).append((h.price_rm, h.recorded_at, h.source))
+    for row in rows:
+        price, at = last_official_price(row["price_rm"], row.pop("price_checked_at"), history.get(row["id"], []))
+        row["last_price_rm"] = price
         row["last_price_date"] = at.date().isoformat() if at else None
-        rows.append(row)
     return rows
 
 
@@ -127,6 +132,7 @@ def lookup_laptop(name: str) -> dict:
     Returns match "single" (one product line, with its configurations and status),
     "candidates" (several product lines match: ask the user which one, never choose),
     or "none". A configuration with no_longer_sold is discontinued: say it is no longer
-    sold, give its last official price and date, and do not recommend it."""
+    sold, give its last official price and date (or say "No recorded price" when that is
+    what it carries; never RM 0), and do not recommend it."""
     with Session(engine) as session:
         return rank(name, read_rows(session))
