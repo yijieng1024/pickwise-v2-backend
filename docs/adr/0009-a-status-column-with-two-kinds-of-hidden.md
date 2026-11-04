@@ -255,8 +255,11 @@ and Pick Score ranges and regeneration. Added:
 - The name lookup Pico uses (`lookup_laptop`) finds `active` and
   `discontinued` rows, never `inactive` or `suspended`, and returns candidates
   rather than picking one when the name is ambiguous.
-- `GET /laptops/{id}` keeps returning any status (wishlists and old
-  conversations link to it); the page labels a discontinued row.
+- `GET /laptops/{id}` returns `active`, `inactive` and `discontinued` (wishlists
+  and old conversations link to it; the page labels a discontinued row) and is
+  a 404 for `suspended`. The admin edit page reads `GET /admin/laptops/{id}`,
+  admin only, any status, same payload (decided 2026-11-04). `GET /saved/` and
+  Compare leave suspended rows out too.
 - The admin Dashboard counts all four states.
 
 **The 409 delete message** names both states: "Set status to 'discontinued'
