@@ -48,9 +48,9 @@ Different user groups (students, people who don't understand specs, people decid
 | PROLED family (decided 2026-11-03) | PROLED XDR MacBook Pro is its own family (touchscreen), an exception to the line + screen size rule, by Jack's choice |
 | PROLED families by size (decided 2026-11-03) | PROLED families split by size: 'Apple MacBook Pro 14 PROLED' now, 'Apple MacBook Pro 16 PROLED' when 16-inch rows exist. No 16-inch PROLED row exists yet: the LLM only extracted 14-inch configs |
 | Apple buy page (decided 2026-11-03) | Apple standard configs and RM prices come from the Apple MY buy page; specs come from the specs page. No Apple re-run until this is built |
-| Apple buy-page price policy (decided 2026-11-03) | Source `apple-buy-page`, recorded in price history. It may overwrite a price whose latest history row has no source (or is its own); a `guide`, `manual` or `page` price is kept and listed as `prices_not_overwritten`. New rows are inactive; going live is step 11. A buy-page config matching a suspended row is not updated and is listed as `matched_suspended`. Apple rows on no buy page are not touched and are listed as `not_on_buy_page` |
+| Apple buy-page price policy (decided 2026-11-03) | Source `apple-buy-page`, recorded in price history. It may overwrite a price whose latest history row has no source (or is its own); a `guide`, `manual` or `page` price is kept and listed as `prices_not_overwritten`. New rows are inactive; going live is step 11. A buy-page config matching a suspended row is not updated and is listed as `matched_suspended`. Apple rows on no buy page are not touched and are listed as `not_on_buy_page`. A specs page that cannot be split into its screen-size sections fails the record and is listed as `split_failures` |
 | Apple build-to-order rows (decided 2026-11-03) | The 10 build-to-order rows are kept for now, decide later |
-| Status `discontinued` (proposed 2026-11-03) | New status: Pico can see it when asked by name, not recommended, excluded from Pick Score ranges. Design survey pending |
+| Status `discontinued` (proposed 2026-11-03) | New status: Pico can see it when asked by name, not recommended, excluded from Pick Score ranges. Decided 2026-11-03, see "Discontinued status" below |
 | Apple specs re-scrape (decided 2026-11-03) | Apple specs pages may be re-scraped; the newest raw row wins (`source_url` is unique, so the re-scrape replaces the page's one raw row; old rows backed up first). Other brands: step 11 |
 | Apple brightness (decided 2026-11-03) | Apple `display_brightness_nits` = peak SDR brightness: PROLED XDR 2000, Liquid Retina XDR 1000. Chosen so PROLED's brighter screen shows in the data |
 | 5f0c1326 (decided 2026-11-03) | 5f0c1326 was created by the PROLED page and overwritten by the Liquid Retina page. It keeps the PROLED code; after the round 3 repair it goes from suspended to inactive (waiting for price) |
@@ -59,6 +59,8 @@ Different user groups (students, people who don't understand specs, people decid
 | New ASUS families (decided 2026-11-03) | TUF Gaming 16 FX610 joins TUF Gaming F16, and Zenbook 14 UX3480 joins Zenbook 14 OLED |
 | Embeddings and Pick Scores after the ASUS import (decided 2026-11-03) | Embeddings "Generate all" and Pick Score "Recalculate" wait until the 20 new laptops (created 2026-11-03) have prices |
 | Before Pick Score Recalculate (decided 2026-11-03) | Add M6 to `_APPLE_GPU_EQUIVALENT` (Steel Nomad method, like M5), and an explicit M6 CPU alias: 'Apple M6 (12-core)' matches at 0.90, exactly the threshold; check Apple A18 Pro (6-core) resolves (Neo processor name changed) |
+| Apple fields parsed by code (decided 2026-11-03) | Max RAM, weight, charger and number of external displays are parsed by code from the Apple specs page; Touch ID per configuration from the Apple MY buy page. A failed parse is logged as an error, never handed to the LLM. Display resolution standardised to 3456x2234. Next work, before the rest of step 11 (step 10a) |
+| Discontinued status (decided 2026-11-03) | New status value `discontinued`, with an ADR-0009 amendment. Shown with its last official price and date, never recommended, excluded from price guide lookup; `lookup_laptop` returns candidates when a name is ambiguous. Step 10b, after 10a |
 | Migrations check in CI (decided 2026-11-01) | Compares the whole push (`github.event.before..HEAD`), with a fallback for a new branch, instead of `HEAD^..HEAD`. Push `3133099` added a migration and ended on a docs commit, so the job was skipped |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
 | Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs |
@@ -95,6 +97,8 @@ Different user groups (students, people who don't understand specs, people decid
 | 8 | Use-case ranking pages | Needs the PickScore breakdown (step 6) and the "Ask Pico" entry (step 7), so it is built once, complete, right after them |
 | 9 | Thumbs up / down | The earlier it ships the better, since feedback data takes time to build up |
 | 10 | Scrapers → Scrapling (manufacturer + PassMark benchmarks) + benchmark date | Software compatibility needs more models under RM4000, which means scraping new laptops; switch the scrapers first so that work uses the new ones. PassMark added 2026-10-25 |
+| 10a | Apple fields parsed by code + repair round 4 (decided 2026-11-03) | The LLM filled some Apple fields wrong or incomplete (max RAM, charger, Touch ID, keyboard, media engine), including on active rows; fix the source in code before step 11 runs it on a schedule |
+| 10b | Discontinued status (decided 2026-11-03) | Three discontinued Apple rows are still active at an old price. After 10a |
 | 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status |
 | 12 | Software compatibility | The centrepiece of the new positioning; the largest piece of work |
 | 13 | XAI B, C: comparative explanations, constraint relaxation | Needs stable recommendation results first |
@@ -709,6 +713,9 @@ Data survey (2026-10-26, read-only): most items can be built from stored data wi
 - Crawl has no job record: store crawl results in `background_jobs`. Reason: on 2026-11-03 we could not find which of the 14 expected models was missing
 - ProArt P16 edbed64c stores 1600 nits (HDR peak); should be the SDR figure like other rows
 - Acer has `display_brightness_nits` on only 1 of 41 rows (and that one is 0)
+- `GET /` returns the deployed commit hash (`RENDER_GIT_COMMIT`), so it is clear which commit is live
+- Job page shows `split_failures` separately, not mixed in with the other result lists
+- A deploy interrupts a running job: Render restarts the service and the job ends as failed. Problem recorded only; the fix is not decided yet
 
 ### Benchmark name matching fix (step 6b)
 
@@ -719,9 +726,33 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 - Applied 2026-10-25 (option B, Jack approved): Qualcomm part numbers joined on all sides, plus an exact part-number match before fuzzy matching (an identity match, so it doesn't consult the 0.90 threshold; same idea as the `_laptop_variant` GPU rewrite). X1E-78-100 → PassMark id 6095 (22,695), the curated row. 9 new `_INTEGRATED_GPU_BY_CPU` entries with Intel ARK / AMD sources. Read-only recompute: 0 withheld (OmniBook 3 16-bz0037QU now 46 general), most of the 32 go down (the fabricated 50 was flattering weak parts), 202 others move by at most 1 point (percentile rounding), no previously resolved part changes row
 - Known gap: PassMark has one generic "Intel Graphics" row for the Panther Lake iGPUs (386H, 355, 325, 322, 356H), so these are likely under-scored, the 4-Xe-core 356H most of all
 
+### Apple fields parsed by code (step 10a, decided 2026-11-03)
+
+- Code parses the Apple specs page, not the LLM: max RAM (Memory section), weight, charger (In the Box), number of external displays
+- Touch ID comes from the Apple MY buy page, per configuration
+- A failed parse is logged as an error. No fallback to the LLM
+- Display resolution is standardised to 3456x2234
+- Repair: `repair_apple_round4.py`. Dry run table first → Jack OK → `--apply`, with a before/after snapshot in `backups/`
+- Rows to fix:
+  - `abc2df6f`: Neo 256GB, Touch ID + keyboard (active)
+  - `9d521cf2`: media engine incomplete (active)
+  - `5c87abdd`: max RAM 128 → 36, charger 70W → 96W
+  - `f24b8f91`, `5f0c1326`: charger wording
+
+### Discontinued status (step 10b, decided 2026-11-03)
+
+- New status enum value: `discontinued`. ADR-0009 gets an amendment for it
+- `lookup_laptop` tool: an ambiguous name returns the candidates; the tool never picks one by itself
+- Admin: dropdown option + status pill
+- Details page: a "discontinued" label with the last official price and its date
+- Price guide lookup excludes discontinued laptops
+- After it is built: `0670a4d3`, `7bee501c`, `bf390849` go to `discontinued` (today still active with an old price)
+
 ### Scheduled scraping + notifications
 
 **Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked).
+
+**Apple MY buy page:** its own weekly GitHub Actions run, separate from the general weekly scrape (Apple standard configs and RM prices come from the buy page).
 
 **Pipeline per run**
 1. Scrape → `raw_scrap_laptops`
@@ -765,7 +796,7 @@ A laptop that fails stays inactive, and the notification says which condition fa
 **Notifications (new feature)**
 - Email through Brevo (already set up for auth emails) + in-app notifications in the admin
 - Recipient: Jack (admin) only for now. Design the table so user notifications can be added later without a rewrite
-- Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed)
+- Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed); processor result lists `model_codes_replaced`, `identity_conflicts`, `split_failures`, `matched_suspended`, `not_on_buy_page` when not empty
 
 ### Price
 - Details page shows the official price + a "Last Checked" date. Price history only records changes, so a separate last-checked timestamp is needed; until scheduled scraping (step 9) is live it reflects the last manual scrape
