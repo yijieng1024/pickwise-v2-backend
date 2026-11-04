@@ -214,12 +214,13 @@ def test_weight_penalty_actually_fires():
     assert any("weight" in r for r in ranked[0].penalty_reasons)
 
 
-def test_unknown_weight_takes_the_soft_penalty_not_a_crash():
+def test_unknown_weight_is_dropped_under_a_weight_limit():
     """10a made weight_kg nullable (a failed Apple parse). An unknown weight is not
-    evidence of light, and None <= limit used to raise TypeError."""
-    assert _weight_penalty(None, None) == (1.0, [])
-    mult, reasons = _weight_penalty(None, 1.5)
-    assert mult == pytest.approx(0.7) and "weight unknown" in reasons[0]
+    evidence of light, so with a limit it is dropped, as the SQL filter drops it;
+    with no limit it is ranked as usual."""
+    unknown = _candidate(similarity=0.80, weight_kg=None)
+    assert rerank([unknown], UserConstraints(weight_limit=1.5)) == []
+    assert len(rerank([unknown], UserConstraints())) == 1
 
 
 @pytest.mark.parametrize(

@@ -96,11 +96,8 @@ def _weight_penalty(weight_kg: Optional[float], weight_limit: Optional[float]) -
     Over the limit by ≤20% → 0.7 multiplier.
     Over the limit by >20% → 0.2 multiplier (heavy gaming laptops penalised hard).
     """
-    if weight_limit is None:
+    if weight_limit is None or weight_kg is None:  # None weight with a limit: rerank drops it
         return 1.0, []
-    if weight_kg is None:
-        # Unknown is not evidence of light: the soft penalty, not a pass.
-        return 0.7, [f"weight unknown, limit {weight_limit}kg (soft penalty)"]
     if weight_kg <= weight_limit:
         return 1.0, []
 
@@ -154,6 +151,10 @@ def rerank(
 
     for c in candidates:
         laptop = c.laptop
+        if constraints.weight_limit is not None and laptop.weight_kg is None:
+            # Unknown weight is not evidence of light: dropped, as the SQL weight
+            # filter drops it (decided 2026-11-04).
+            continue
         penalty = 1.0
         penalty_reasons: list[str] = []
 
