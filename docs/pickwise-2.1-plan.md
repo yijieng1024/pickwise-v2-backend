@@ -719,6 +719,7 @@ Data survey (2026-10-26, read-only): most items can be built from stored data wi
 - Job page shows `split_failures` separately, not mixed in with the other result lists
 - A deploy interrupts a running job: Render restarts the service and the job ends as failed. Problem recorded only; the fix is not decided yet
 - Repair scripts get a test that runs the `--apply` path on the test DB (decided 2026-11-04): the step (f) missing brand import would have been caught
+- Apple options fetch: fewer calls (about 260 per weekly run today), e.g. skip re-fetching rules that have not changed (decided 2026-11-04)
 
 ### Benchmark name matching fix (step 6b)
 
@@ -797,6 +798,12 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 12. **Gap:** a chip sold only as an upgrade (on no standard config) needs its CPU/GPU strings from the specs page; the configurator API gives only a label such as "10-core CPU, 10-core GPU"
 13. **Build order**, small commits: (a) plan; (b) migration + models for the two tables (additive), and a parser for the two API responses tested against saved fixtures; (c) the fetch step after the buy page, plus a one-time backfill, dry run and an `--apply` test on the test DB; (d) public `GET /laptops/{id}/options` and `GET /laptops/{id}/configure?...` (total price + live Pick Score, never added to ranges); (e) Pico tool `get_configuration_options` replacing `calculate_custom_apple_price`, a system prompt line, eval cases; (f) script suspending the 10 rows and re-pointing `a3205f6d`'s reviews; (g) drop `laptop_customizations`, its router and the Apple category rows; (h) frontend configurator + read-only admin options page
 
+*Decided 2026-11-04 (Jack, after the step (c) dry run):*
+14. **Add-ons sum:** each option stores only its own share. An option Apple reaches only through a forced change (36GB on the Pro 14 M5 Pro forces M5 Max, 2TB and 96W) is priced by the dependency-switcher as the whole switch (+7,300), so its own share is that minus the add-ons of what it forces (+1,270). The configurator then sums the add-ons of the final configuration. Checked against Apple's own `update-config` totals on real combinations before any `--apply`
+15. **Call volume:** about 260 Apple calls per run is accepted (tidy-up: reduce it)
+16. **MacBook Neo:** no build-to-order, only its two standard configs. The options fetch skips it; not a failure, not in `options_failed`
+17. **Chips per size:** Apple's API lists every chip of the collection on every size (the Air 15 is offered the 13-inch-only 10-core / 8-core GPU chip; the Pro 16 the 14-inch-only M5 Pro 15c/16g and M6; Jack checked Apple's site). A chip option is stored only if that size's specs page lists the chip; otherwise it is not stored, its rules are dropped, and it is listed in a new result list `chip_not_offered`. A missing chip label is filled from the specs page ("12-core CPU, 12-core GPU")
+
 ### Scheduled scraping + notifications
 
 **Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked).
@@ -845,7 +852,7 @@ A laptop that fails stays inactive, and the notification says which condition fa
 **Notifications (new feature)**
 - Email through Brevo (already set up for auth emails) + in-app notifications in the admin
 - Recipient: Jack (admin) only for now. Design the table so user notifications can be added later without a rewrite
-- Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed); processor result lists `model_codes_replaced`, `identity_conflicts`, `split_failures`, `field_parse_failures`, `matched_suspended`, `not_on_buy_page`, `relisted`, `options_failed` when not empty
+- Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed); processor result lists `model_codes_replaced`, `identity_conflicts`, `split_failures`, `field_parse_failures`, `matched_suspended`, `not_on_buy_page`, `relisted`, `options_failed`, `chip_not_offered` when not empty
 
 ### Price
 - Details page shows the official price + a "Last Checked" date. Price history only records changes, so a separate last-checked timestamp is needed; until scheduled scraping (step 9) is live it reflects the last manual scrape
