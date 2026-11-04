@@ -43,6 +43,7 @@ from app.common.app_settings import AppSetting
 from app.common.llm_usage import LLMUsageLog
 from app.laptops.pickscore_general import LaptopPickScore
 from app.laptops.price_guide_model import PriceGuide
+from app.laptops.option_model import LaptopOption
 from app.users.avatar_model import UserAvatar
 
 load_dotenv()
