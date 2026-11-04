@@ -183,6 +183,29 @@ def quote(kits: Mapping[str, Kit], chip: str, choices: Mapping[str, str]) -> Quo
     return Quote(kit.chip, round(total, 2), kit.chip != chip)
 
 
+def kits_from_rows(rows: list[Mapping[str, Any]]) -> dict[str, Kit]:
+    """One product, size and line's stored `laptop_options` rows as chip kits."""
+    prices = {r["chip"]: r["kit_price_rm"] for r in rows if r["option_group"] == "chip"}
+    kits = {chip: Kit(chip, float(price), []) for chip, price in prices.items() if price is not None}
+    for r in rows:
+        if r["option_group"] != "chip" and r["chip"] in kits:
+            kits[r["chip"]].options.append(
+                Option(r["option_group"], r["value"], r["add_on_rm"], r["is_included"], r["is_blocked"]))
+    return kits
+
+
+def not_allowed(kits: Mapping[str, Kit], chip: str, choices: Mapping[str, str]) -> list[dict]:
+    """Each choice `chip` does not allow, with what it does allow and which chips offer
+    the choice instead. Empty when the configuration is valid."""
+    kit = kits[chip]
+    return [
+        {"group": group, "value": value,
+         "allowed": [o.value for o in kit.options if o.group == group and not o.is_blocked],
+         "offered_by": [c for c, k in kits.items() if k.allows(group, value)]}
+        for group, value in choices.items() if not kit.allows(group, value)
+    ]
+
+
 # --------------------------------------------------------------------------- configure page
 
 def _json_after(page: str, marker: str) -> Any:

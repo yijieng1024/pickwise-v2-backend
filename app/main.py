@@ -17,6 +17,7 @@ from app.scraper.router import router as scraper_router
 from app.processor.router import router as processor_router
 from app.benchmark.router import router as benchmark_router
 from app.laptops.pickscore_router import router as pickscore_router
+from app.laptops.options_router import router as laptop_options_router
 from app.embeddings.router import router as embedding_router
 from app.rag.router import router as rag_router
 from app.agent.router import router as agent_router
@@ -121,6 +122,7 @@ app.include_router(scraper_router, prefix=API_PREFIX)
 app.include_router(processor_router, prefix=API_PREFIX)
 app.include_router(benchmark_router, prefix=API_PREFIX)
 app.include_router(pickscore_router, prefix=API_PREFIX)
+app.include_router(laptop_options_router, prefix=API_PREFIX)
 app.include_router(embedding_router, prefix=API_PREFIX)
 app.include_router(rag_router, prefix=API_PREFIX)
 app.include_router(agent_router, prefix=API_PREFIX)

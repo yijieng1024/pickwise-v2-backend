@@ -693,6 +693,7 @@ from app.processor import apple_buy  # noqa: E402,F401
 # Apple configurator responses (10c) - app/processor/apple_options.py
 from app.processor import apple_options  # noqa: E402,F401
 from app.scraper import apple_options_fetch  # noqa: E402,F401
+from app.laptops import options_service  # noqa: E402,F401 - the configurator (10c step d)
 
 
 # Apple fields read by code (10a) - app/processor/apple_fields.py
