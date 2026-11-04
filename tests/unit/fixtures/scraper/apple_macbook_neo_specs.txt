@@ -1,0 +1,201 @@
+Product image
+
+Finish
+Silver
+Blush
+Citrus
+Indigo
+
+Price
+
+Chip
+Apple A18 Pro chip
+6‑core CPU with 2 performance cores and 4 efficiency cores
+5-core GPU
+Hardware-accelerated ray tracing
+16-core Neural Engine
+60GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode and decode engine
+AV1 decode
+Apple A18 Pro chip
+6‑core CPU with 2 performance cores and 4 efficiency cores
+5-core GPU
+Hardware-accelerated ray tracing
+16-core Neural Engine
+60GB/s memory bandwidth
+Media Engine
+Hardware-accelerated H.264, HEVC, ProRes and ProRes RAW
+Video decode engine
+Video encode engine
+ProRes encode and decode engine
+AV1 decode
+
+Memory
+8GB
+8GB unified memory
+8GB
+8GB unified memory
+
+Storage1
+256GB
+256GB SSD
+512GB
+512GB SSD
+
+Display
+Liquid Retina display
+13.0-inch (diagonal) LED-backlit display with IPS technology;2 2408x1506 native resolution at 219 pixels per inch
+500 nits brightness
+Colour
+Support for 1 billion colours
+sRGB colour
+
+Battery and Power3
+Up to 16 hours video streaming
+Up to 11 hours wireless web
+Built-in 36.5‑watt‑hour lithium‑ion battery
+20W USB-C Power Adapter
+USB-C Charge Cable (1.5m)
+
+Charging and Expansion
+One USB 3 (USB-C) port with support for:
+Charging
+DisplayPort
+USB 3 (up to 10Gb/s)
+One USB 2 (USB-C) port with support for:
+Charging
+USB 2 (up to 480Mb/s)
+3.5mm headphone jack
+USB 3 (USB-C) USB 2 (USB-C)
+3.5mm headphone jack
+
+External Display Support
+Supports one external display with up to a native resolution of 4K at 60Hz4
+Simultaneously supports the built-in display at full native resolution
+USB 3 (USB-C) port supports native DisplayPort 1.4 speeds (up to HBR3)
+
+Video Playback
+Supported formats include HEVC, H.264, AV1 and ProRes
+HDR with Dolby Vision, HDR10+/HDR10 and HLG
+
+Audio Playback
+Supported formats include AAC, MP3, Apple Lossless, FLAC, Dolby Digital, Dolby Digital Plus and Dolby Atmos
+
+Keyboard and Trackpad
+Magic Keyboard
+78 (ANSI) or 79 (ISO) keys including 12 full‑height function keys
+–
+Not available, Touch ID
+Multi-Touch trackpad for precise cursor control and support for gestures
+Magic Keyboard with Touch ID
+78 (ANSI) or 79 (ISO) keys including 12 full‑height function keys
+Touch ID
+Multi-Touch trackpad for precise cursor control and support for gestures
+
+Wireless
+Wi-Fi 6E (802.11ax)5
+Bluetooth 6
+
+Camera
+1080p FaceTime HD camera
+1080p HD video recording
+Advanced image signal processor with computational video
+
+Audio
+Dual-speaker sound system
+Support for Spatial Audio when playing music or video with Dolby Atmos on built‑in speakers
+Dual-mic array with directional beamforming
+Voice Isolation and Wide Spectrum microphone modes for enhanced voice clarity in audio and video calls
+3.5mm headphone jack
+
+Operating Requirements
+Line voltage: 100V to 240V AC
+Frequency: 50Hz to 60Hz
+Operating temperature: 10° to 35° C
+Storage temperature: –25° to 45° C
+Relative humidity: 0% to 90% non‑condensing
+Operating altitude: tested up to 3,000 metres
+Maximum storage altitude: 4,500 metres
+Maximum shipping altitude: 10,500 metres
+
+Size and Weight
+Height: 1.27cm
+Width: 29.75cm
+Depth: 20.64cm
+Weight: 1.23kg6
+Depth:
+20.64cm
+Width:
+29.75cm
+Height:
+1.27cm
+
+Operating System
+macOS
+macOS is the most advanced desktop operating system in the world. Siri AI7 is a powerful and capable assistant with personal context understanding, broad world knowledge and onscreen awareness. Express yourself through photos and images, save time with Safari and get more done with Apple Intelligence7 seamlessly integrated into your everyday apps and experiences. And iPhone Mirroring, window tiling, Sidecar and more help you stay productive.
+
+Apple Intelligence7
+Apple Intelligence is the personal intelligence system that helps you write, express yourself and get things done effortlessly. With groundbreaking privacy protections, it gives you peace of mind that no one else can access your data — not even Apple.
+Learn more
+
+Accessibility
+Accessibility features help people with disabilities get the most out of their new MacBook Neo. With built‑in support for vision, hearing, mobility and learning, you can create and do amazing things.
+Learn more
+Features include:
+VoiceOver
+Zoom
+Motion, display and text settings
+Accessibility Reader
+Accessibility Keyboard
+Switch Control
+Closed Captions
+Background Sounds
+Personal Voice and Live Speech
+
+Built-in Apps8
+App Store
+Books
+Calendar
+Contacts
+FaceTime
+Find My
+Freeform
+Games
+GarageBand
+Home
+iMovie
+iPhone Mirroring
+Journal
+Keynote
+Mail
+Maps
+Messages
+Music
+Notes
+Numbers
+Pages
+Passwords
+Phone
+Photo Booth
+Photos
+Podcasts
+Preview
+QuickTime Player
+Reminders
+Safari
+Shortcuts
+Stocks
+Time Machine
+Tips
+TV
+Voice Memos
+Weather
+
+In the Box
+MacBook Neo
+20W USB-C Power Adapter
+USB-C Charge Cable (1.5m)

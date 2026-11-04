@@ -3,9 +3,8 @@ Apple fields read by code (app/processor/apple_fields.py, 10a, decided 2026-11-0
 
 Fixtures are the specs-page text in backups/apple_specs_raw_2026-11-03_pre-rescrape.json:
 the two MacBook Pro pages verbatim (scraped 2026-11-03 by the current scraper). The
-Neo fixture is rebuilt from that backup's 2026-06 Neo text (mojibake fixed, the blank
-lines the old scraper put inside a block removed, only the blocks parsed here kept),
-because no current-format Neo text is saved locally.
+Neo fixture is the live Apple MY Neo specs page, fetched once on 2026-11-04 and run
+through parse_apple_specs.
 
 Expected values are the rows to fix in the plan: 5c87abdd is max RAM 36 with a 96W
 charger, f24b8f91 the 70W charger line, abc2df6f (Neo 256GB) has no Touch ID.
@@ -29,7 +28,7 @@ def _section(page: str, size: int) -> str:
 
 
 LR, PROLED = "apple_macbook_pro_liquid_retina_specs.txt", "apple_macbook_pro_proled_specs.txt"
-NEO = "apple_macbook_neo_specs_reconstructed.txt"
+NEO = "apple_macbook_neo_specs.txt"
 
 
 def _config(chip, cpu, gpu, size=14, ssd=1024):
@@ -85,10 +84,12 @@ def test_neo_touch_id_by_storage_column(ssd, touch_id):
     """abc2df6f: the Neo 256GB has no Touch ID; the 512GB does."""
     config = {"size": 13, "chip": "A18 Pro", "cpu_cores": 6, "gpu_cores": 5, "ram_gb": 8, "ssd_gb": ssd}
     fields, failures = apple_fields.parse(_text(NEO), config, "MacBook Neo")
-    assert failures == []
     assert fields["fingerprint_reader"] is touch_id
     assert (fields["max_ram_gb"], fields["weight_kg"], fields["display_resolution"]) == (8, 1.23, "2408x1506")
+    assert fields["external_display_support"].startswith("Supports one external display")
+    # The live page has "In the Box" (2026-11-04), after the macOS app list.
     assert fields["power_supply_details"] == "20W USB-C Power Adapter"
+    assert failures == []
 
 
 def test_touch_id_is_not_parsed_off_neo():
