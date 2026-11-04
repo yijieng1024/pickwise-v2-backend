@@ -767,7 +767,8 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 6. **`lookup_laptop` "close score" threshold:** decided at step (c), from real examples
 7. **Build order**, small commits, stop and report after each: (a) plan + ADR amendment draft; (b) enum value, descriptions, dashboard count, price guide exclusion, Apple buy-page `relisted`, hybrid search active only, with tests; (c) `lookup_laptop` tool returning candidates on near-ties, with tests and a system prompt line; (d) API: last official price and date on `GET /laptops/{id}`; (e) frontend: admin dropdown and pill, details page label; (f) script moving the three rows to `discontinued`, dry run then apply
 - No migration: `laptops.status` is a plain VARCHAR, so the new value is one `LaptopStatus` member
-- Existing suspended rows that look like real old machines are listed for Jack (survey 2026-11-04); none is changed until he decides
+- ADR-0009 Amendment II accepted (Jack, 2026-11-04)
+- Step (f) moves 12 rows to `discontinued` (Jack, 2026-11-04): the 3 old M5 MacBook Pro 14 rows `0670a4d3`, `7bee501c`, `bf390849` (active today) and 9 suspended rows that are real old machines: `128dcb6b`, `63b4c73c`, `54d2b621` (TUF F15 2023), `e6860697` (TUF A16 Advantage 2023), `d09e2141` (TUF F16 2024 FX607JV), `cd3c6c19` (Vivobook 16 A1605VA), `8199745e`, `8da2d5ec` (Laptop 15 A516), `7d7e74c8` (Chromebook Flip CR1). Every other suspended row stays suspended
 
 ### Scheduled scraping + notifications
 

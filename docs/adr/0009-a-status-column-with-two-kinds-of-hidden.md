@@ -211,7 +211,7 @@ preference row, and `agent/router.py:135` writes that number into
 next search, so it is stale for the same reason and on the same terms as the
 non-active rows in `laptop_pick_scores` — accepted rather than backfilled.
 
-## Amendment II — 2026-11-04 (draft, awaiting Jack's OK)
+## Amendment II — 2026-11-04 (accepted 2026-11-04, Jack)
 
 **A fourth state, `discontinued`, takes the "no longer sold" meaning away from
 `suspended`.** The Decision table defines `suspended` as "soft delete: retired,
