@@ -20,7 +20,9 @@ class LaptopStatus(str, Enum):
     app/rag/retrieval.py, which filters on this for every agent search."""
     ACTIVE = "active"
     INACTIVE = "inactive"
-    SUSPENDED = "suspended"  # same spelling as users.status, deliberately
+    # A real machine no longer sold: found by name, never recommended (ADR-0009 II).
+    DISCONTINUED = "discontinued"
+    SUSPENDED = "suspended"  # hidden everywhere; same spelling as users.status, deliberately
 
 
 LAPTOP_STATUS_VALUES = {s.value for s in LaptopStatus}
@@ -56,7 +58,7 @@ class LaptopBase(SQLModel):
     price_rm: float
     status: str = Field(
         default=LaptopStatus.ACTIVE.value,
-        description="Listing status: 'active', 'inactive', or 'suspended'. Only 'active' laptops are returned by the agent's search_laptops tool.",
+        description="Listing status: 'active', 'inactive', 'discontinued', or 'suspended'. Only 'active' laptops are returned by the agent's search_laptops tool.",
     )
 
     # Part 2: Processor & AI Engine
@@ -337,7 +339,7 @@ class LaptopUpdate(SQLModel):
     # price_checked_at without a price change. Popped before the setattr loop.
     price_confirmed: bool = False
     status: Optional[str] = Field(
-        default=None, description="'active', 'inactive', or 'suspended'"
+        default=None, description="'active', 'inactive', 'discontinued', or 'suspended'"
     )
 
     # Part 2: Processor & AI Engine

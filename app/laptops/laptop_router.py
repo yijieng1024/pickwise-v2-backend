@@ -90,7 +90,7 @@ def list_laptops(
     # Aliased because a param literally named `status` would shadow FastAPI's
     # `status` module inside this function. Omitting it returns every status.
     status_filter: Optional[LaptopStatus] = filter_query(
-        "Listing status: active | inactive | suspended. Omit for all statuses.",
+        "Listing status: active | inactive | discontinued | suspended. Omit for all statuses.",
         alias="status",
     ),
     price_min: Optional[float] = filter_query("Lowest price in RM (inclusive)", ge=0),
