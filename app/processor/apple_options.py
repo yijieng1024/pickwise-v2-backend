@@ -1,32 +1,32 @@
 """
-Apple's configurator responses (step 10c, decided 2026-11-04), parsed into options and rules.
+Apple's configurator, read as chip kits (step 10c, decided 2026-11-04).
 
-`cto/update-config` lists the options compatible with the kit that was sent, each with a
-`priceDelta` relative to that kit, and marks the kit's own values `isSelected`. The kit
-sent is the standard config, so a selected value is what it includes, and the add-on is
-the delta minus the selected one's (zero when the kit was sent unchanged). Not
-`isDefault`: that marks the collection's cheapest base (the 13-inch Air's 10-8 / 512GB)
-on every standard config of the collection (seen in the 10c dry run, 2026-11-04).
+Apple's options are chip-driven: the chip decides which RAM and storage exist; the size
+only decides which chips exist. A chip kit is one chip on one product, size and line,
+with Apple's price for a valid kit of it and the options it allows.
 
-An option the configure page shows but update-config does not list (24GB on the 10-8
-Air, which needs the 10-core GPU chip) is reached through `cto/dependency-switcher`: it
-answers "what happens if I pick X" with the kit and price before and after. Anything
-that changed besides X itself is a forced change, i.e. a rule, and the price difference
-is X's add-on.
+`cto/update-config`, sent a valid kit, lists exactly what that kit's chip allows, each
+with a `priceDelta` relative to the kit, marks the kit's own values `isSelected`, and
+prices the kit (`selectedKits.priceData`). One call is one chip kit. (`isDefault` marks
+the collection's cheapest base on every kit, so it is never read.)
 
-The configure page (one standard config's buy page) gives the kit to send
-(`warmStateBootstrap.preselectedDimensions`), the two endpoints, and the labels. The
-specs page text gives the CPU and GPU strings of each chip option.
+A valid kit for a chip comes from a standard config's configure page when one has that
+chip, else from `cto/dependency-switcher`: asked for that chip, its `selectedKit` is
+Apple's own kit for it (RAM and storage snapped to what the chip allows). The snapping is
+not a rule between options: reading it as one is what made the first model's dry run see
+bundles that do not exist.
+
+A configuration's price is its kit's price plus its options' add-ons on that kit
+(`quote`); a choice its chip does not allow is a chip change.
 
 Pure: no database, no network. A response that is not the expected shape raises
-`OptionsParseError`; the caller keeps the stored options and lists the machine in
-`options_failed`.
+`OptionsParseError`; the caller keeps the stored kit and lists it in `options_failed`.
 """
 import html as html_lib
 import json
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 from urllib.parse import urlencode
 
@@ -44,36 +44,39 @@ _PREFIX_GROUPS = {
 _CHIP_KEY = "processor-dimensionChip"
 _DELTA = re.compile(r"-?\d+_\d+")
 _CORES = re.compile(r"(?:([a-z0-9]+)-)?(\d+)-(\d+)")
-# ponytail: only these can force a change as far as the trial showed (70W forced nothing);
-# add a group here if a page proves otherwise.
-_TRIGGER_GROUPS = ("chip", "memory", "storage")
 
 
 class OptionsParseError(ValueError):
-    """The response is not the shape the configurator returned in the 2026-11-04 trial."""
+    """The response is not the shape the configurator returned on 2026-11-04."""
 
 
 @dataclass(frozen=True)
 class Option:
     group: str
     value: str
-    add_on_rm: Optional[float]   # None: Apple prices no option of this group
+    add_on_rm: Optional[float]   # relative to the kit; None: Apple prices no option of this group
     is_included: bool
     is_blocked: bool
 
 
 @dataclass(frozen=True)
-class Rule:
-    trigger_group: str
-    trigger_value: str
-    forced_group: str
-    forced_value: str
+class Kit:
+    chip: str
+    price_rm: float
+    options: list[Option] = field(default_factory=list)   # every group but the chip
+
+    def allows(self, group: str, value: str) -> bool:
+        return any(o.group == group and o.value == value and not o.is_blocked for o in self.options)
+
+    def add_on(self, group: str, value: str) -> float:
+        return next(o.add_on_rm or 0.0 for o in self.options if o.group == group and o.value == value)
 
 
 @dataclass(frozen=True)
-class Switch:
-    rules: list[Rule]
-    add_on_rm: float   # the whole kit's price change, forced changes included
+class Quote:
+    chip: str
+    total_rm: float
+    chip_changed: bool
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,10 @@ class ConfigurePage:
     update_path: str                    # "/my/shop/api/cto/update-config?collection=...&fae=true"
     switcher_path: str
     labels: dict[tuple[str, str], str]  # (group, value) -> what the page shows
+
+    @property
+    def chip(self) -> str:
+        return chip_of_kit(self.kit)
 
 
 def group_of(key: str) -> Optional[str]:
@@ -96,6 +103,13 @@ def cores_of(chip_value: str) -> Optional[tuple[int, int]]:
     return (int(match.group(2)), int(match.group(3))) if match else None
 
 
+def chip_of_kit(kit: Mapping[str, str]) -> str:
+    chips = [v for k, v in kit.items() if group_of(k) == "chip"]
+    if len(chips) != 1:
+        raise OptionsParseError(f"the kit has {len(chips)} chip fields")
+    return chips[0]
+
+
 def _delta(raw: Any) -> float:
     # "900_00" is RM 900.00, "-1350_00" is -RM 1,350.00, "0_0" is nothing.
     if not isinstance(raw, str) or not _DELTA.fullmatch(raw):
@@ -103,14 +117,17 @@ def _delta(raw: Any) -> float:
     return float(raw.replace("_", "."))
 
 
-def parse_update_config(payload: Any) -> list[Option]:
+def parse_kit(payload: Any) -> Kit:
+    """One update-config response, sent a valid kit, as that kit."""
     try:
         groups = payload["body"]["options"]
+        price = payload["body"]["selectedKits"]["priceData"]["amount"]
     except (KeyError, TypeError) as exc:
-        raise OptionsParseError("no body.options in update-config response") from exc
-    if not isinstance(groups, dict):
-        raise OptionsParseError("body.options is not an object")
+        raise OptionsParseError("no body.options or kit price in update-config response") from exc
+    if not isinstance(groups, dict) or not isinstance(price, (int, float)):
+        raise OptionsParseError("body.options is not an object, or the kit price is not a number")
 
+    chip: Optional[str] = None
     options: list[Option] = []
     for key, entry in groups.items():
         group = group_of(key)
@@ -121,6 +138,9 @@ def parse_update_config(payload: Any) -> list[Option]:
             selected = [value for value, o in compatible.items() if o["isSelected"]]
             if len(selected) != 1:
                 raise OptionsParseError(f"{key}: {len(selected)} selected options, expected 1")
+            if group == "chip":
+                chip = selected[0]
+                continue
             priced = [o.get("priceDelta") is not None for o in compatible.values()]
             if any(priced) and not all(priced):
                 raise OptionsParseError(f"{key}: some options have a priceDelta and some do not")
@@ -131,79 +151,36 @@ def parse_update_config(payload: Any) -> list[Option]:
         except (KeyError, TypeError, AttributeError) as exc:
             raise OptionsParseError(f"{key}: unexpected shape ({exc!r})") from exc
 
-    if not any(o.group in ("memory", "storage") for o in options):
-        raise OptionsParseError("no memory or storage options in update-config response")
-    return options
+    if chip is None or not any(o.group in ("memory", "storage") for o in options):
+        raise OptionsParseError("no chip, memory or storage in update-config response")
+    return Kit(chip, float(price), options)
 
 
-def _kit(overlay: dict, which: str) -> tuple[dict[str, str], float]:
-    dimensions = overlay[which]["kitParts"]["dimensions"]
-    price = overlay[which]["priceData"]["amount"]
-    if not isinstance(price, (int, float)):
-        raise OptionsParseError(f"{which} price {price!r} is not a number")
-    return {key: d["dimensionValue"] for key, d in dimensions.items()}, float(price)
-
-
-def parse_dependency_switcher(payload: Any, trigger_group: str, trigger_value: str) -> Switch:
-    """The forced changes when `trigger_group` is set to `trigger_value` ([] when none),
-    and what the switch costs."""
+def switched_kit(payload: Any, chip: str) -> dict[str, str]:
+    """Apple's own kit for `chip`, from a dependency-switcher answer asking for it."""
     try:
-        overlay = payload["body"]["overlayContent"]
-        (before, before_rm), (after, after_rm) = _kit(overlay, "currentKit"), _kit(overlay, "selectedKit")
-    except (KeyError, TypeError) as exc:
-        raise OptionsParseError("no currentKit/selectedKit in dependency-switcher response") from exc
-    keys = [k for k in after if group_of(k) == trigger_group]
-    if len(keys) != 1 or after[keys[0]] != trigger_value:
-        found = {k: after[k] for k in keys}
-        raise OptionsParseError(f"selected kit has {found}, not the requested {trigger_group}={trigger_value!r}")
-    rules = [
-        Rule(trigger_group, trigger_value, group, v)
-        for k, v in after.items()
-        if (group := group_of(k)) is not None and k != keys[0] and before.get(k) != v
-    ]
-    return Switch(rules, round(after_rm - before_rm, 2))
+        dimensions = payload["body"]["overlayContent"]["selectedKit"]["kitParts"]["dimensions"]
+        kit = {key: d["dimensionValue"] for key, d in dimensions.items()}
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise OptionsParseError("no selectedKit in dependency-switcher response") from exc
+    if chip_of_kit(kit) != chip:
+        raise OptionsParseError(f"selected kit has chip {chip_of_kit(kit)!r}, not the requested {chip!r}")
+    return kit
 
 
-def triggers(options: list[Option]) -> list[Option]:
-    """The listed options worth a dependency-switcher call: ones the standard config does
-    not already have and can take."""
-    return [o for o in options if o.group in _TRIGGER_GROUPS and not o.is_included and not o.is_blocked]
+def quote(kits: Mapping[str, Kit], chip: str, choices: Mapping[str, str]) -> Quote:
+    """The price of `choices` (group -> value, every group the configuration has, not only
+    the changed ones) on `chip`. A choice `chip` does not allow is a chip change: to the
+    cheapest kit that allows every choice. Raises when none does."""
+    def allows(kit: Kit) -> bool:
+        return all(kit.allows(group, value) for group, value in choices.items())
 
-
-def unlisted(options: list[Option], page: "ConfigurePage") -> list[tuple[str, str]]:
-    """(group, value) the configure page shows but update-config did not list: reachable
-    only through a forced change, so priced by the dependency-switcher."""
-    listed = {(o.group, o.value) for o in options}
-    return [key for key in page.labels if key[0] in _TRIGGER_GROUPS and key not in listed]
-
-
-def offered(group: str, value: str, chips: Mapping[tuple[int, int], Any]) -> bool:
-    """Apple's API lists every chip of the collection on every size (the Air 15 gets the
-    13-inch-only 10-core / 8-core GPU chip). A chip counts only if the size's specs page
-    lists it (decided 2026-11-04); `chips` is `chip_strings` of that section."""
-    return group != "chip" or cores_of(value) in chips
-
-
-def own_shares(listed: list[Option], switches: Mapping[tuple[str, str], Switch]) -> list[Option]:
-    """Options reached through a forced change, each priced at its own share: the switch's
-    price less the add-ons of what it forces (decided 2026-11-04), so that a configuration's
-    price is the sum of its options' add-ons. 36GB on the Pro 14 M5 Pro is +7,300 as a
-    switch and forces M5 Max (+3,700), 2TB (+2,250) and 96W (+80): its share is +1,270. An
-    unpriced group (the Air's chip) adds nothing. A switch can force another switched
-    option, so shares are settled in rounds; a set that only forces itself is refused."""
-    known = {(o.group, o.value): o.add_on_rm or 0.0 for o in listed}
-    shares: dict[tuple[str, str], float] = {}
-    pending = dict(switches)
-    while pending:
-        settled = [key for key, s in pending.items()
-                   if all((r.forced_group, r.forced_value) in known for r in s.rules)]
-        if not settled:
-            raise OptionsParseError(f"cannot price {sorted(pending)}: what they force has no price")
-        for key in settled:
-            s = pending.pop(key)
-            known[key] = shares[key] = round(
-                s.add_on_rm - sum(known[(r.forced_group, r.forced_value)] for r in s.rules), 2)
-    return [Option(group, value, shares[(group, value)], False, False) for group, value in switches]
+    kit = kits[chip] if allows(kits[chip]) else min(
+        (k for k in kits.values() if allows(k)), key=lambda k: k.price_rm, default=None)
+    if kit is None:
+        raise ValueError(f"no chip allows {dict(choices)}")
+    total = kit.price_rm + sum(kit.add_on(group, value) for group, value in choices.items())
+    return Quote(kit.chip, round(total, 2), kit.chip != chip)
 
 
 # --------------------------------------------------------------------------- configure page
@@ -249,12 +226,14 @@ def parse_configure_page(page: str) -> ConfigurePage:
         for value, display in values.items():
             if isinstance(display, dict) and isinstance(display.get("header"), str) and _clean(display["header"]):
                 labels[(group, value)] = _clean(display["header"])
-    return ConfigurePage({str(k): str(v) for k, v in kit.items()},
-                         _endpoint(page, "updateConfigUrl"), _endpoint(page, "ctoDependencySwitcherUrl"), labels)
+    configure = ConfigurePage({str(k): str(v) for k, v in kit.items()},
+                              _endpoint(page, "updateConfigUrl"), _endpoint(page, "ctoDependencySwitcherUrl"), labels)
+    configure.chip  # noqa: B018 -- raises when the kit has no single chip
+    return configure
 
 
 def query(kit: Mapping[str, str], group: Optional[str] = None, value: Optional[str] = None) -> str:
-    """The kit as `sv.` parameters, plus the change as `uv.`, the way the page sends them.
+    """The kit as `sv.` parameters, plus a change as `uv.`, the way the page sends them.
     A chip change also names the chip alone when the kit has that field."""
     params = [(f"sv.{k}", v) for k, v in kit.items()]
     if group is not None:
@@ -294,3 +273,10 @@ def chip_strings(section: Optional[str]) -> dict[tuple[int, int], tuple[str, str
             chip = None
     return {cores: (f"Apple {next(iter(chips))} ({cores[0]}-core)", f"{cores[1]}-core GPU")
             for cores, chips in found.items() if len(chips) == 1}
+
+
+def offered(chip: str, chips: Mapping[tuple[int, int], Any]) -> bool:
+    """Apple's API lists every chip of the collection on every size (the Air 15 gets the
+    13-inch-only 10-core / 8-core GPU chip). A chip counts only if the size's specs page
+    lists it (decided 2026-11-04); `chips` is `chip_strings` of that section."""
+    return cores_of(chip) in chips

@@ -2,7 +2,7 @@
 The Apple options backfill's --apply path (app/scripts/backfill_apple_options.py, step 10c),
 run against the test database. Repair scripts get a test like this one since step (f)
 of 10b: its --apply failed on a flush that only a real database could reach. Apple is
-stubbed with the real trial responses (tests/_apple_fake.py).
+stubbed with real 2026-11-04 responses (tests/_apple_fake.py).
 """
 import json
 
@@ -10,17 +10,15 @@ import pytest
 from sqlmodel import select
 
 from app.laptops.brand_model import LaptopBrand
-from app.laptops.laptop_models import LaptopStatus
-from app.laptops.option_model import LaptopOption, LaptopOptionRule
+from app.laptops.option_model import LaptopOption
+from app.scraper import apple_options_fetch as fetch
 from app.scraper.models import RawScrapLaptop
 from app.scripts import backfill_apple_options as backfill
-from tests._apple_fake import AIR13_SLUG, AIR_BUY, AIR_SPECS, FakeApple, fixture
-from tests.integration.conftest import make_laptop
+from tests._apple_fake import AIR13_1010_SLUG, AIR13_SLUG, AIR_BUY, AIR_SPECS, FakeApple, fixture
 
 pytestmark = pytest.mark.integration
 
-PART = "MDH74ZP/A"
-NEO = "MHFJ4ZP/A"
+NEO_BUY = "https://www.apple.com/my/shop/buy-mac/macbook-neo"
 
 
 @pytest.fixture
@@ -28,67 +26,70 @@ def air13(session):
     apple = LaptopBrand(name="Apple", base_scrape_url="https://www.apple.com/my/mac/")
     session.add(apple)
     session.flush()
-    session.add(RawScrapLaptop(
-        source_url=AIR_BUY, brand_id=apple.id, raw_product_name="Buy MacBook Air", raw_prices=[],
-        raw_specs_dump={"buy_page": {"url": AIR_BUY, "specs_url": AIR_SPECS, "configs": [
-            {"size": 13, "chip": "M5", "cpu_cores": 10, "gpu_cores": 8, "ram_gb": 16, "ssd_gb": 512,
-             "slugs": [AIR13_SLUG], "part_numbers": [PART]}]}},
-    ))
-    session.add(RawScrapLaptop(
-        source_url=AIR_SPECS, brand_id=apple.id, raw_product_name="MacBook Air", raw_prices=[],
-        raw_specs_dump={"scraped_features": [fixture("apple_macbook_air_specs.txt")]},
-    ))
-    laptop = make_laptop(apple.id, model_code="apple-macbook-air-13-m5-10c-8g-16gb-512gb",
-                         product_name="MacBook Air 13", processor_model="Apple M5 (10-core)",
-                         gpu_model="8-core GPU", display_size_inch=13.6, part_numbers=[PART])
-    # Not fetched: a build-to-order row (no part numbers), a suspended standard config,
-    # and a Neo, which has no build-to-order (neither failed nor fetched).
-    bto = make_laptop(apple.id, part_numbers=None)
-    gone = make_laptop(apple.id, part_numbers=["MXXX4ZP/A"], status=LaptopStatus.SUSPENDED.value)
-    neo_buy = "https://www.apple.com/my/shop/buy-mac/macbook-neo"
-    session.add(RawScrapLaptop(
-        source_url=neo_buy, brand_id=apple.id, raw_product_name="Buy MacBook Neo", raw_prices=[],
-        raw_specs_dump={"buy_page": {"url": neo_buy, "specs_url": "https://www.apple.com/my/macbook-neo/specs/",
-                                     "configs": [{"ssd_gb": 256, "slugs": ["silver-256gb"], "part_numbers": [NEO]}]}},
-    ))
-    neo = make_laptop(apple.id, part_numbers=[NEO], product_name="MacBook Neo")
-    session.add_all([laptop, bto, gone, neo])
+
+    def raw(url, name, dump):
+        session.add(RawScrapLaptop(source_url=url, brand_id=apple.id, raw_product_name=name, raw_prices=[],
+                                   raw_specs_dump=dump))
+
+    raw(AIR_BUY, "Buy MacBook Air", {"buy_page": {"url": AIR_BUY, "specs_url": AIR_SPECS, "configs": [
+        {"size": 13, "chip": "M5", "cpu_cores": 10, "gpu_cores": 8, "ram_gb": 16, "ssd_gb": 512,
+         "slugs": [AIR13_SLUG], "part_numbers": ["MDH74ZP/A"]},
+        {"size": 13, "chip": "M5", "cpu_cores": 10, "gpu_cores": 10, "ram_gb": 16, "ssd_gb": 1024,
+         "slugs": [AIR13_1010_SLUG], "part_numbers": ["MDHA4ZP/A"]}]}})
+    raw(AIR_SPECS, "MacBook Air", {"scraped_features": [fixture("apple_macbook_air_specs.txt")]})
+    # No build-to-order: neither fetched nor failed.
+    raw(NEO_BUY, "Buy MacBook Neo", {"buy_page": {"url": NEO_BUY, "specs_url": "https://www.apple.com/my/macbook-neo/specs/",
+                                                  "configs": [{"size": 13, "ssd_gb": 256, "slugs": ["silver-256gb"],
+                                                               "part_numbers": ["MHFJ4ZP/A"]}]}})
     session.commit()
-    return laptop
 
 
-def test_apply_writes_options_and_rules_and_a_rerun_replaces_them(session, air13, tmp_path):
-    fake = FakeApple()
-    result = backfill.run(session, write=True, get=fake, pause_s=0, backups=tmp_path)
+def _rows(session):
+    return session.exec(select(LaptopOption)).all()
 
-    assert result["machines"] == 1 and result["options_failed"] == [] and result["stopped"] is None
-    assert result["apple_calls"] == 8, "only the Air was fetched: no call for the Neo"
-    options = session.exec(select(LaptopOption).where(LaptopOption.laptop_id == air13.id)).all()
-    by_key = {(o.option_group, o.value): o for o in options}
-    assert len(options) == 18
-    assert by_key[("memory", "24gb")].add_on_rm == 900.0 and by_key[("memory", "16gb")].is_included
-    assert by_key[("chip", "10-10")].cpu_model == "Apple M5 (10-core)"
-    rules = session.exec(select(LaptopOptionRule).where(LaptopOptionRule.laptop_id == air13.id)).all()
-    assert {(r.trigger_value, r.forced_group, r.forced_value) for r in rules} == {
-        ("24gb", "chip", "10-10"), ("32gb", "chip", "10-10"),
-        ("1tb", "chip", "10-10"), ("2tb", "chip", "10-10"), ("4tb", "chip", "10-10")}
-    assert session.exec(select(LaptopOption).where(LaptopOption.laptop_id != air13.id)).all() == []
+
+def test_apply_writes_each_chip_kit_and_a_rerun_replaces_them(session, air13, tmp_path):
+    result = backfill.run(session, write=True, get=FakeApple(), pause_s=0, backups=tmp_path)
+
+    assert result["chip_kits"] == 2 and result["options_failed"] == [] and result["stopped"] is None
+    assert result["apple_calls"] == 4, "the Air's 2 configure pages + 2 update-config; nothing for the Neo"
+    rows = _rows(session)
+    chips = {r.chip: r for r in rows if r.option_group == "chip"}
+    assert {c: r.kit_price_rm for c, r in chips.items()} == {"10-8": 5499.0, "10-10": 6849.0}
+    assert chips["10-10"].cpu_model == "Apple M5 (10-core)"
+    by_key = {(r.chip, r.option_group, r.value): r for r in rows}
+    assert by_key[("10-10", "memory", "24gb")].add_on_rm == 900.0
+    assert ("10-8", "memory", "24gb") not in by_key
+    assert {(r.product, r.size_inch, r.line) for r in rows} == {("MacBook Air", 13, "")}
 
     pre, post = sorted(tmp_path.glob("*.json"))
     assert json.loads(pre.read_text())["laptop_options"] == []
-    assert len(json.loads(post.read_text())["laptop_options"]) == 18
+    assert len(json.loads(post.read_text())["laptop_options"]) == len(rows)
 
     backfill.run(session, write=True, get=FakeApple(), pause_s=0, backups=tmp_path)
-    assert len(session.exec(select(LaptopOption).where(LaptopOption.laptop_id == air13.id)).all()) == 18
-    assert len(session.exec(select(LaptopOptionRule).where(LaptopOptionRule.laptop_id == air13.id)).all()) == 5
+    assert len(_rows(session)) == len(rows)
 
 
-def test_a_failed_machine_keeps_its_stored_options(session, air13, tmp_path):
+def test_a_failed_kit_keeps_its_stored_rows(session, air13, tmp_path):
     backfill.run(session, write=True, get=FakeApple(), pause_s=0, backups=tmp_path)
+    stored = len(_rows(session))
 
-    def broken(url):
-        return "<html>Access Denied</html>"
-
+    broken = FakeApple()
+    broken.update_config["10-10"] = "<html>Access Denied</html>"
     result = backfill.run(session, write=True, get=broken, pause_s=0, backups=tmp_path)
-    assert [f["model_code"] for f in result["options_failed"]] == [air13.model_code]
-    assert len(session.exec(select(LaptopOption).where(LaptopOption.laptop_id == air13.id)).all()) == 18
+    assert [f["chip"] for f in result["options_failed"]] == ["10-10"]
+    assert len(_rows(session)) == stored
+    assert any(r.chip == "10-10" and r.option_group == "chip" for r in _rows(session))
+
+
+def test_proled_and_liquid_retina_kits_of_one_chip_are_stored_separately(session):
+    def kit(line, price):
+        return {"product": "MacBook Pro", "size_inch": 14, "line": line, "chip": "m5pro-15-16",
+                "rows": [{"option_group": "chip", "value": "m5pro-15-16", "label": None, "add_on_rm": None,
+                          "kit_price_rm": price, "is_included": True, "is_blocked": False,
+                          "cpu_model": None, "gpu_model": None}]}
+
+    fetch.write(session, [kit("proled", 11999.0), kit("liquid-retina", 10299.0)])
+    fetch.write(session, [kit("liquid-retina", 10299.0)])  # a rerun of one line leaves the other
+    prices = {r.line: r.kit_price_rm for r in _rows(session)}
+    assert prices == {"proled": 11999.0, "liquid-retina": 10299.0}

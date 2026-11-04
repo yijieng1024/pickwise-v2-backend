@@ -9,9 +9,9 @@ Reads and writes TEST_DATABASE_URL unless APPLE_OPTIONS_TARGET=production is set
 says today (app/scraper/apple_options_fetch.py, the same code the buy page job runs),
 a few seconds per call, and a 403, 429 or captcha stops the fetch.
 
---apply replaces laptop_options and laptop_option_rules for every machine that was
-fetched, and nothing else: a failed machine keeps whatever it had. The snapshots hold
-those machines' option and rule rows before and after. Safe to run again.
+--apply replaces the laptop_options rows of every chip kit that was fetched, and nothing
+else: a failed kit keeps whatever it had. The snapshots hold the whole table (a few
+hundred rows) before and after. Safe to run again.
 """
 import argparse
 import json
@@ -25,25 +25,22 @@ from sqlalchemy import create_engine, select
 from sqlmodel import Session
 
 from app.common.db_target import host_of, write_target
-from app.laptops.option_model import LaptopOption, LaptopOptionRule
+from app.laptops.option_model import LaptopOption
 from app.scraper import apple_options_fetch as fetch
 
 REPO = Path(__file__).resolve().parents[2]
 
 
 def plan(session: Session, get: fetch.Get = fetch.http_get, pause_s: float = fetch.PAUSE_S) -> tuple[list, dict]:
-    """Read the standard configs, then fetch them. Ends the read transaction before any
+    """Read the sizes on the stored buy pages, then fetch their chip kits. Ends the read transaction before any
     HTTP, so nothing idles open across the fetch. Writes nothing."""
     targets, targets_failed = fetch.read_targets(session)
     session.rollback()
     return targets_failed, fetch.fetch_all(targets, get, pause_s)
 
 
-def _snapshot(session: Session, ids: list[str], label: str, backups: Path) -> Path:
-    rows = {
-        name: [dict(r._mapping) for r in session.execute(select(model.__table__).where(model.__table__.c.laptop_id.in_(ids)))]
-        for name, model in (("laptop_options", LaptopOption), ("laptop_option_rules", LaptopOptionRule))
-    }
+def _snapshot(session: Session, label: str, backups: Path) -> Path:
+    rows = {"laptop_options": [dict(r._mapping) for r in session.execute(select(LaptopOption.__table__))]}
     path = backups / f"apple_options_{datetime.now():%Y-%m-%d_%H%M%S_%f}_{label}-backfill.json"
     path.write_text(json.dumps(rows, default=str, indent=2), encoding="utf-8")
     print(f"snapshot: {path}")
@@ -51,10 +48,9 @@ def _snapshot(session: Session, ids: list[str], label: str, backups: Path) -> Pa
 
 
 def apply(session: Session, fetched: dict, backups: Path) -> None:
-    ids = list(fetched["machines"])
-    _snapshot(session, ids, "pre", backups)
-    fetch.write(session, fetched["machines"])
-    _snapshot(session, ids, "post", backups)
+    _snapshot(session, "pre", backups)
+    fetch.write(session, fetched["kits"])
+    _snapshot(session, "post", backups)
 
 
 def run(session: Session, write: bool, get: fetch.Get = fetch.http_get, pause_s: float = fetch.PAUSE_S,
