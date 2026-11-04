@@ -114,6 +114,22 @@ def _via_get_conversation_laptops(w):
     return {uuid.UUID(card["laptop_id"]) for card in r.json()}
 
 
+def _via_hybrid_search(w):
+    """POST /laptops/hybrid-search, public. Both laptops get the same embedding and the
+    query embeds to it, so only the status clause can keep the hidden one out."""
+    from app.laptops import laptop_router
+    from app.laptops.laptop_models import LaptopEmbedding
+
+    vector = [0.1] * 768
+    for laptop in (w["active"], w["suspended"]):
+        w["session"].add(LaptopEmbedding(laptop_id=laptop.id, embedding=vector))
+    w["session"].commit()
+    w["monkeypatch"].setattr(laptop_router, "embed_text", lambda q: vector)
+    r = w["client"].post("/api/v2/laptops/hybrid-search", json={"query": "a laptop", "top_k": 10})
+    assert r.status_code == 200, r.text
+    return {uuid.UUID(row["laptop_id"]) for row in r.json()}
+
+
 def _via_agent_chat_pool(w):
     """
     app/agent/router.py -- the persisted-pool read inside _persist_assistant_turn,
@@ -142,6 +158,7 @@ _SURFACES = [
     pytest.param(_via_ranking, id="pickscore_general.get_ranking_for_use_case"),
     pytest.param(_via_get_conversation_laptops, id="GET /conversations/{id}/laptops"),
     pytest.param(_via_agent_chat_pool, id="POST /agent/chat (persisted pool)"),
+    pytest.param(_via_hybrid_search, id="POST /laptops/hybrid-search"),
 ]
 
 
@@ -156,6 +173,35 @@ def test_suspended_is_never_surfaced(surfaced, surface):
     exposed = surface(surfaced)
     assert surfaced["active"].id in exposed, "the active laptop is missing -- surface returned nothing useful"
     assert surfaced["suspended"].id not in exposed, "a SUSPENDED laptop was surfaced"
+
+
+@pytest.mark.parametrize("surface", _SURFACES)
+def test_discontinued_is_never_recommended(surfaced, surface):
+    """ADR-0009 Amendment II: discontinued is found by name and on its details page,
+    never on a recommending or listing surface."""
+    hidden = surfaced["suspended"]
+    hidden.status = "discontinued"
+    surfaced["session"].add(hidden)
+    surfaced["session"].commit()
+    exposed = surface(surfaced)
+    assert surfaced["active"].id in exposed, "the active laptop is missing -- surface returned nothing useful"
+    assert hidden.id not in exposed, "a DISCONTINUED laptop was surfaced"
+
+
+def test_delete_409_names_discontinued_and_suspended(session, admin_client, brand, api_user):
+    """The one message a caller reads when choosing how to retire a laptop."""
+    from app.saved.models import SavedLaptop
+    from tests.integration.conftest import make_laptop
+
+    laptop = make_laptop(brand.id)
+    session.add(laptop)
+    session.commit()
+    session.add(SavedLaptop(user_id=api_user.id, laptop_id=laptop.id))
+    session.commit()
+    r = admin_client.delete(f"/api/v2/laptops/{laptop.id}")
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "'discontinued'" in detail and "'suspended'" in detail
 
 
 # --------------------------------------------------------------------------

@@ -160,6 +160,7 @@ def hybrid_search(request: HybridSearchRequest, session: Session = Depends(get_s
         sa_select(Laptop, LaptopBrand.name, distance.label("distance")) # type: ignore
         .join(LaptopEmbedding, LaptopEmbedding.laptop_id == Laptop.id)
         .join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value)  # ADR-0009 Amendment II
     )
 
     if request.budget_max is not None:
@@ -338,8 +339,9 @@ def delete_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
     """
     Hard-delete a laptop, refusing (409) while anything a user or the review
     pipeline owns still points at it. To retire a listing from search and the
-    storefront without destroying that data, PUT `status: "suspended"` instead —
-    that is what the status field is for. NOT `inactive`, which is ADR-0009's
+    storefront without destroying that data, PUT `status: "discontinued"` (a real
+    machine no longer sold) or `"suspended"` (a duplicate or bad row) instead —
+    that is what the status field is for (ADR-0009 Amendment II). NOT `inactive`, which is ADR-0009's
     awaiting-a-price work queue: sending a discontinued machine there files it
     in the list of machines to go find a price for.
     """
@@ -358,7 +360,8 @@ def delete_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Cannot delete laptop: still referenced by {', '.join(blockers)}. "
-                "Set status to 'suspended' to retire it instead."
+                "Set status to 'discontinued' if it was a real machine that is no longer "
+                "sold, or 'suspended' if it is a duplicate or a bad row."
             ),
         )
 
