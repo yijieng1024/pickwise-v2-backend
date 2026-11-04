@@ -245,7 +245,10 @@ and Pick Score ranges and regeneration. Added:
   `discontinued` as well as `suspended`: neither needs a price found.
 - The Apple buy page: a `suspended` match is left alone (`matched_suspended`,
   as today); a `discontinued` match is on sale again, so it goes back to
-  `active`, is updated, and is listed as `relisted`.
+  `active`, is updated, and is listed as `relisted`. One with no price follows
+  the existing rule instead: an unpriced row cannot be active, so it lands in
+  `inactive`, the awaiting-a-price queue, and is still listed as `relisted`
+  (decided 2026-11-04).
 - The name lookup Pico uses (`lookup_laptop`) finds `active` and
   `discontinued` rows, never `inactive` or `suspended`, and returns candidates
   rather than picking one when the name is ambiguous.
