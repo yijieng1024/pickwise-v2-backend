@@ -230,9 +230,12 @@ anyone.
 | `discontinued` | Real machine, no longer sold | No | Yes | "Last official price" + date |
 | `suspended` | Hidden everywhere: duplicates, bad rows | No | No | — |
 
-"Last official price" is the latest `laptop_price_history` row. Rows with a null
-`source` (June 2026, before sources were recorded) were entered by hand from
-official prices and count as official.
+"Last official price" is the newest `laptop_price_history` row with an official
+source, or `price_rm` dated `price_checked_at` when that check is newer. Official
+sources (decided 2026-11-04): null (every price before 2026-11-01 came from a
+maker's site or Jack), `page` (the maker's website), `apple-buy-page`, `guide` and
+`manual`. A source added later is not official until it is listed. RM 0 is no
+price: the page shows "No recorded price", never RM 0.
 
 **Where the filter is applied, revised.** Everything above that filters on
 `status = 'active'` stays as it is, so discontinued rows are already out of
