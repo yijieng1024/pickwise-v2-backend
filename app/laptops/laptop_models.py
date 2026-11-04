@@ -242,13 +242,26 @@ class LaptopRead(LaptopBase):
     price_checked_at: Optional[datetime] = None
 
 
-class LaptopDetailRead(LaptopRead):
+class LaptopLastPriceRead(LaptopRead):
+    """GET /laptops/{id} and GET /saved/: a discontinued laptop's last official price.
+    Null otherwise, and null when there is no recorded price."""
+    last_official_price_rm: Optional[float] = None
+    last_official_price_at: Optional[datetime] = None
+
+
+def last_official_fields(laptop: "Laptop") -> dict:
+    """The two LaptopLastPriceRead fields for *laptop*: empty unless discontinued."""
+    if laptop.status != LaptopStatus.DISCONTINUED.value:
+        return {}
+    price, at = last_official_price(laptop.price_rm, laptop.price_checked_at,
+                                    [(h.price_rm, h.recorded_at, h.source) for h in laptop.price_history])
+    return {"last_official_price_rm": price, "last_official_price_at": at}
+
+
+class LaptopDetailRead(LaptopLastPriceRead):
     # Marketplace search links (GET /laptops/{id} only). No prices from them.
     shopee_search_url: str
     lazada_search_url: str
-    # Discontinued only; null otherwise, and null when there is no recorded price.
-    last_official_price_rm: Optional[float] = None
-    last_official_price_at: Optional[datetime] = None
 
 class LaptopCreate(LaptopBase):
     pass

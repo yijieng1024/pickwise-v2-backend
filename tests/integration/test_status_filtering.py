@@ -379,3 +379,27 @@ def test_details_page_last_official_price(session, admin_client, brand):
     assert get(priced) == (8299, "2026-06-25")
     assert get(unpriced) == (None, "")
     assert get(active) == (None, "")
+
+
+def test_saved_list_carries_the_last_official_price(session, admin_client, brand, admin_user):
+    """GET /saved/: the Saved page shows a discontinued laptop as the details page does."""
+    from datetime import datetime, timezone
+    from app.laptops.laptop_models import LaptopPriceHistory
+    from app.saved.models import SavedLaptop
+    from tests.integration.conftest import make_laptop
+
+    gone = make_laptop(brand.id, status="discontinued", price_rm=8299)
+    active = make_laptop(brand.id, price_rm=4999)
+    session.add_all([gone, active])
+    session.commit()
+    session.add_all([LaptopPriceHistory(laptop_id=gone.id, price_rm=8299,
+                                        recorded_at=datetime(2026, 6, 25, tzinfo=timezone.utc)),
+                     SavedLaptop(user_id=admin_user.id, laptop_id=gone.id),
+                     SavedLaptop(user_id=admin_user.id, laptop_id=active.id)])
+    session.commit()
+    r = admin_client.get("/api/v2/saved/")
+    assert r.status_code == 200, r.text
+    rows = {row["id"]: row for row in r.json()}
+    assert rows[str(gone.id)]["last_official_price_rm"] == 8299
+    assert rows[str(gone.id)]["last_official_price_at"].startswith("2026-06-25")
+    assert rows[str(active.id)]["last_official_price_rm"] is None

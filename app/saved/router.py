@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.laptops.laptop_models import Laptop, LaptopRead
+from app.laptops.laptop_models import Laptop, LaptopLastPriceRead, last_official_fields
 from app.saved.models import SavedLaptop
 from app.users.auth import get_current_user
 from app.users.models import User
@@ -12,18 +12,20 @@ from app.users.models import User
 router = APIRouter(prefix="/saved", tags=["Saved Laptops"])
 
 
-@router.get("/", response_model=list[LaptopRead])
+@router.get("/", response_model=list[LaptopLastPriceRead])
 def list_saved(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """The user's saved laptops as full laptop records, newest saved first."""
-    return session.exec(
+    """The user's saved laptops as full laptop records, newest saved first. A
+    discontinued one carries its last official price, as on its details page."""
+    laptops = session.exec(
         select(Laptop)
         .join(SavedLaptop, SavedLaptop.laptop_id == Laptop.id)  # type: ignore[arg-type]
         .where(SavedLaptop.user_id == current_user.id)
         .order_by(SavedLaptop.created_at.desc())  # type: ignore[attr-defined]
     ).all()
+    return [LaptopLastPriceRead.model_validate(l, update=last_official_fields(l)) for l in laptops]
 
 
 @router.get("/ids")
