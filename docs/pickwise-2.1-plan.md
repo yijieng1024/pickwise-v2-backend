@@ -718,6 +718,7 @@ Data survey (2026-10-26, read-only): most items can be built from stored data wi
 - `GET /` returns the deployed commit hash (`RENDER_GIT_COMMIT`), so it is clear which commit is live
 - Job page shows `split_failures` separately, not mixed in with the other result lists
 - A deploy interrupts a running job: Render restarts the service and the job ends as failed. Problem recorded only; the fix is not decided yet
+- Repair scripts get a test that runs the `--apply` path on the test DB (decided 2026-11-04): the step (f) missing brand import would have been caught
 
 ### Benchmark name matching fix (step 6b)
 
@@ -776,6 +777,14 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 - No price (decided 2026-11-04): a discontinued laptop with no price shows "No recorded price" on the details page, and Pico says the same. RM 0 always counts as no price, never shown as RM 0. Step (f)'s dry run lists which of the 12 rows have no price
 - `lookup_laptop` (decided 2026-11-04, after a read-only survey of 10 real queries on the production catalog): searches active and discontinued rows with the catalog layer's scoring (token_set_ratio, floor 75). Close = within 10 points of the top score, grouped by family: one family is a single answer with its configurations, several are one candidate per family, and the tool never picks one by itself. A standalone screen size (13, 14, 15, 16, 18) prefers same-size rows among the close ones; a year (e.g. 2023) is removed before scoring and used only as a tie-breaker. These rules live in `lookup_laptop` only: `_catalog_lookup` and the market price tool are unchanged. A discontinued configuration carries its last official price and date; Pico asks which one on candidates and never recommends a discontinued laptop
 - Step (f) moves 12 rows to `discontinued` (Jack, 2026-11-04): the 3 old M5 MacBook Pro 14 rows `0670a4d3`, `7bee501c`, `bf390849` (active today) and 9 suspended rows that are real old machines: `128dcb6b`, `63b4c73c`, `54d2b621` (TUF F15 2023), `e6860697` (TUF A16 Advantage 2023), `d09e2141` (TUF F16 2024 FX607JV), `cd3c6c19` (Vivobook 16 A1605VA), `8199745e`, `8da2d5ec` (Laptop 15 A516), `7d7e74c8` (Chromebook Flip CR1). Every other suspended row stays suspended
+
+### Apple build-to-order options (step 10c, decided 2026-11-04)
+
+*Decided 2026-11-04 (Jack):*
+1. **Scope:** a configurator on the MacBook details page, and Pico uses the options when recommending
+2. **Add-on prices:** first a read-only trial of Apple's configurator API on one machine (MacBook Air 13 standard config), then decide how prices are stored
+3. **Existing rows:** all 134 `laptop_customizations` rows are replaced (bad data, wrong categories)
+4. **Build-to-order rows:** the 10 build-to-order Mac rows become "standard config + options", not rows of their own. The Pick Score of a chosen configuration is calculated live with the same formula, but configured results are **not** added to the catalog ranking ranges (ranges stay standard configs only)
 
 ### Scheduled scraping + notifications
 
