@@ -60,6 +60,7 @@ Different user groups (students, people who don't understand specs, people decid
 | Embeddings and Pick Scores after the ASUS import (decided 2026-11-03) | Embeddings "Generate all" and Pick Score "Recalculate" wait until the 20 new laptops (created 2026-11-03) have prices |
 | Before Pick Score Recalculate (decided 2026-11-03) | Add M6 to `_APPLE_GPU_EQUIVALENT` (Steel Nomad method, like M5), and an explicit M6 CPU alias: 'Apple M6 (12-core)' matches at 0.90, exactly the threshold; check Apple A18 Pro (6-core) resolves (Neo processor name changed) |
 | Apple fields parsed by code (decided 2026-11-03) | Max RAM, weight, charger and number of external displays are parsed by code from the Apple specs page; Touch ID per configuration from the Apple MY buy page. A failed parse is logged as an error, never handed to the LLM. Display resolution standardised to 3456x2234 (superseded 2026-11-04: wrong, only true for 16"; see section 4). Next work, before the rest of step 11 (step 10a) |
+| Discontinued vs suspended (decided 2026-11-04) | `discontinued` = a real machine no longer sold: findable by name, its details page shows the last official price and date, never recommended. `suspended` = hidden everywhere (duplicates, bad rows). ADR-0009 Amendment II |
 | Discontinued status (decided 2026-11-03) | New status value `discontinued`, with an ADR-0009 amendment. Shown with its last official price and date, never recommended, excluded from price guide lookup; `lookup_laptop` returns candidates when a name is ambiguous. Step 10b, after 10a |
 | Migrations check in CI (decided 2026-11-01) | Compares the whole push (`github.event.before..HEAD`), with a fallback for a new branch, instead of `HEAD^..HEAD`. Push `3133099` added a migration and ended on a docs commit, so the job was skipped |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
@@ -756,6 +757,17 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 - Details page: a "discontinued" label with the last official price and its date
 - Price guide lookup excludes discontinued laptops
 - After it is built: `0670a4d3`, `7bee501c`, `bf390849` go to `discontinued` (today still active with an old price)
+
+*Decided 2026-11-04 (Jack, after the read-only survey):*
+1. **Split:** `discontinued` = real machine no longer sold, findable by name, details page shows the last price; `suspended` = hidden everywhere (duplicates, bad rows). Written up as ADR-0009 Amendment II
+2. **Apple buy page:** a `discontinued` machine found on the buy page again goes back to `active` and is updated, and is listed in a new result list `relisted`, so step 11's notifications can show it. A `suspended` match stays as today (`matched_suspended`, not touched)
+3. **Dashboard:** a fourth catalog count, discontinued
+4. **Hybrid search:** `POST /laptops/hybrid-search` returns active laptops only, fixed in 10b (today it filters no status)
+5. **Details page label:** "Last official price" + date. The June history rows with source null were entered by Jack as official prices, so they count as official
+6. **`lookup_laptop` "close score" threshold:** decided at step (c), from real examples
+7. **Build order**, small commits, stop and report after each: (a) plan + ADR amendment draft; (b) enum value, descriptions, dashboard count, price guide exclusion, Apple buy-page `relisted`, hybrid search active only, with tests; (c) `lookup_laptop` tool returning candidates on near-ties, with tests and a system prompt line; (d) API: last official price and date on `GET /laptops/{id}`; (e) frontend: admin dropdown and pill, details page label; (f) script moving the three rows to `discontinued`, dry run then apply
+- No migration: `laptops.status` is a plain VARCHAR, so the new value is one `LaptopStatus` member
+- Existing suspended rows that look like real old machines are listed for Jack (survey 2026-11-04); none is changed until he decides
 
 ### Scheduled scraping + notifications
 

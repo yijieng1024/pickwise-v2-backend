@@ -210,3 +210,54 @@ preference row, and `agent/router.py:135` writes that number into
 `conversation_laptops.pick_score`. That is a snapshot, refreshed by the thread's
 next search, so it is stale for the same reason and on the same terms as the
 non-active rows in `laptop_pick_scores` — accepted rather than backfilled.
+
+## Amendment II — 2026-11-04 (draft, awaiting Jack's OK)
+
+**A fourth state, `discontinued`, takes the "no longer sold" meaning away from
+`suspended`.** The Decision table defines `suspended` as "soft delete: retired,
+no longer sold", and in practice it has held two different kinds of row: real
+machines that left the market (TUF F15 2023, Laptop 15 A516) and rows that
+should never have been shown at all (duplicates from re-scrapes, placeholder
+rows). Those need opposite handling. A shopper who asks Pico about a
+discontinued machine by name should get an answer: it existed, it is no longer
+sold, this was its last official price. A duplicate should never be found by
+anyone.
+
+| Value | Meaning | Recommended | Found by name | Details page |
+|---|---|---|---|---|
+| `active` | On sale, priced | Yes | Yes | Price |
+| `inactive` | Awaiting a price | No | No | — |
+| `discontinued` | Real machine, no longer sold | No | Yes | "Last official price" + date |
+| `suspended` | Hidden everywhere: duplicates, bad rows | No | No | — |
+
+"Last official price" is the latest `laptop_price_history` row. Rows with a null
+`source` (June 2026, before sources were recorded) were entered by hand from
+official prices and count as official.
+
+**Where the filter is applied, revised.** Everything above that filters on
+`status = 'active'` stays as it is, so discontinued rows are already out of
+retrieval, `_pool_block`, the conversation joins, `get_ranking_for_use_case`
+and Pick Score ranges and regeneration. Added:
+
+- `POST /laptops/hybrid-search` returns active rows only. It filtered no status
+  at all, a gap this ADR's list did not cover.
+- The price guide catalog (`price_guide_service._catalog`) excludes
+  `discontinued` as well as `suspended`: neither needs a price found.
+- The Apple buy page: a `suspended` match is left alone (`matched_suspended`,
+  as today); a `discontinued` match is on sale again, so it goes back to
+  `active`, is updated, and is listed as `relisted`.
+- The name lookup Pico uses (`lookup_laptop`) finds `active` and
+  `discontinued` rows, never `inactive` or `suspended`, and returns candidates
+  rather than picking one when the name is ambiguous.
+- `GET /laptops/{id}` keeps returning any status (wishlists and old
+  conversations link to it); the page labels a discontinued row.
+- The admin Dashboard counts all four states.
+
+**The 409 delete message** names both states: "Set status to 'discontinued'
+if it was a real machine that is no longer sold, or 'suspended' if it is a
+duplicate or a bad row". The original amendment's point stands: never
+`inactive`, which is the queue for a price that will arrive.
+
+**What this does not change.** No migration: the column is VARCHAR. Existing
+`suspended` rows stay suspended until someone decides, row by row, which were
+real machines; the 2026-11-04 survey lists the candidates.
