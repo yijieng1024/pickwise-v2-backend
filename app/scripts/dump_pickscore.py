@@ -280,7 +280,7 @@ def main():
         print("  processor  : {}".format(laptop.processor_model))
         print("  gpu        : {}".format(laptop.gpu_model))
         print("  ram / ssd  : {}GB / {}GB".format(laptop.ram_gb, laptop.ssd_gb))
-        print("  weight     : {}kg".format(laptop.weight_kg))
+        print("  weight     : {}".format(f"{laptop.weight_kg}kg" if laptop.weight_kg is not None else "weight unknown"))
         print("  battery    : {}Wh".format(laptop.battery_wh))
         print()
 
