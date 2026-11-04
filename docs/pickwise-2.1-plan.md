@@ -59,7 +59,7 @@ Different user groups (students, people who don't understand specs, people decid
 | New ASUS families (decided 2026-11-03) | TUF Gaming 16 FX610 joins TUF Gaming F16, and Zenbook 14 UX3480 joins Zenbook 14 OLED |
 | Embeddings and Pick Scores after the ASUS import (decided 2026-11-03) | Embeddings "Generate all" and Pick Score "Recalculate" wait until the 20 new laptops (created 2026-11-03) have prices |
 | Before Pick Score Recalculate (decided 2026-11-03) | Add M6 to `_APPLE_GPU_EQUIVALENT` (Steel Nomad method, like M5), and an explicit M6 CPU alias: 'Apple M6 (12-core)' matches at 0.90, exactly the threshold; check Apple A18 Pro (6-core) resolves (Neo processor name changed) |
-| Apple fields parsed by code (decided 2026-11-03) | Max RAM, weight, charger and number of external displays are parsed by code from the Apple specs page; Touch ID per configuration from the Apple MY buy page. A failed parse is logged as an error, never handed to the LLM. Display resolution standardised to 3456x2234. Next work, before the rest of step 11 (step 10a) |
+| Apple fields parsed by code (decided 2026-11-03) | Max RAM, weight, charger and number of external displays are parsed by code from the Apple specs page; Touch ID per configuration from the Apple MY buy page. A failed parse is logged as an error, never handed to the LLM. Display resolution standardised to 3456x2234 (superseded 2026-11-04: wrong, only true for 16"; see section 4). Next work, before the rest of step 11 (step 10a) |
 | Discontinued status (decided 2026-11-03) | New status value `discontinued`, with an ADR-0009 amendment. Shown with its last official price and date, never recommended, excluded from price guide lookup; `lookup_laptop` returns candidates when a name is ambiguous. Step 10b, after 10a |
 | Migrations check in CI (decided 2026-11-01) | Compares the whole push (`github.event.before..HEAD`), with a fallback for a new branch, instead of `HEAD^..HEAD`. Push `3133099` added a migration and ended on a docs commit, so the job was skipped |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
@@ -729,9 +729,14 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 ### Apple fields parsed by code (step 10a, decided 2026-11-03)
 
 - Code parses the Apple specs page, not the LLM: max RAM (Memory section), weight, charger (In the Box), number of external displays
-- Touch ID comes from the Apple MY buy page, per configuration
-- A failed parse is logged as an error. No fallback to the LLM
-- Display resolution is standardised to 3456x2234
+- Display resolution (decided 2026-11-04): parsed by code from the Display section, format `WxH`. Replaces "standardise to 3456x2234", which was wrong: that is only the 16-inch resolution
+- Touch ID (decided 2026-11-04): from the Neo specs page's per-column text ("Not available" / "Touch ID"), mapped to the storage configuration. Not the buy page, which does not show it. Air and Pro: not needed
+- Charger (decided 2026-11-04): parsed by code, matching chip + CPU cores to the In the Box line
+- Media engine and keyboard stay LLM (decided 2026-11-04). 9d521cf2 (media engine) and abc2df6f (keyboard) are fixed by the round 4 repair script
+- Rules for the code-parsed fields (`max_ram_gb`, `weight_kg`, `power_supply_details`, `external_display_support`, `display_resolution`, Touch ID), decided 2026-11-04:
+  - Failed = no heading, no line for this chip, or more than one different value
+  - Failed → the field stays null and is listed in a new result list `field_parse_failures`, beside `split_failures`. No LLM fallback
+  - Footnote digits are stripped (`1.55kg8` → 1.55)
 - Repair: `repair_apple_round4.py`. Dry run table first → Jack OK → `--apply`, with a before/after snapshot in `backups/`
 - Rows to fix:
   - `abc2df6f`: Neo 256GB, Touch ID + keyboard (active)
@@ -796,7 +801,7 @@ A laptop that fails stays inactive, and the notification says which condition fa
 **Notifications (new feature)**
 - Email through Brevo (already set up for auth emails) + in-app notifications in the admin
 - Recipient: Jack (admin) only for now. Design the table so user notifications can be added later without a rewrite
-- Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed); processor result lists `model_codes_replaced`, `identity_conflicts`, `split_failures`, `matched_suspended`, `not_on_buy_page` when not empty
+- Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed); processor result lists `model_codes_replaced`, `identity_conflicts`, `split_failures`, `field_parse_failures`, `matched_suspended`, `not_on_buy_page` when not empty
 
 ### Price
 - Details page shows the official price + a "Last Checked" date. Price history only records changes, so a separate last-checked timestamp is needed; until scheduled scraping (step 9) is live it reflects the last manual scrape
