@@ -406,3 +406,30 @@ def test_saved_list_carries_the_last_official_price(session, admin_client, brand
     assert rows[str(gone.id)]["last_official_price_at"].startswith("2026-06-25")
     assert rows[str(active.id)]["last_official_price_rm"] is None
     assert str(hidden.id) not in rows, "a SUSPENDED laptop was on the Saved list"
+
+
+def test_public_details_hide_suspended_admin_details_do_not(session, admin_client, brand):
+    """ADR-0009 Amendment II: GET /laptops/{id} is a 404 for suspended, and still
+    returns discontinued; GET /admin/laptops/{id} returns any status."""
+    from tests.integration.conftest import make_laptop
+
+    hidden = make_laptop(brand.id, status="suspended", price_rm=4999)
+    gone = make_laptop(brand.id, status="discontinued", price_rm=0)
+    session.add_all([hidden, gone])
+    session.commit()
+    assert admin_client.get(f"/api/v2/laptops/{hidden.id}").status_code == 404
+    assert admin_client.get(f"/api/v2/laptops/{gone.id}").status_code == 200
+    r = admin_client.get(f"/api/v2/admin/laptops/{hidden.id}")
+    assert r.status_code == 200 and r.json()["status"] == "suspended"
+
+
+def test_admin_details_need_an_admin(session, brand):
+    """No token: rejected before the laptop is read."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from tests.integration.conftest import make_laptop
+
+    hidden = make_laptop(brand.id, status="suspended", price_rm=4999)
+    session.add(hidden)
+    session.commit()
+    assert TestClient(app).get(f"/api/v2/admin/laptops/{hidden.id}").status_code == 401

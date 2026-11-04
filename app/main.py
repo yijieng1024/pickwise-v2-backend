@@ -8,7 +8,7 @@ from sqlalchemy.engine import make_url
 from app.config import settings
 from app.logger import setup_logging
 from app.laptops.customization_router import router as customization_router
-from app.laptops.laptop_router import router as laptops_router
+from app.laptops.laptop_router import admin_router as admin_laptops_router, router as laptops_router
 from app.laptops.brand_router import router as brands_router
 from app.laptops.family_router import router as families_router
 from app.users.router import router as users_router
@@ -113,6 +113,7 @@ app.add_middleware(_cors_middleware)
 app.include_router(users_router, prefix=API_PREFIX)
 app.include_router(users_admin_router, prefix=API_PREFIX)
 app.include_router(laptops_router, prefix=API_PREFIX)
+app.include_router(admin_laptops_router, prefix=API_PREFIX)
 app.include_router(brands_router, prefix=API_PREFIX)
 app.include_router(families_router, prefix=API_PREFIX)
 app.include_router(customization_router, prefix=API_PREFIX)

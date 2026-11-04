@@ -33,6 +33,8 @@ from uuid import UUID
 from app.users.auth import get_current_admin
 
 router = APIRouter(prefix="/laptops", tags=["Laptops"])
+# The admin edit page's read: any status, suspended included (ADR-0009 Amendment II).
+admin_router = APIRouter(prefix="/admin/laptops", tags=["Laptops"], dependencies=[Depends(get_current_admin)])
 
 # Allow-list for ?sort_by= — keeps sorting to columns that are indexed/cheap
 # and meant to be exposed, per app.common.sorting_service.
@@ -228,8 +230,20 @@ def list_raw_scrap_laptops(
 
 @router.get("/{laptop_id}", response_model=LaptopDetailRead)
 def get_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
+    """Public. A suspended laptop is hidden everywhere, so it is a 404 here
+    (ADR-0009 Amendment II); the admin edit page reads GET /admin/laptops/{id}."""
+    return _laptop_detail(laptop_id, session, include_suspended=False)
+
+
+@admin_router.get("/{laptop_id}", response_model=LaptopDetailRead)
+def admin_get_laptop(laptop_id: UUID, session: Session = Depends(get_session)):
+    """Admin. Same payload as GET /laptops/{id}, any status."""
+    return _laptop_detail(laptop_id, session, include_suspended=True)
+
+
+def _laptop_detail(laptop_id: UUID, session: Session, include_suspended: bool) -> LaptopDetailRead:
     laptop = session.get(Laptop, laptop_id)
-    if not laptop:
+    if not laptop or (not include_suspended and laptop.status == LaptopStatus.SUSPENDED.value):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Laptop not found")
     brand = session.get(LaptopBrand, laptop.brand_id)
     family = session.get(LaptopFamily, laptop.family_id) if laptop.family_id else None
