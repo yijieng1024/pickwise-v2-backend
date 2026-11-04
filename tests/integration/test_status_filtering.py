@@ -17,7 +17,6 @@ coverage anywhere, their guarantee resting on reading the code.
 import uuid
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.laptops.laptop_models import Laptop, LaptopPickScore
@@ -180,24 +179,26 @@ def test_the_fallback_weight_filter_really_excludes_heavier_rows(session, brand)
     assert names == {"Light"}
 
 
-def test_a_laptop_cannot_have_an_unknown_weight(session, brand):
+def test_an_unknown_weight_is_dropped_by_a_weight_limit_only(session, brand):
     """
-    The NULL question, answered by the schema rather than by the filter.
+    `weight_kg` is nullable since 10a (migration e4b8d2f6a9c1, 2026-11-04: an Apple
+    weight that fails to parse is null, not 0.0). This used to be a tripwire asserting
+    the column was NOT NULL; the decision is now live, and this is it.
 
-    `weight_kg` is NOT NULL on `laptops`, so the "row with no weight" case the
-    filter's NULL semantics would decide cannot occur at all. Worth an explicit
-    test because the reasoning is invisible otherwise: SQL would drop such a row
-    (`NULL <= 1.0` is NULL, not true), which is the behaviour we would want —
-    but nothing depends on that, because the row cannot exist. If the column is
-    ever made nullable this goes red, and the decision becomes live.
+    An unknown weight is not evidence of light, so a stated limit drops the row
+    (`NULL <= 1.0` is NULL, not true); with no limit it is kept. Red if the column is
+    made NOT NULL again (the save raises) or the filter starts letting NULL through.
     """
     from tests.integration.conftest import make_laptop
 
-    unknown = make_laptop(brand.id, product_name="Unknown", weight_kg=None)
-    session.add(unknown)
-    with pytest.raises(IntegrityError):
-        session.commit()
-    session.rollback()
+    session.add(make_laptop(brand.id, product_name="Unknown", weight_kg=None))
+    session.add(make_laptop(brand.id, product_name="Light", weight_kg=0.9))
+    session.commit()
+
+    limited = _retrieval._relational_fallback(session, None, None, 50, weight_max=1.0)
+    assert {c.laptop.product_name for c in limited} == {"Light"}
+    unlimited = _retrieval._relational_fallback(session, None, None, 50)
+    assert {c.laptop.product_name for c in unlimited} == {"Unknown", "Light"}
 
 
 def test_the_weight_filter_is_conditional(session, brand):
