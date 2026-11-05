@@ -149,6 +149,12 @@ def choices_for(c: Configurable, chip: str, given: dict[str, Optional[str]]) -> 
     return choices
 
 
+def total_of(c: Configurable, chip: str, choices: dict[str, str]) -> float:
+    """The chip kit's price plus the chosen options' add-ons on that kit."""
+    kit = c.kits[chip]
+    return round(kit.price_rm + sum(kit.add_on(g, v) for g, v in choices.items()), 2)
+
+
 def chip_row(c: Configurable, chip: str) -> dict:
     return next(r for r in c.rows if r["option_group"] == "chip" and r["value"] == chip)
 
@@ -180,7 +186,7 @@ def configure(session: Session, c: Configurable, chip: str, choices: dict[str, s
     kit = c.kits[chip]
     add_ons = [{"group": g, "value": v, "label": label(c, chip, g, v), "add_on_rm": kit.add_on(g, v)}
                for g, v in choices.items()]
-    total = round(kit.price_rm + sum(a["add_on_rm"] for a in add_ons), 2)
+    total = total_of(c, chip, choices)
     row = chip_row(c, chip)
     scores, reason = live_scores(c.laptop, row, choices, total, get_scoring_data(session))
     return {

@@ -24,9 +24,10 @@ _ALIASES = {"ram": "memory", "ssd": "storage", "power_adapter": "adapter", "chip
 _SPACE = re.compile(r"[\s_-]+")
 
 _LISTING_NOTE = (
-    "Each chip's add-ons are RM relative to that chip's price_rm; a chip's add_on_rm is "
-    "relative to this standard config's price. A configured machine is not a catalog "
-    "laptop. For an exact total and its live Pick Score, call again with selections."
+    "Every number under chips is +/- RM against standard_price_rm: a chip's add_on_rm is "
+    "that chip with this config's other choices where it allows them; an option's is that "
+    "one change on that chip. For a total of several changes and its live Pick Score, call "
+    "again with selections. A configured machine is not a catalog laptop."
 )
 _CONFIGURED_NOTE = (
     "A configured machine, not a catalog laptop. Its Pick Scores are live, scored against "
@@ -44,16 +45,23 @@ def _value(group: str, raw: str) -> str:
 
 
 def _listing(c: svc.Configurable) -> dict:
+    """Every price as +/- RM against this standard config's own price, so "can upgrade
+    to X for +RM Y" reads straight off it: a chip's add_on_rm is that chip with this
+    config's choices where it allows them, an option's is that one change on that chip."""
+    base = c.laptop.price_rm
     chips = []
     for k in svc.kits_listing(c):
-        chip = {"chip": k["chip"], "label": k["label"], "cpu": k["cpu_model"], "gpu": k["gpu_model"],
-                "price_rm": k["kit_price_rm"], "add_on_rm": k["chip_add_on_rm"]}
+        chip = k["chip"]
+        chip_out = {"chip": chip, "label": k["label"], "cpu": k["cpu_model"], "gpu": k["gpu_model"],
+                    "add_on_rm": round(svc.total_of(c, chip, svc.choices_for(c, chip, {})) - base, 2)}
         for group in _LISTED:
             if k["options"].get(group):
-                chip[group] = {o["value"]: o["add_on_rm"] or 0.0 for o in k["options"][group]}
-        chips.append(chip)
+                chip_out[group] = {
+                    o["value"]: round(svc.total_of(c, chip, svc.choices_for(c, chip, {group: o["value"]})) - base, 2)
+                    for o in k["options"][group]}
+        chips.append(chip_out)
     return {"laptop_id": str(c.laptop.id), "product_name": c.laptop.product_name,
-            "standard_price_rm": c.laptop.price_rm,
+            "standard_price_rm": base,
             "standard": {"chip": c.chip, **{g: v for g, v in c.standard.items() if g in _LISTED}},
             "chips": chips, "note": _LISTING_NOTE}
 
@@ -62,7 +70,9 @@ def _labelled(c: svc.Configurable, problems: list[dict]) -> list[dict]:
     """not_allowed with each offering chip's label and price, so Pico can name it."""
     out = []
     for p in problems:
-        offered = [{"chip": chip, "label": svc.chip_row(c, chip)["label"], "price_rm": c.kits[chip].price_rm}
+        offered = [{"chip": chip, "label": svc.chip_row(c, chip)["label"],
+                    "add_on_rm": round(svc.total_of(c, chip, svc.choices_for(c, chip, {p["group"]: p["value"]}))
+                                       - c.laptop.price_rm, 2)}
                    for chip in p["offered_by"]]
         out.append({"group": p["group"], "value": p["value"], "allowed_on_this_chip": p["allowed"],
                     "offered_by": offered})
@@ -111,7 +121,7 @@ def configuration_options(session: Session, laptop_id: str, selections: Optional
     except svc.NotAllowed as e:
         return {"laptop_id": str(c.laptop.id), "product_name": c.laptop.product_name,
                 "error": e.message, "chip": chip or c.chip, "not_allowed": _labelled(c, e.problems),
-                "instruction": ("Tell the user which chip offers the choice and what that chip costs; "
+                "instruction": ("Tell the user which chip offers the choice and its add_on_rm (vs this config); "
                                 "do not switch the chip for them. To price it, call again with that chip.")}
     return _configured(c, svc.configure(session, c, chip, choices))
 
@@ -121,8 +131,8 @@ def get_configuration_options(laptop_id: str, selections: Optional[dict[str, str
     """Build-to-order options of an Apple MacBook standard configuration, from Apple's
     own configurator prices.
 
-    Without selections: its chips (each with price_rm and add_on_rm vs this config)
-    and, per chip, the memory/storage/adapter/display values with their add-on in RM.
+    Without selections: its chips and, per chip, the memory/storage/adapter/display
+    values, every one as +/- RM against this config's standard_price_rm.
     With selections, e.g. {"memory": "48gb", "storage": "2tb"} or
     {"chip": "m5pro-18-20", "memory": "64gb"}: the configured total and its live Pick
     Scores. chip defaults to this configuration's own; use a chip value from the

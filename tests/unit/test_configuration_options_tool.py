@@ -64,10 +64,17 @@ def test_the_listing_is_the_options_endpoint_s_kits(pro):
     out = _call(c)
     assert out["standard"] == {"chip": "m6-12-12", "memory": "16gb", "storage": "1tb", **{
         g: v for g, v in c.standard.items() if g in ("adapter", "display")}}
-    kits = {k["chip"]: k for k in svc.kits_listing(c)}
-    for chip in out["chips"]:
-        assert chip["price_rm"] == kits[chip["chip"]]["kit_price_rm"]
-        assert chip["memory"] == {o["value"]: o["add_on_rm"] or 0.0 for o in kits[chip["chip"]]["options"]["memory"]}
+    m6 = next(ch for ch in out["chips"] if ch["chip"] == "m6-12-12")
+    assert m6["add_on_rm"] == 0.0 and m6["memory"]["16gb"] == 0.0
+
+
+def test_every_listed_price_is_the_configure_total_minus_the_standard_price(pro):
+    c = pro(14, "liquid-retina")
+    for ch in _call(c)["chips"]:
+        mem = next(v for v in ch["memory"] if v != "16gb")
+        out = _call(c, {"chip": ch["chip"], "memory": mem})
+        assert out["total_rm"] == round(c.laptop.price_rm + ch["memory"][mem], 2), ch["chip"]
+    assert _call(c, {"memory": "32gb", "storage": "4tb"})["total_rm"] == 16849.0  # Apple's own
 
 
 def test_selections_total_apples_own_figure_with_a_live_score(pro):
@@ -85,6 +92,8 @@ def test_a_choice_another_chip_offers_names_that_chip_and_does_not_switch(pro):
     assert problem["value"] == "36gb" and out["chip"] == "m5max-18-40"
     assert [o["chip"] for o in problem["offered_by"]] == ["m5max-18-32"]
     assert problem["offered_by"][0]["label"] == "18-core CPU, 32-core GPU"
+    offered_total = _call(pro(16, "proled"), {"chip": "m5max-18-32", "memory": "36gb"})["total_rm"]
+    assert offered_total == 22999.0 + problem["offered_by"][0]["add_on_rm"]
 
 
 def test_a_laptop_without_options_says_so(monkeypatch):
