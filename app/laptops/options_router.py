@@ -17,7 +17,6 @@ from sqlmodel import Session
 
 from app.database import get_session
 from app.laptops import options_service as svc
-from app.processor import apple_options
 
 router = APIRouter(prefix="/laptops", tags=["Apple options"])
 
@@ -85,21 +84,8 @@ def _configurable(session: Session, laptop_id: uuid.UUID) -> svc.Configurable:
 @router.get("/{laptop_id}/options", response_model=OptionsResponse)
 def get_options(laptop_id: uuid.UUID, session: Session = Depends(get_session)):
     c = _configurable(session, laptop_id)
-    kits = []
-    for chip, kit in c.kits.items():
-        row = svc.chip_row(c, chip)
-        options: Dict[str, List[OptionValue]] = {}
-        for o in kit.options:
-            if not o.is_blocked:
-                options.setdefault(o.group, []).append(OptionValue(
-                    value=o.value, label=svc.label(c, chip, o.group, o.value),
-                    add_on_rm=o.add_on_rm, is_included=o.is_included))
-        kits.append(ChipKit(chip=chip, label=row["label"], cpu_model=row["cpu_model"], gpu_model=row["gpu_model"],
-                            kit_price_rm=kit.price_rm, chip_add_on_rm=round(kit.price_rm - c.laptop.price_rm, 2),
-                            options=options))
-    kits.sort(key=lambda k: k.kit_price_rm)
     return OptionsResponse(laptop_id=c.laptop.id, standard_chip=c.chip, standard=c.standard,
-                           standard_price_rm=c.laptop.price_rm, kits=kits)
+                           standard_price_rm=c.laptop.price_rm, kits=svc.kits_listing(c))
 
 
 @router.get("/{laptop_id}/configure", response_model=ConfigureResponse)
@@ -114,15 +100,9 @@ def configure(
     session: Session = Depends(get_session),
 ):
     c = _configurable(session, laptop_id)
-    chip = chip or c.chip
-    if chip not in c.kits:
-        raise HTTPException(status_code=422, detail={"message": "This chip is not offered on this laptop",
-                                                     "not_allowed": [{"group": "chip", "value": chip,
-                                                                      "allowed": list(c.kits), "offered_by": []}]})
     given = {"memory": memory, "storage": storage, "adapter": adapter, "display": display, "keyboard": keyboard}
-    choices = svc.choices_for(c, chip, given)
-    problems = apple_options.not_allowed(c.kits, chip, {g: v for g, v in choices.items() if given.get(g)})
-    if problems:
-        raise HTTPException(status_code=422, detail={"message": "The chosen chip does not allow this option",
-                                                     "not_allowed": problems})
+    try:
+        chip, choices = svc.checked_choices(c, chip, given)
+    except svc.NotAllowed as e:
+        raise HTTPException(status_code=422, detail={"message": e.message, "not_allowed": e.problems})
     return svc.configure(session, c, chip, choices)

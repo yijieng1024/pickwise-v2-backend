@@ -39,6 +39,14 @@ class NotConfigurable(LookupError):
     """Not an active Apple standard config with stored chip kits."""
 
 
+class NotAllowed(ValueError):
+    """A choice the chosen chip does not allow: what it allows and which chips offer it."""
+
+    def __init__(self, message: str, problems: list[dict]):
+        super().__init__(message)
+        self.message, self.problems = message, problems
+
+
 @dataclass
 class Configurable:
     laptop: Laptop
@@ -82,6 +90,46 @@ def configurable(session: Session, laptop_id: uuid.UUID) -> Configurable:
         if (value := _included(kits[chip], group)) is not None:
             standard[group] = value
     return Configurable(laptop, rows, kits, chip, standard)
+
+
+def is_configurable(session: Session, laptop_id: uuid.UUID) -> bool:
+    try:
+        configurable(session, laptop_id)
+        return True
+    except NotConfigurable:
+        return False
+
+
+def kits_listing(c: Configurable) -> list[dict]:
+    """Every chip kit, cheapest first, with its unblocked options per group."""
+    kits = []
+    for chip, kit in c.kits.items():
+        row = chip_row(c, chip)
+        options: dict[str, list[dict]] = {}
+        for o in kit.options:
+            if not o.is_blocked:
+                options.setdefault(o.group, []).append({
+                    "value": o.value, "label": label(c, chip, o.group, o.value),
+                    "add_on_rm": o.add_on_rm, "is_included": o.is_included})
+        kits.append({"chip": chip, "label": row["label"], "cpu_model": row["cpu_model"],
+                     "gpu_model": row["gpu_model"], "kit_price_rm": kit.price_rm,
+                     "chip_add_on_rm": round(kit.price_rm - c.laptop.price_rm, 2), "options": options})
+    return sorted(kits, key=lambda k: k["kit_price_rm"])
+
+
+def checked_choices(c: Configurable, chip: Optional[str], given: dict[str, Optional[str]]) -> tuple[str, dict]:
+    """The chip (default: the standard config's) and every group's choice. Raises
+    NotAllowed for a chip not offered or a given choice the chip does not allow; never
+    switches the chip by itself."""
+    chip = chip or c.chip
+    if chip not in c.kits:
+        raise NotAllowed("This chip is not offered on this laptop",
+                         [{"group": "chip", "value": chip, "allowed": list(c.kits), "offered_by": []}])
+    choices = choices_for(c, chip, given)
+    problems = apple_options.not_allowed(c.kits, chip, {g: v for g, v in choices.items() if given.get(g)})
+    if problems:
+        raise NotAllowed("The chosen chip does not allow this option", problems)
+    return chip, choices
 
 
 def choices_for(c: Configurable, chip: str, given: dict[str, Optional[str]]) -> dict[str, str]:
