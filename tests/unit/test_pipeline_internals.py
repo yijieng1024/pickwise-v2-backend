@@ -545,6 +545,7 @@ def _install_stubs(monkeypatch, retrieve=None, rerank=None):
     monkeypatch.setattr(_search_tool, "Session", lambda *a, **kw: _NullSession())
     monkeypatch.setattr(_search_tool, "_pick_scores_for", lambda top, session, pref: {})
     monkeypatch.setattr(_search_tool, "log_pipeline_result", lambda **kw: None)
+    monkeypatch.setattr(_search_tool, "is_configurable", lambda session, laptop_id: False)
     # The tool prefetches the query vector before retrieval. A fake embedder,
     # and fresh vector caches so this fake never answers a later test that
     # breaks the embedding on purpose.
@@ -580,6 +581,19 @@ def test_smaller_top_k_is_respected(monkeypatch):
     _install_stubs(monkeypatch, retrieve=lambda query, session, **kw: pool)
 
     assert len(_run_search("a laptop", top_k=3)["results"]) == 3
+
+
+def test_only_configurable_results_are_flagged_and_carry_no_options(monkeypatch):
+    """configurable: true on Apple standard configs with options, absent elsewhere; the
+    options stay in get_configuration_options (the eval keeps 4,500 chars per output)."""
+    pool = [_candidate(similarity=0.80, model_code=f"M{i}") for i in range(3)]
+    _install_stubs(monkeypatch, retrieve=lambda query, session, **kw: pool)
+    mac = pool[0].laptop.id
+    monkeypatch.setattr(_search_tool, "is_configurable", lambda session, laptop_id: laptop_id == mac)
+
+    flagged = [r.get("configurable") for r in _run_search("a laptop")["results"]]
+
+    assert sorted(flagged, key=str) == [None, None, True]
 
 
 def test_gated_search_returns_no_results_and_a_bottleneck(monkeypatch):

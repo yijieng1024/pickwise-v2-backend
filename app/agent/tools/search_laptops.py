@@ -5,6 +5,7 @@ from langchain_core.tools import tool
 from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
+from app.laptops.options_service import is_configurable
 from app.purposes import PURPOSES, normalize_purpose
 from app.laptops.family_service import closest_to_budget, deduplicate_by_family
 from app.laptops.pickscore_adapter import get_scoring_data, laptop_to_scorable
@@ -290,6 +291,10 @@ def _run_search(
         for rc in top:
             d = _to_result_dict(rc)
             d.update(pick_scores.get(d["laptop_id"], {}))
+            # A flag only: the options themselves would not fit the eval's 4,500
+            # characters per output; get_configuration_options returns them.
+            if is_configurable(session, rc._laptop.id):  # type: ignore[attr-defined]
+                d["configurable"] = True
             results.append(d)
 
         return {
