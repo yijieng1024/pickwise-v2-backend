@@ -69,6 +69,13 @@ def http_get(url: str) -> str:
 
 # --------------------------------------------------------------------------- read
 
+def apple_brand_ids(session: Session) -> set:
+    """The Apple brand row(s): the fetch's lock checks which scrape jobs touch Apple."""
+    from app.laptops.brand_model import LaptopBrand
+
+    return {b.id for b in session.exec(select(LaptopBrand)) if b.name.lower() == "apple"}
+
+
 def _latest_raw(session: Session, url: str) -> Optional[RawScrapLaptop]:
     return session.exec(
         select(RawScrapLaptop).where(RawScrapLaptop.source_url == url)

@@ -77,6 +77,7 @@ class JobType:
     PASSMARK_CPU = "benchmarks.refresh_cpu"
     PASSMARK_GPU = "benchmarks.refresh_gpu"
     PRICE_GUIDE_APPLY = "price_guide.apply"
+    APPLE_OPTIONS_FETCH = "apple.options_fetch"
 
     ALL = (
         PROCESS_PENDING,
@@ -93,6 +94,7 @@ class JobType:
         PASSMARK_CPU,
         PASSMARK_GPU,
         PRICE_GUIDE_APPLY,
+        APPLE_OPTIONS_FETCH,
     )
 
     # One lock for both lists: each run holds a connection for about 12 minutes.

@@ -40,7 +40,8 @@ from app.scraper.raw_html_model import (
     RawHtmlUploadSummary,
 )
 from app.common.job_model import JobAccepted, JobType
-from app.common.job_service import JobProgress, create_job, job_accepted, run_job
+from app.scraper.apple_options_fetch import apple_brand_ids
+from app.common.job_service import JobProgress, create_job, job_accepted, refuse_if_running, run_job
 from app.users.models import User
 from .bulk_scraper import SCRAPERS, _success_status, run_bulk_scrape, run_scrape_for_targets, stored_rows_of
 
@@ -672,6 +673,9 @@ async def scrape_selected_targets(
             status_code=404,
             detail=f"ScrapeTarget id(s) not found: {', '.join(missing)}",
         )
+    if any(t.brand_id in apple_brand_ids(session) for t in session.exec(
+            select(ScrapeTarget).where(ScrapeTarget.id.in_(request.target_ids)))):  # type: ignore[attr-defined]
+        _refuse_while_options_fetch(session)
 
     job = create_job(
         session,
@@ -695,6 +699,13 @@ async def scrape_selected_targets(
     return job_accepted(
         job, message=f"Scraping {len(target_ids)} selected target(s) in the background."
     )
+
+
+def _refuse_while_options_fetch(session: Session) -> None:
+    """An Apple scrape runs the options step after the buy pages; one fetch at a time
+    (app/admin/apple_options_router.py holds the other half of this lock)."""
+    refuse_if_running(session, (JobType.APPLE_OPTIONS_FETCH,),
+                      "An Apple options fetch is running; scrape Apple after it finishes.")
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +742,8 @@ async def bulk_scrape(
         raise HTTPException(
             status_code=404, detail=f"Brand with id={request.brand_id} not found."
         )
+    if brand.name.lower() == "apple":
+        _refuse_while_options_fetch(session)
 
     queued = len(
         session.exec(
