@@ -714,3 +714,4 @@ from app.agent.tools import ALL_TOOLS as agent_tools  # noqa: E402,F401
 
 # 10b step (f) - app/scripts/discontinue_10b.py
 from app.scripts import discontinue_10b  # noqa: E402,F401
+from app.scripts import retire_bto_10c  # noqa: E402,F401 - 10c step f
