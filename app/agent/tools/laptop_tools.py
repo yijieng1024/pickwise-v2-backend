@@ -9,65 +9,8 @@ from app.config import settings
 from app.database import engine
 from app.embeddings.service import embed_text
 from app.taxonomy.category_model import Category  # noqa: F401 — must precede Laptop to register with SQLAlchemy mapper
-from app.laptops.customization_model import LaptopCustomization  # must precede Laptop import
 from app.laptops.laptop_models import Laptop
 from app.reviews.models import SHOWN_CHUNKS, ChunkScope, LaptopReviewChunk
-
-
-@tool
-def calculate_custom_apple_price(
-    model_code: str,
-    selected_options: list[str],
-) -> dict:
-    """
-    Calculate the total price for an Apple laptop with selected customization options.
-
-    Looks up the laptop by model_code, then sums the price_add_rm for each
-    customization option whose option_name matches an entry in selected_options.
-
-    Args:
-        model_code: The laptop's unique model code (e.g. "MNEH3ZP/A").
-        selected_options: Option names to add (e.g. ["32GB RAM", "1TB SSD"]).
-    """
-    with Session(engine) as session:
-        laptop = session.exec(
-            select(Laptop).where(Laptop.model_code == model_code)
-        ).first()
-
-        if not laptop:
-            return {"error": f"Laptop with model_code '{model_code}' not found."}
-
-        all_customizations = session.exec(
-            select(LaptopCustomization).where(
-                LaptopCustomization.laptop_id == laptop.id
-            )
-        ).all()
-
-        selected_addons = [
-            {
-                "option_name": c.option_name,
-                "category": c.category.name if c.category else None,
-                "price_add_rm": c.price_add_rm,
-            }
-            for c in all_customizations
-            if c.option_name in selected_options
-        ]
-
-        unrecognized = [
-            opt for opt in selected_options
-            if opt not in {c.option_name for c in all_customizations}
-        ]
-
-        total_addon_rm = sum(a["price_add_rm"] for a in selected_addons)
-
-        return {
-            "model_code": model_code,
-            "product_name": laptop.product_name,
-            "base_price_rm": laptop.price_rm,
-            "selected_addons": selected_addons,
-            "total_price_rm": laptop.price_rm + total_addon_rm,
-            "unrecognized_options": unrecognized,
-        }
 
 
 _EVIDENCE_POOL = 20     # nearest rows fetched before the cutoff and dedup
