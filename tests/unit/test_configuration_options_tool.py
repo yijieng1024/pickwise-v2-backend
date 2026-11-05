@@ -100,6 +100,7 @@ def test_a_laptop_without_options_says_so(monkeypatch):
     def none(session, laptop_id):
         raise svc.NotConfigurable
     monkeypatch.setattr(svc, "configurable", none)
+    monkeypatch.setattr(tool_mod, "_configurable_siblings", lambda session, laptop_id: [])
     assert "no build-to-order options" in tool_mod.configuration_options(None, str(uuid.uuid4()))["error"]
     assert "not a laptop id" in tool_mod.configuration_options(None, "MacBook Air")["error"]
 
@@ -113,3 +114,13 @@ def test_pico_has_the_configurator_and_not_the_customizations_tool():
     assert f"access to {['one', 'two', 'three', 'four', 'five', 'six'][len(names) - 1]} tools" in prompt
     assert all(f"{i}. {n}" in prompt for i, n in enumerate(sorted(names, key=prompt.index), 1))
     assert "calculate_custom_apple_price" not in prompt and "not a catalog ranking" in prompt
+
+
+def test_a_build_to_order_row_points_at_its_family_s_standard_configs(monkeypatch):
+    def none(session, laptop_id):
+        raise svc.NotConfigurable
+    std = [{"laptop_id": "x", "product_name": "MacBook Pro 14 (M5 Pro)", "price_rm": 10299.0}]
+    monkeypatch.setattr(svc, "configurable", none)
+    monkeypatch.setattr(tool_mod, "_configurable_siblings", lambda session, laptop_id: std)
+    out = tool_mod.configuration_options(None, str(uuid.uuid4()))
+    assert out["configurable_standard_configs"] == std and "standard configs do" in out["error"]

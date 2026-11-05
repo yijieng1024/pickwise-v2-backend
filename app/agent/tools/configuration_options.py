@@ -14,10 +14,11 @@ import uuid
 from typing import Optional
 
 from langchain_core.tools import tool
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.database import engine
 from app.laptops import options_service as svc
+from app.laptops.laptop_models import Laptop
 
 _LISTED = ("memory", "storage", "adapter", "display")
 _ALIASES = {"ram": "memory", "ssd": "storage", "power_adapter": "adapter", "chip": "chip"}
@@ -96,6 +97,15 @@ def _configured(c: svc.Configurable, result: dict) -> dict:
     return out
 
 
+def _configurable_siblings(session: Session, laptop_id: uuid.UUID) -> list[dict]:
+    laptop = session.get(Laptop, laptop_id)
+    if laptop is None or laptop.family_id is None:
+        return []
+    rows = session.exec(select(Laptop).where(Laptop.family_id == laptop.family_id, Laptop.id != laptop_id)).all()
+    return [{"laptop_id": str(r.id), "product_name": r.product_name, "price_rm": r.price_rm}
+            for r in sorted(rows, key=lambda r: r.price_rm) if svc.is_configurable(session, r.id)]
+
+
 def configuration_options(session: Session, laptop_id: str, selections: Optional[dict] = None) -> dict:
     try:
         target = uuid.UUID(laptop_id)
@@ -104,8 +114,14 @@ def configuration_options(session: Session, laptop_id: str, selections: Optional
     try:
         c = svc.configurable(session, target)
     except svc.NotConfigurable:
-        return {"error": "This laptop has no build-to-order options. Only active Apple MacBook standard "
-                         "configurations have them; do not quote upgrade prices for it."}
+        out = {"error": "This laptop has no build-to-order options. Only active Apple MacBook standard "
+                        "configurations have them; do not quote upgrade prices for it."}
+        # A build-to-order row (suspended in step f) is found by search too: point at the
+        # standard configs of its family, which do have options.
+        if siblings := _configurable_siblings(session, target):
+            out["error"] = "This row has no options itself; its product line's standard configs do."
+            out["configurable_standard_configs"] = siblings
+        return out
     if not selections:
         return _listing(c)
     given: dict[str, str] = {}
