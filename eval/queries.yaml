@@ -212,13 +212,17 @@
     tools: [search_malaysian_market_price]
     rubric: "给出马来西亚市场价格或价格区间,注明来源/时效"
 
-- id: tool_zh_002
+- id: tool_zh_002          # two Pro 14 lines price the same chip differently: asking which is right
   category: tool_routing
   lang: zh
-  query: "帮我算一下 MacBook Pro 14 加到 48GB RAM 和 2TB SSD 多少钱"
-  expect:
-    tools: [calculate_custom_apple_price]
-    rubric: "调用定制价格计算,给出加价后的具体总价"
+  turns:
+    - query: "MacBook Pro 14 M5 Pro 48GB 2TB 多少钱"
+      expect:
+        rubric: "Pro 14 有 Liquid Retina 和 PROLED 两条产品线时,询问用户是哪一条,或分别用 get_configuration_options 的数字报价;绝不编造价格"
+    - query: "Liquid Retina 那款"
+      expect:
+        tools: [get_configuration_options]
+        rubric: "用 get_configuration_options 的数字给出 Liquid Retina M5 Pro + 48GB + 2TB 的总价;若所选芯片不支持,说明哪颗芯片提供,不擅自换芯片;不把定制机当作目录中的现货机型"
 
 - id: tool_zh_003
   category: tool_routing
@@ -241,6 +245,14 @@
   query: "Any reviews on the Illegear Onyx V?"
   expect:
     rubric: "Honestly states no review evidence is available for this model instead of inventing reviewer opinions; may offer spec-based info or similar reviewed models"
+
+- id: tool_en_004
+  category: tool_routing
+  lang: en
+  query: "Can the MacBook Air 13 go to 32GB?"
+  expect:
+    tools: [get_configuration_options]
+    rubric: "Answers from get_configuration_options whether 32GB is offered on the 13-inch Air, with the add-on price (and which chip, if only another chip offers it); every price comes from the tool; does not present the configured machine as a catalog laptop"
 
 - id: tool_en_003
   category: tool_routing
