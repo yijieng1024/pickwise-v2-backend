@@ -814,6 +814,9 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 22. **M6 benchmarks** (ADR-0010 Amendment III): the 12-core GPU is aliased to Intel Arc B390 (Steel Nomad 1,515 vs 1,539); the CPU resolves exactly once "ARM" and "0 MHz" are dropped from "ARM Apple" rows.
 23. **No early Pick Score regeneration.** The M6 alias waits for the planned full recalculation (after the ASUS 20 and the new Apple machines are priced). Until then the 3 standard M6 rows show the stored flagged-neutral GPU score, while the configurator scores the M6 live on the Arc B390 alias, so the same machine can show two different scores.
 
+*Step (f) applied to production 2026-11-05* (`app/scripts/retire_bto_10c.py`, snapshots `backups/retire_bto_10c_2026-11-05_195911_869107_pre.json` / `_195913_968063_post.json`): the 10 rows are `suspended`, embeddings, Pick Scores and price history kept; `a3205f6d`'s 49 review chunks and 2 links moved to `f3ebcce1` (same chip: M5 Pro 18-core CPU, 20-core GPU).
+24. **Tidy-up:** `a3205f6d`'s `laptop_review_summary` row stayed on the old (suspended) row, and `f3ebcce1` has no admin summary. Re-run `POST /reviews/aggregate/f3ebcce1…` and delete the old row (the public reviews page computes from chunks, so only the admin view is affected).
+
 ### Scheduled scraping + notifications
 
 **Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked).
