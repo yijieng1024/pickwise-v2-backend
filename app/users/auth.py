@@ -17,6 +17,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # send credentials to get a token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v2/auth/login")
+# Public endpoints that personalize when a token is sent: no token is not an error.
+oauth2_optional = OAuth2PasswordBearer(tokenUrl="api/v2/auth/login", auto_error=False)
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
@@ -93,6 +95,20 @@ def get_current_user(
     session: Session = Depends(get_session)
 ) -> User:
     return _resolve_user(token, session)
+
+
+def get_optional_user(
+    token: Optional[str] = Depends(oauth2_optional),
+    session: Session = Depends(get_session),
+) -> Optional[User]:
+    """The caller on a public endpoint, or None: no token, or one that no longer
+    resolves (expired, inactive account), which must not turn the page into a 401."""
+    if not token:
+        return None
+    try:
+        return _resolve_user(token, session)
+    except HTTPException:
+        return None
 
 
 def get_current_user_detached(token: str = Depends(oauth2_scheme)) -> User:

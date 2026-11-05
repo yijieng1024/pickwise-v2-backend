@@ -13,10 +13,12 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.database import get_session
 from app.laptops import options_service as svc
+from app.users.auth import get_optional_user
+from app.users.models import LaptopUserPreference, User
 
 router = APIRouter(prefix="/laptops", tags=["Apple options"])
 
@@ -72,6 +74,8 @@ class ConfigureResponse(BaseModel):
     total_rm: float
     scores: Optional[List[ConfiguredScore]]   # None when the chip has no benchmark
     score_unavailable_reason: Optional[str]
+    # The caller's personalized score: only with a bearer token and a preference profile.
+    personalized_score: Optional[Dict[str, Any]] = None
 
 
 def _configurable(session: Session, laptop_id: uuid.UUID) -> svc.Configurable:
@@ -98,6 +102,7 @@ def configure(
     display: Optional[str] = Query(None, description="standard or nano_texture"),
     keyboard: Optional[str] = Query(None, description="e.g. none (US English)"),
     session: Session = Depends(get_session),
+    user: Optional[User] = Depends(get_optional_user),
 ):
     c = _configurable(session, laptop_id)
     given = {"memory": memory, "storage": storage, "adapter": adapter, "display": display, "keyboard": keyboard}
@@ -105,4 +110,6 @@ def configure(
         chip, choices = svc.checked_choices(c, chip, given)
     except svc.NotAllowed as e:
         raise HTTPException(status_code=422, detail={"message": e.message, "not_allowed": e.problems})
-    return svc.configure(session, c, chip, choices)
+    pref = session.exec(select(LaptopUserPreference).where(
+        LaptopUserPreference.user_id == user.id)).first() if user else None
+    return svc.configure(session, c, chip, choices, user_pref=pref)

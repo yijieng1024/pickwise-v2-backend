@@ -164,13 +164,17 @@ def label(c: Configurable, chip: str, group: str, value: str) -> Optional[str]:
                  and r["value"] == value), None)
 
 
+def _configured_product(laptop: Laptop, chip: dict, choices: dict[str, str], total_rm: float):
+    return dataclasses.replace(
+        laptop_to_scorable(laptop, "Apple"), price=total_rm, ram_gb=_gb(choices["memory"]),
+        storage_gb=_gb(choices["storage"]), cpu_model=chip["cpu_model"], gpu_model=chip["gpu_model"])
+
+
 def live_scores(laptop: Laptop, chip: dict, choices: dict[str, str], total_rm: float,
                 scoring: tuple) -> tuple[Optional[list[dict]], Optional[str]]:
     """The detail page's five use-case scores for the configured machine, or None and why."""
     ranges, cpu_bm, gpu_bm = scoring
-    product = dataclasses.replace(
-        laptop_to_scorable(laptop, "Apple"), price=total_rm, ram_gb=_gb(choices["memory"]),
-        storage_gb=_gb(choices["storage"]), cpu_model=chip["cpu_model"], gpu_model=chip["gpu_model"])
+    product = _configured_product(laptop, chip, choices, total_rm)
     results = {use_case: calculate_pick_score(product, None, ranges, cpu_bm, gpu_bm, priority_override=priorities)
                for use_case, priorities in USE_CASE_PRIORITIES.items()}
     # The engine's own rule (ADR-0016), as on the detail page: one unresolved part scores a
@@ -182,16 +186,31 @@ def live_scores(laptop: Laptop, chip: dict, choices: dict[str, str], total_rm: f
              "flags": r.flags} for use_case, r in results.items()], None
 
 
-def configure(session: Session, c: Configurable, chip: str, choices: dict[str, str]) -> dict[str, Any]:
+def personal_score(laptop: Laptop, chip: dict, choices: dict[str, str], total_rm: float,
+                   scoring: tuple, user_pref) -> dict:
+    """The caller's personalized score for the configured machine: the engine's
+    personalized mode, as search_laptops runs it for a user with a preference row."""
+    ranges, cpu_bm, gpu_bm = scoring
+    r = calculate_pick_score(_configured_product(laptop, chip, choices, total_rm), user_pref,
+                             ranges, cpu_bm, gpu_bm, priority_override=USE_CASE_PRIORITIES["general_use"])
+    return {"score": r.score, "mode": r.mode, "breakdown": [b.model_dump() for b in r.breakdown], "flags": r.flags}
+
+
+def configure(session: Session, c: Configurable, chip: str, choices: dict[str, str],
+              user_pref=None) -> dict[str, Any]:
+    """user_pref: the caller's LaptopUserPreference, or None (no personalized score)."""
     kit = c.kits[chip]
     add_ons = [{"group": g, "value": v, "label": label(c, chip, g, v), "add_on_rm": kit.add_on(g, v)}
                for g, v in choices.items()]
     total = total_of(c, chip, choices)
     row = chip_row(c, chip)
-    scores, reason = live_scores(c.laptop, row, choices, total, get_scoring_data(session))
+    scoring = get_scoring_data(session)
+    scores, reason = live_scores(c.laptop, row, choices, total, scoring)
     return {
         "laptop_id": c.laptop.id, "chip": chip, "chip_label": row["label"],
         "cpu_model": row["cpu_model"], "gpu_model": row["gpu_model"],
         "standard_price_rm": c.laptop.price_rm, "chip_add_on_rm": round(kit.price_rm - c.laptop.price_rm, 2),
         "add_ons": add_ons, "total_rm": total, "scores": scores, "score_unavailable_reason": reason,
+        "personalized_score": (personal_score(c.laptop, row, choices, total, scoring, user_pref)
+                               if user_pref is not None else None),
     }

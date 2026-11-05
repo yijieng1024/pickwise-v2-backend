@@ -82,3 +82,34 @@ def test_a_chip_with_benchmarks_gets_the_detail_pages_five_scores():
     assert reason is None
     assert [s["use_case"] for s in scores] == ["office_study", "programming", "gaming", "creative_work", "general_use"]
     assert all(isinstance(s["score"], int) for s in scores)
+
+
+class _Pref:
+    """A preference profile as the engine reads it."""
+    budget = {"min": None, "max": 9000.0}
+    purpose = ["Programming/Development"]
+    priorities = {"cpu": 10, "ram_storage": 9, "price": 3}
+    screen_size = []
+    portability = "Neutral"
+    brand_preferences = ["apple"]
+
+
+def test_the_personalized_score_is_the_engine_s_personalized_mode_on_the_configured_machine():
+    chip = {"cpu_model": "Apple M6 (12-core)", "gpu_model": "12-core GPU"}
+    choices = {"memory": "32gb", "storage": "4tb"}
+    personal = options_service.personal_score(PRO14, chip, choices, 16849.0, SCORING, _Pref())
+    product = options_service._configured_product(PRO14, chip, choices, 16849.0)
+    expected = options_service.calculate_pick_score(product, _Pref(), *SCORING)
+    assert personal["score"] == expected.score and personal["mode"] == "personalized"
+    general, _ = options_service.live_scores(PRO14, chip, choices, 16849.0, SCORING)
+    assert personal["score"] != next(s["score"] for s in general if s["use_case"] == "general_use")
+
+
+def test_no_profile_means_no_personalized_score(monkeypatch):
+    kits = _kits(14, "liquid-retina")
+    c = options_service.Configurable(PRO14, [r for r in ROWS if r["size_inch"] == 14 and r["line"] == "liquid-retina"],
+                                     kits, "m6-12-12", {"memory": "16gb", "storage": "1tb"})
+    monkeypatch.setattr(options_service, "get_scoring_data", lambda session: SCORING)
+    choices = options_service.choices_for(c, "m6-12-12", {})
+    assert options_service.configure(None, c, "m6-12-12", choices)["personalized_score"] is None
+    assert options_service.configure(None, c, "m6-12-12", choices, user_pref=_Pref())["personalized_score"]["score"]

@@ -85,3 +85,21 @@ def test_configuring_leaves_the_catalog_ranges_unchanged(api_client, session, m6
     resp = api_client.get(f"/api/v2/laptops/{m6.id}/configure?chip=m5max-18-40&memory=128gb&storage=8tb")
     assert resp.status_code == 200, resp.text
     assert get_laptop_ranges(session, force_refresh=True) == before
+
+
+def test_configure_is_personalized_only_for_a_caller_with_a_profile(api_client, session, m6, api_user):
+    from app.main import app
+    from app.users.auth import get_optional_user
+    from app.users.models import LaptopUserPreference
+
+    url = f"/api/v2/laptops/{m6.id}/configure?memory=32gb&storage=4tb"
+    assert api_client.get(url).json()["personalized_score"] is None, "no token: no personalized score"
+
+    app.dependency_overrides[get_optional_user] = lambda: api_user
+    assert api_client.get(url).json()["personalized_score"] is None, "no profile: none either"
+    session.add(LaptopUserPreference(user_id=api_user.id, budget={"min": None, "max": 9000},
+                                     priorities={"cpu": 10, "price": 3}, purpose=["Programming/Development"]))
+    session.commit()
+    personal = api_client.get(url).json()["personalized_score"]
+    # The test DB has no benchmarks, so the score itself is withheld (null); the mode is the point.
+    assert personal["mode"] == "personalized" and "score" in personal
