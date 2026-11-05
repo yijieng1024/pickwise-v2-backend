@@ -709,6 +709,7 @@ from app.scripts import repair_apple_round4  # noqa: E402,F401
 from app.agent.tools import laptop_lookup as lookup_laptop_tool  # noqa: E402,F401
 from app.agent.tools import market_price  # noqa: E402,F401
 from app.agent.tools import configuration_options as config_options_tool  # noqa: E402,F401 - 10c step e
+from app.agent.tools import ALL_TOOLS as agent_tools  # noqa: E402,F401
 
 
 # 10b step (f) - app/scripts/discontinue_10b.py

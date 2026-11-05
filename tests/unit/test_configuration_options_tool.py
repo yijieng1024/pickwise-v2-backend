@@ -106,7 +106,7 @@ def test_a_laptop_without_options_says_so(monkeypatch):
 
 def test_pico_has_the_configurator_and_not_the_customizations_tool():
     from ._adapters import agent_graph
-    from app.agent.tools import ALL_TOOLS
+    from ._adapters import agent_tools as ALL_TOOLS
     names = [t.name for t in ALL_TOOLS]
     assert "get_configuration_options" in names and "calculate_custom_apple_price" not in names
     prompt = agent_graph._SYSTEM_PROMPT
