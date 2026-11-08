@@ -35,5 +35,5 @@ def test_a_conversation_with_run_logs_and_eval_logs_deletes(api_client, api_user
     assert session.get(Conversation, conv_id) is None
     assert session.exec(select(AgentRunLog).where(AgentRunLog.conversation_id == conv_id)).all() == []
     assert session.exec(select(AgentModelCall)).all() == []
-    # The eval row keeps its search signals, unlinked from the deleted thread.
-    assert session.get(PipelineEvalLog, eval_id).conversation_id is None
+    # The eval row holds the search text, so it is deleted with the thread.
+    assert session.get(PipelineEvalLog, eval_id) is None

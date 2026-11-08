@@ -11,7 +11,7 @@ conversation-thread lifecycle management, reused by `POST /agent/chat`.
 import uuid
 
 from fastapi import HTTPException
-from sqlmodel import Session, col, delete, select, update
+from sqlmodel import Session, col, delete, select
 
 from app.agent.monitoring_models import AgentModelCall, AgentRunLog
 from app.rag.models import (
@@ -65,15 +65,11 @@ def delete_conversation(conversation_id: uuid.UUID, user: User, session: Session
     # hold the user's message and the reply verbatim, so they are deleted with
     # the conversation rather than kept: a deleted chat must not survive in the
     # monitoring tables. Chatbot Monitoring's history loses those runs. The
-    # eval logs hold only search signals and keep their row, unlinked.
+    # eval logs go too: each holds the search text the user typed.
     run_ids = select(AgentRunLog.id).where(AgentRunLog.conversation_id == conversation_id)
     session.exec(delete(AgentModelCall).where(col(AgentModelCall.run_id).in_(run_ids)))
     session.exec(delete(AgentRunLog).where(AgentRunLog.conversation_id == conversation_id))
-    session.exec(
-        update(PipelineEvalLog)
-        .where(PipelineEvalLog.conversation_id == conversation_id)
-        .values(conversation_id=None)
-    )
+    session.exec(delete(PipelineEvalLog).where(PipelineEvalLog.conversation_id == conversation_id))
     session.exec(delete(Message).where(Message.conversation_id == conversation_id))
     session.exec(delete(ConversationLaptop).where(ConversationLaptop.conversation_id == conversation_id))
 
