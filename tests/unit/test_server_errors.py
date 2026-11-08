@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
-from app.common.server_errors import JsonServerErrors
+from tests.unit._adapters import JsonServerErrors
 
 
 def _app() -> FastAPI:
