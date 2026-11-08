@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.engine import make_url
 from app.config import settings
 from app.logger import setup_logging
+from app.common.server_errors import JsonServerErrors
 from app.laptops.customization_router import router as customization_router
 from app.laptops.laptop_router import admin_router as admin_laptops_router, router as laptops_router
 from app.laptops.brand_router import router as brands_router
@@ -109,6 +110,9 @@ def _cors_middleware(asgi_app):
     )
 
 
+# Added first, so it sits inside CORS: an unhandled error's 500 then carries
+# CORS headers instead of reaching the browser as "Failed to fetch".
+app.add_middleware(JsonServerErrors)
 app.add_middleware(_cors_middleware)
 
 # declare routes before including routers to avoid circular imports
