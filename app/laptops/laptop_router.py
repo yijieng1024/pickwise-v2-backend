@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select as sa_select
+from sqlalchemy import func, select as sa_select
 from sqlmodel import Session, select
 from app.database import get_session
 from app.laptops.laptop_models import (
@@ -42,6 +42,10 @@ LAPTOP_SORTABLE_COLUMNS = {
     "product_name": Laptop.product_name,
     "price_rm": Laptop.price_rm,
     "created_at": Laptop.created_at,
+    # The storefront's default "Recommended" view. Hashing the id with today's
+    # date scrambles the scrape order (siblings of one machine no longer sit
+    # side by side) while staying the same order all day, so paging is stable.
+    "shuffle": func.md5(func.concat(Laptop.id, func.current_date())),
 }
 
 # Allow-list for the filter params — see app.common.filter_service. Price is a
@@ -99,7 +103,7 @@ def list_laptops(
     price_max: Optional[float] = filter_query("Highest price in RM (inclusive)", ge=0),
     added_from: Optional[datetime] = filter_query("Added to the catalog at or after this time (created_at, inclusive)"),
     added_to: Optional[datetime] = filter_query("Added to the catalog at or before this time (created_at, inclusive)"),
-    sort_by: Optional[str] = Query(default=None, description="One of: product_name, price_rm, created_at"),
+    sort_by: Optional[str] = Query(default=None, description="One of: product_name, price_rm, created_at, shuffle (daily-seeded)"),
     sort_dir: SortDirection = sort_dir_query(),
     skip: Optional[int] = Query(default=None, ge=0, description="Omit to get every row (default, unpaginated)"),
     limit: Optional[int] = Query(default=None, ge=1, le=200, description="Omit to get every row (default, unpaginated)"),
