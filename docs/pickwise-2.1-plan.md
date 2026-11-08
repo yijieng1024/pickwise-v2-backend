@@ -115,7 +115,7 @@ Different user groups (students, people who don't understand specs, people decid
 | 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status |
 | 12 | Software compatibility | The centrepiece of the new positioning; the largest piece of work |
 | 13 | XAI B, C: comparative explanations, constraint relaxation | Needs stable recommendation results first |
-| 14 | Review D + E + scheduling | Automated matching, attaching the flagged comparison claims, raising coverage |
+| 14 | Review D + E + scheduling | Automated matching, attaching the flagged comparison claims, raising coverage, and re-searching a family when a new laptop joins it or its last search is old (`last_review_search_at`, decided 2026-11-08) |
 | 15 | XAI D: a source for every claim | Needs reviews, price dates and benchmarks all in place before there are sources to attach |
 | F | Run an independent check after each stage | The thing that fixes a bug and the thing that checks the fix must be separate |
 
@@ -230,6 +230,9 @@ Different user groups (students, people who don't understand specs, people decid
 **E. Raise coverage**
 - Ingest the most frequently recommended families first
 - Transcript fetching scheduled on Jack's PC with Task Scheduler; the rest runs on the server
+- **Re-search families when they change, not "covered forever" (decided 2026-11-08, Jack).** Today `skip_covered=true` (`app/reviews/service.py::family_worklist`) skips a family for good once any of its laptops has a config-level review link. Because families merge generations (one family per product line and size), a new model joining a covered family is never searched, and its page shows the old model's reviews. Fix with ADR-0012's planned `last_review_search_at` on the family: a family is searched again when an active laptop joined it after its last search, or when its last search is older than N days (N still to decide, e.g. 90). The scheduled run orders families by least-recently-searched instead of alphabetically, which also fixes `limit` drawing a run of consecutive families (e.g. three ExpertBook lines on 2026-08-24)
+- Same change, the opposite gap: coverage counts only config-level links, so a family whose videos have only family-level links reads as uncovered and is re-searched on every run, wasting quota. With `last_review_search_at`, "searched recently" replaces "has a config link" as the skip rule, which covers both
+- Until this ships: for a new laptop in an already-covered family, run `POST /reviews/ingest/{laptop_id}` by hand
 
 **F. Independent checks**
 - Audit script measuring coverage, duplicate rate, and the share of claims attached to the wrong laptop
@@ -916,7 +919,7 @@ A laptop that fails stays inactive, and the notification says which condition fa
 - Whether a configured Apple build goes into the URL (survives a refresh, can be shared). Raised in step 10c (h), not answered yet
 - Onboarding + student prices per brand (added 2026-11-08, place in the order not decided): onboarding does not lead users to the questionnaire, some profile fields are collected and never used, and the system does not know whether a user is a student. Brands / shops with student prices: Apple, HP, Lenovo, Dell, Harvey Norman, ALL IT Hypermarket. Fairness to think through: not every laptop has a student price
 - Slow admin pages (seen 2026-11-08): the Pick Score page's summary call takes 12–24s and Reviews Pipeline also loads slowly; each summary was requested twice locally, likely React's dev-only double run, to confirm on production
-- Configure flow issues (seen 2026-11-08 on `431adb7e`): Brand reason says "No brand preference given" (check against Jack's preference row; may be the no-preference case above); in Configured mode the title and spec grid still show the standard config (24GB) while 48GB is chosen; memory options sorted 16 / 24 / 32 / 48 / 64 / 36; a card shows below the modal's sticky price bar
+- Configure flow issues (seen 2026-11-08 on `431adb7e`, Jack decided 2026-11-08): (1) Brand reason "No brand preference given" is correct, Jack's profile now has no brand preference (the weight question above still stands); (2) **to fix:** in Configured mode the title and spec grid must follow the chosen configuration, not the standard config; (3) **to fix:** memory / storage options are ordered by what the chosen chip allows: the selectable options first, in size order, then the ones that need a chip change, also in size order, re-ordering when the chip changes; (4) the card showing below the modal's sticky price bar is fine as it is
 - Whether software requirements are a hard constraint, a PickScore factor, or both
 - Whether the compare page radar chart actually switches to 6 axes (revisit once Review C's topic tags have enough coverage)
 - Whether the Shopee / Lazada affiliate programs offer an API for looking up prices by model (needs signing up to check)
