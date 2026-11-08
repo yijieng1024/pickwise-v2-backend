@@ -1,6 +1,6 @@
 # PickWise 2.1 Plan
 
-Last updated: 2026-10-21
+Last updated: 2026-11-08
 
 ## 1. Positioning
 
@@ -62,6 +62,16 @@ Different user groups (students, people who don't understand specs, people decid
 | Apple fields parsed by code (decided 2026-11-03) | Max RAM, weight, charger and number of external displays are parsed by code from the Apple specs page; Touch ID per configuration from the Apple MY buy page. A failed parse is logged as an error, never handed to the LLM. Display resolution standardised to 3456x2234 (superseded 2026-11-04: wrong, only true for 16"; see section 4). Next work, before the rest of step 11 (step 10a) |
 | Discontinued vs suspended (decided 2026-11-04) | `discontinued` = a real machine no longer sold: findable by name, its details page shows the last official price and date, never recommended. `suspended` = hidden everywhere (duplicates, bad rows). ADR-0009 Amendment II |
 | Discontinued status (decided 2026-11-03) | New status value `discontinued`, with an ADR-0009 amendment. Shown with its last official price and date, never recommended, excluded from price guide lookup; `lookup_laptop` returns candidates when a name is ambiguous. Step 10b, after 10a |
+| Chat page width (decided 2026-11-08) | `/chat` is `max-w-[1600px]` in both modes and the nav stays `max-w-6xl` like every other page, so `/chat` is the one width exception (DESIGN.md). Toggling the sidebar never moves the outer edges: expanded is 250 / thread / 300, collapsed is a 64px tile only as tall as its two buttons / thread / 300. The right rail is 300px in both modes |
+| Chat animation (decided 2026-11-08) | Sidebar toggle animates the column width (~300ms) and fades the list / tile. New messages fade up, shortlist cards arrive 60ms apart, the thinking and tool chips fade in. Every animation is off under `prefers-reduced-motion`. Not done: sliding conversations in and out of the list |
+| Chart palette (decided 2026-11-08) | Supersedes the 2026-10-26 palette in section 4. One palette for every chart, admin and public, in `components/charts/chart-palette.ts`. Chart marks need ≥3:1 (WCAG 1.4.11, non-text graphics); text in charts uses the text tokens at 4.5:1. Targets: closest pair ≥12 for normal vision and ≥6 under deutan / protan / tritan, ≥8 from the status, brand and amber colours. Brand slots: Asus indigo, Lenovo rose, HP cyan, Acer leaf, MSI mauve, Apple lavender, Dell jade (hex values in DESIGN.md). Public series order: leaf, lavender, mauve, rose. The compare radar dashes from the 3rd laptop, legend included. "Failed" bars and lines use `--negative` |
+| Amber `--spark` (decided 2026-11-08) | `#d97706`, strictly reserved: the "✦ Top Pick" badge on Pico's first shortlist card and the sparkle in the "Best fit" badge. Icons, borders and tints only, never text (3.2:1 on white), always paired with an icon and words because it is in the same family as `--warning`. Not used on the Pick Score ring (a measurement, not an award) or anywhere in admin |
+| Mint and azure (decided 2026-11-08) | Dropped. They were in a brief but used nowhere in the code; buttons and the score ring stay navy `--brand` |
+| Background texture (decided 2026-11-08) | A faint dot grid (1.35px dots, 26px grid) on public pages and admin; cards are 85% opaque so the dots show faintly through. The admin sidebar, header menu, dialogs and menus keep their old opacity |
+| Pico shortlist cards (decided 2026-11-08) | 64px thumbnail on the left; Top Pick badge, name over two lines, one score pill (brand tint) and price on the right. The "% match" number is removed |
+| Short admin pages (decided 2026-11-08) | Brands: active laptops and last data columns. Processing: the last 5 runs when idle. Link reviews: newest linked reviews when the queue is empty (newest found, since links have no date). Users: sign-up date plus role / status counts; no last-login, because the backend does not store one and Jack chose not to add it |
+| Deleting a conversation (decided 2026-11-08) | Also deletes its `agent_run_logs` rows (including the user's message and Pico's reply) and unlinks its search logs. Chosen over keeping the logs with the text removed: a user's delete removes their content completely, at the cost of the monitoring numbers dropping when users delete. Shipped in `bc73fef`, with unexpected 500s now returned with CORS headers (`48c875c`) |
+| Education price (step 10d, decided before 2026-11-08) | Source: `https://www.apple.com/my-edu/store`, prices visible without login, same paths with `/my/` → `/my-edu/`. An Edu Price toggle only on MacBook details pages, and the configurator also uses edu prices. **Still to confirm (Jack):** with the toggle on, price and Pick Score are calculated live from the edu price on the details page only, never in Pico, budgets or rankings |
 | Migrations check in CI (decided 2026-11-01) | Compares the whole push (`github.event.before..HEAD`), with a fallback for a new branch, instead of `HEAD^..HEAD`. Push `3133099` added a migration and ended on a docs commit, so the job was skipped |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
 | Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs |
@@ -101,6 +111,7 @@ Different user groups (students, people who don't understand specs, people decid
 | 10a | Apple fields parsed by code + repair round 4 (decided 2026-11-03) | The LLM filled some Apple fields wrong or incomplete (max RAM, charger, Touch ID, keyboard, media engine), including on active rows; fix the source in code before step 11 runs it on a schedule |
 | 10b | Discontinued status (decided 2026-11-03) | Three discontinued Apple rows are still active at an old price. After 10a |
 | 10c | Apple build-to-order options (added 2026-11-04) | The 10 build-to-order Mac rows are a standard configuration plus options; settle how options and their add-on prices are stored before step 11 schedules the Apple scrape. After 10b |
+| 10d | Education prices (decided before 2026-11-08) | After 10c, before step 11, so step 11 schedules the edu scrape together with the Apple buy page |
 | 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status |
 | 12 | Software compatibility | The centrepiece of the new positioning; the largest piece of work |
 | 13 | XAI B, C: comparative explanations, constraint relaxation | Needs stable recommendation results first |
@@ -695,7 +706,7 @@ Data survey (2026-10-26, read-only): most items can be built from stored data wi
 - The group "Scoring & Search" is renamed "Scoring": PickScore, CPU Benchmarks, GPU Benchmarks
 
 **Admin look, round 2 (Jack approved 2026-10-26):**
-- Chart palette, light mode, darker steps so every colour passes 3:1 on white: #2a78d6, #d9622b, #0e8aa8, #b07800, #cf5a8a, #2f8a2f, #6250d6; dark mode keeps its own steps (#3987e5, #d95926, #1a9fbf, #c98500, #d55181, #008300, #9085e9), only the third slot changed (Jack replaced the aqua #16966a with cyan, 2026-10-26; both modes re-validated). With that, "View as table" is removed from every chart; tooltips and the brand bars' value labels stay
+- Chart palette, light mode, darker steps so every colour passes 3:1 on white: #2a78d6, #d9622b, #0e8aa8, #b07800, #cf5a8a, #2f8a2f, #6250d6; dark mode keeps its own steps (#3987e5, #d95926, #1a9fbf, #c98500, #d55181, #008300, #9085e9), only the third slot changed (Jack replaced the aqua #16966a with cyan, 2026-10-26; both modes re-validated). **Superseded 2026-11-08** by the colour-blind-checked palette in section 2. With that, "View as table" is removed from every chart; tooltips and the brand bars' value labels stay
 - Line charts use straight segments between daily points, never smoothed curves (a curve draws values that don't exist, e.g. a rise before a spike day)
 - The island sidebar becomes frosted glass (semi-transparent, backdrop blur) over a page background with a few large, faint blurred circles (blue top-left, cyan lower-left, violet bottom-right); fainter in dark mode; static, no animation; falls back to plain white where backdrop blur isn't supported
 - Admin content fills the available width beside the island at every screen size; no max-width cap (Jack, 2026-10-26: a 1600px cap left empty space on wide screens)
@@ -902,6 +913,10 @@ A laptop that fails stays inactive, and the notification says which condition fa
 - What Pico's opening on the compare page contains, and whether it is also the same for everyone (cacheable per set of laptops)
 - Which Google model is the backup (picked on the admin page, after it passes the eval harness)
 - How many courses, and which ones, in the first software compatibility batch (suggested: 5–10)
+- Whether a configured Apple build goes into the URL (survives a refresh, can be shared). Raised in step 10c (h), not answered yet
+- Onboarding + student prices per brand (added 2026-11-08, place in the order not decided): onboarding does not lead users to the questionnaire, some profile fields are collected and never used, and the system does not know whether a user is a student. Brands / shops with student prices: Apple, HP, Lenovo, Dell, Harvey Norman, ALL IT Hypermarket. Fairness to think through: not every laptop has a student price
+- Slow admin pages (seen 2026-11-08): the Pick Score page's summary call takes 12–24s and Reviews Pipeline also loads slowly; each summary was requested twice locally, likely React's dev-only double run, to confirm on production
+- Configure flow issues (seen 2026-11-08 on `431adb7e`): Brand reason says "No brand preference given" (check against Jack's preference row; may be the no-preference case above); in Configured mode the title and spec grid still show the standard config (24GB) while 48GB is chosen; memory options sorted 16 / 24 / 32 / 48 / 64 / 36; a card shows below the modal's sticky price bar
 - Whether software requirements are a hard constraint, a PickScore factor, or both
 - Whether the compare page radar chart actually switches to 6 axes (revisit once Review C's topic tags have enough coverage)
 - Whether the Shopee / Lazada affiliate programs offer an API for looking up prices by model (needs signing up to check)
