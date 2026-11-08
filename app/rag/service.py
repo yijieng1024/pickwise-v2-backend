@@ -11,12 +11,14 @@ conversation-thread lifecycle management, reused by `POST /agent/chat`.
 import uuid
 
 from fastapi import HTTPException
-from sqlmodel import Session, select
+from sqlmodel import Session, col, delete, select, update
 
+from app.agent.monitoring_models import AgentModelCall, AgentRunLog
 from app.rag.models import (
     Conversation,
     ConversationLaptop,
     Message,
+    PipelineEvalLog,
 )
 from app.users.models import User
 
@@ -58,11 +60,22 @@ def delete_conversation(conversation_id: uuid.UUID, user: User, session: Session
     if not conv or conv.user_id != user.id:
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
-    # Delete children first (FK constraints)
-    for msg in session.exec(select(Message).where(Message.conversation_id == conversation_id)).all():
-        session.delete(msg)
-    for cl in session.exec(select(ConversationLaptop).where(ConversationLaptop.conversation_id == conversation_id)).all():
-        session.delete(cl)
+    # Every FK to conversations is NO ACTION, so each referencing row has to go
+    # (or let go) first, or the delete is an IntegrityError 500. The run logs
+    # hold the user's message and the reply verbatim, so they are deleted with
+    # the conversation rather than kept: a deleted chat must not survive in the
+    # monitoring tables. Chatbot Monitoring's history loses those runs. The
+    # eval logs hold only search signals and keep their row, unlinked.
+    run_ids = select(AgentRunLog.id).where(AgentRunLog.conversation_id == conversation_id)
+    session.exec(delete(AgentModelCall).where(col(AgentModelCall.run_id).in_(run_ids)))
+    session.exec(delete(AgentRunLog).where(AgentRunLog.conversation_id == conversation_id))
+    session.exec(
+        update(PipelineEvalLog)
+        .where(PipelineEvalLog.conversation_id == conversation_id)
+        .values(conversation_id=None)
+    )
+    session.exec(delete(Message).where(Message.conversation_id == conversation_id))
+    session.exec(delete(ConversationLaptop).where(ConversationLaptop.conversation_id == conversation_id))
 
     session.delete(conv)
     session.commit()
