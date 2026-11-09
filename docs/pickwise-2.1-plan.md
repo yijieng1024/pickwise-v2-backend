@@ -850,7 +850,10 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 8. **"Questionnaire required"** means: after the first login, a user without preferences is sent to the wizard once; after that a dismissible banner nudges them. No hard redirect on every login
 9. **Editing preferences pre-fills the saved answers** (today the wizard starts blank)
 10. **Questionnaire admin note:** a separate admin-only field; the current internal notes ("To know user's budget range as reference") move there and `help_text` becomes user-facing text (today the wizard shows the internal notes to users)
-11. **New 1:1 table `user_background`:** `is_student`, `field_of_study`, `user_type`, `current_laptop`, `change_reason`, timestamps. Every background question is skippable; the 6-step questionnaire stays required. `DELETE /auth/me` covers it (11 tables)
+11. **New 1:1 table `user_background`:** `field_of_study`, `user_type`, `current_laptop`, `change_reason`, timestamps. Every background question is skippable and saves on its own; the 6-step questionnaire stays required. `DELETE /auth/me` covers it (11 tables)
+12. **User type replaces student status (Jack, 2026-11-09, supersedes the draft's separate (a)):** no `is_student` column. `user_type` is one of `student` / `working` / `buying_for_business` / `other` (no `gamer`: questionnaire Q2 already covers gaming). `user_type = student` sets the default of 10d's education-price toggle to on; everyone can still switch it
+13. **Field of study** is asked only when `user_type = student`
+14. **Wizard progress:** each step's answers are kept in the browser (localStorage) and sent to the server only on the last step; the draft is cleared after a successful save. No backend partial save for the questionnaire, so no completion marker is needed: a preference row still means the questionnaire is done
 
 *Selected configuration in the URL (decided 2026-11-09, Jack): yes.* A configuration can be shared, survives refresh / back, can be bookmarked, and Pico can link to a configured machine. Options in the URL that no longer exist fall back to the defaults; set a canonical URL so Google does not treat each configuration as duplicate content. Place in the order (Jack, 2026-11-09): right after 10d (section 3, 10d+).
 
