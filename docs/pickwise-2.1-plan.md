@@ -844,6 +844,14 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 4. **Order:** 10c (g) → onboarding → 10d education prices → step 11 → … (section 3)
 5. **Reminder:** new background data means a Privacy page update, and `DELETE /auth/me` must cover any new table
 
+*Onboarding design (decided 2026-11-09, Jack, after the survey):*
+6. **Knowledge level (d)** reuses the existing `laptop_user_preference.tech_savviness`, which Pico's `_preference_block` already reads; it only needs to be collected
+7. **`users` columns:** drop `birthday` and `gender` (collected, read nowhere); drop `occupation`, replaced by background (c) user type. The Privacy page's claim that these help Pico is false today and goes with them
+8. **"Questionnaire required"** means: after the first login, a user without preferences is sent to the wizard once; after that a dismissible banner nudges them. No hard redirect on every login
+9. **Editing preferences pre-fills the saved answers** (today the wizard starts blank)
+10. **Questionnaire admin note:** a separate admin-only field; the current internal notes ("To know user's budget range as reference") move there and `help_text` becomes user-facing text (today the wizard shows the internal notes to users)
+11. **New 1:1 table `user_background`:** `is_student`, `field_of_study`, `user_type`, `current_laptop`, `change_reason`, timestamps. Every background question is skippable; the 6-step questionnaire stays required. `DELETE /auth/me` covers it (11 tables)
+
 *Selected configuration in the URL (decided 2026-11-09, Jack): yes.* A configuration can be shared, survives refresh / back, can be bookmarked, and Pico can link to a configured machine. Options in the URL that no longer exist fall back to the defaults; set a canonical URL so Google does not treat each configuration as duplicate content. Place in the order (Jack, 2026-11-09): right after 10d (section 3, 10d+).
 
 *10c (g), removing `laptop_customizations` (decided 2026-11-09, Jack, after the survey):*
