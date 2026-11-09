@@ -8,6 +8,7 @@ from app.taxonomy.product_type_model import ProductType
 from app.users.auth import get_current_admin
 from app.users.questionnaire_model import (
     QuestionnaireQuestion,
+    QuestionnaireQuestionAdminRead,
     QuestionnaireQuestionRead,
     QuestionnaireQuestionCreate,
     QuestionnaireQuestionUpdate,
@@ -39,7 +40,7 @@ def _check_step_conflict(
         )
 
 
-@router.post("", response_model=QuestionnaireQuestionRead, dependencies=[Depends(get_current_admin)], status_code=201)
+@router.post("", response_model=QuestionnaireQuestionAdminRead, dependencies=[Depends(get_current_admin)], status_code=201)
 def create_question(
     question: QuestionnaireQuestionCreate,
     session: Session = Depends(get_session),
@@ -68,7 +69,21 @@ def list_questionnaire(
     session: Session = Depends(get_session),
 ):
     """Public — questionnaire questions for a product type, ordered by step_order.
-    Active only by default; pass include_inactive=true for admin management views."""
+    Active only by default. Never carries admin_note: admins read GET /questionnaire/admin."""
+    return _questions(session, product_type, include_inactive)
+
+
+# Declared before /{question_id}, which would otherwise try "admin" as a UUID.
+@router.get("/admin", response_model=List[QuestionnaireQuestionAdminRead], dependencies=[Depends(get_current_admin)])
+def list_questionnaire_admin(
+    product_type: str = "laptop",
+    session: Session = Depends(get_session),
+):
+    """Admin — every question, inactive included, with its admin_note."""
+    return _questions(session, product_type, include_inactive=True)
+
+
+def _questions(session: Session, product_type: str, include_inactive: bool):
     product_type_row = session.exec(
         select(ProductType).where(ProductType.name == product_type)
     ).first()
@@ -99,7 +114,7 @@ def get_question(question_id: UUID, session: Session = Depends(get_session)):
     return question
 
 
-@router.put("/{question_id}", response_model=QuestionnaireQuestionRead, dependencies=[Depends(get_current_admin)])
+@router.put("/{question_id}", response_model=QuestionnaireQuestionAdminRead, dependencies=[Depends(get_current_admin)])
 def update_question(
     question_id: UUID,
     question_update: QuestionnaireQuestionUpdate,

@@ -733,3 +733,41 @@ def background_update(row_fields: dict, body: dict):
     the row. Raises pydantic.ValidationError (a 422) for an invalid body."""
     from app.users.background_model import BackgroundUpdate, UserBackground, apply_update
     return apply_update(UserBackground(**row_fields), BackgroundUpdate(**body))
+
+
+def questionnaire_routes() -> dict:
+    """(method, path) -> (response model field names, dependency callables) for the
+    questionnaire router as the app serves it."""
+    from fastapi.routing import APIRoute
+    from typing import get_args
+    from app.main import app
+    out = {}
+    for r in app.routes:
+        if isinstance(r, APIRoute) and r.path.startswith("/api/v2/questionnaire"):
+            model = r.response_model
+            model = (get_args(model) or (model,))[0] if model else None
+            fields = set(getattr(model, "model_fields", {}))
+            deps = {d.call for d in r.dependant.dependencies}
+            for m in r.methods:
+                out[(m, r.path)] = (fields, deps)
+    return out
+
+
+def get_current_admin_dependency():
+    from app.users.auth import get_current_admin
+    return get_current_admin
+
+
+def questionnaire_help_plan(rows: list[dict]) -> list[dict]:
+    from app.scripts.questionnaire_help_text import plan
+    return plan(rows)
+
+
+def questionnaire_help_refused():
+    from app.scripts.questionnaire_help_text import Refused
+    return Refused
+
+
+def questionnaire_new_help() -> dict:
+    from app.scripts.questionnaire_help_text import NEW_HELP
+    return NEW_HELP

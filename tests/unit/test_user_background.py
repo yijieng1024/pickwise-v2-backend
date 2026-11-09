@@ -36,3 +36,10 @@ def test_leaving_student_clears_field_of_study():
     student = {**ROW, "user_type": "student", "field_of_study": "Computer Science"}
     assert background_update(student, {"current_laptop": "x"}).field_of_study == "Computer Science"
     assert background_update(student, {"user_type": "working"}).field_of_study is None
+
+
+def test_saving_only_field_of_study_keeps_it_when_stored_type_is_student():
+    # Per-question saves send one field at a time: the rule must read the stored
+    # user_type merged with the body, not the body alone.
+    student = {**ROW, "user_type": "student"}
+    assert background_update(student, {"field_of_study": "Accounting"}).field_of_study == "Accounting"

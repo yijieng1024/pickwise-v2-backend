@@ -2,6 +2,7 @@ import uuid
 from typing import List, Optional
 from datetime import datetime, timezone
 from enum import Enum
+from sqlalchemy import Text
 from sqlmodel import SQLModel, Field, Column, JSON
 
 
@@ -21,7 +22,10 @@ class QuestionnaireQuestion(SQLModel, table=True):
     question_type: QuestionType
     target_field: str
     options: Optional[List[dict]] = Field(default=None, sa_column=Column(JSON))
-    help_text: Optional[str] = None
+    help_text: Optional[str] = None  # shown to users under the question
+    # Internal note for admins (why the question exists, where options come from).
+    # Never in a public response: QuestionnaireQuestionRead leaves it out.
+    admin_note: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -39,6 +43,11 @@ class QuestionnaireQuestionRead(SQLModel):
     created_at: datetime
 
 
+class QuestionnaireQuestionAdminRead(QuestionnaireQuestionRead):
+    """Admin-only responses: the public shape plus the internal note."""
+    admin_note: Optional[str]
+
+
 class QuestionnaireQuestionCreate(SQLModel):
     product_type_id: uuid.UUID
     step_order: int
@@ -47,6 +56,7 @@ class QuestionnaireQuestionCreate(SQLModel):
     target_field: str
     options: Optional[List[dict]] = None
     help_text: Optional[str] = None
+    admin_note: Optional[str] = None
     is_active: bool = True
 
 
@@ -58,4 +68,5 @@ class QuestionnaireQuestionUpdate(SQLModel):
     target_field: Optional[str] = None
     options: Optional[List[dict]] = None
     help_text: Optional[str] = None
+    admin_note: Optional[str] = None
     is_active: Optional[bool] = None
