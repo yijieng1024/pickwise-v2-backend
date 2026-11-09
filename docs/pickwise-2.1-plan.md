@@ -113,6 +113,7 @@ Different user groups (students, people who don't understand specs, people decid
 | 10c | Apple build-to-order options (added 2026-11-04) | The 10 build-to-order Mac rows are a standard configuration plus options; settle how options and their add-on prices are stored before step 11 schedules the Apple scrape. After 10b |
 | 10c+ | Onboarding (decided 2026-11-09) | After 10c (g), before 10d: the background questions ask whether the user is a student, which 10d's education prices use. See "Decisions 2026-11-09" in section 4 |
 | 10d | Education prices (decided before 2026-11-08) | After onboarding, before step 11, so step 11 schedules the edu scrape together with the Apple buy page. Scope (detail page only, not Pico / budget / ranking) may change once onboarding asks student status |
+| 10d+ | Selected configuration in the URL (placed 2026-11-09) | Right after 10d. See "Decisions 2026-11-09" in section 4 |
 | 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status |
 | 12 | Software compatibility | The centrepiece of the new positioning; the largest piece of work |
 | 13 | XAI B, C: comparative explanations, constraint relaxation | Needs stable recommendation results first |
@@ -843,7 +844,13 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 4. **Order:** 10c (g) → onboarding → 10d education prices → step 11 → … (section 3)
 5. **Reminder:** new background data means a Privacy page update, and `DELETE /auth/me` must cover any new table
 
-*Selected configuration in the URL (decided 2026-11-09, Jack): yes.* A configuration can be shared, survives refresh / back, can be bookmarked, and Pico can link to a configured machine. Options in the URL that no longer exist fall back to the defaults; set a canonical URL so Google does not treat each configuration as duplicate content. Place in the order: to be decided by Jack.
+*Selected configuration in the URL (decided 2026-11-09, Jack): yes.* A configuration can be shared, survives refresh / back, can be bookmarked, and Pico can link to a configured machine. Options in the URL that no longer exist fall back to the defaults; set a canonical URL so Google does not treat each configuration as duplicate content. Place in the order (Jack, 2026-11-09): right after 10d (section 3, 10d+).
+
+*10c (g), removing `laptop_customizations` (decided 2026-11-09, Jack, after the survey):*
+1. **Data delete is a script** with a dry run and `--apply` (`app/scripts/retire_customizations_10c.py`), not part of the migration. It deletes all 134 customization rows and the 6 Apple category rows (`categories.name IN ('storage','memory','power_adapter','apple_care','display_type','processor')`, all active, 0 laptop links) in one transaction, refuses unless the target set is exactly those 6 names, and rolls back if the protected categories (Business, Creator, Gaming, Workstation), their links or the totals change
+2. **The drop-table migration (step b) refuses** while `laptop_customizations` still has rows, with a clear message, so deploying (b) before (a) is applied fails instead of losing data
+3. **Backup:** the before / after JSON snapshots in `backups/`; Jack copies them to Google Drive by hand after `--apply`
+4. **Deploy order:** backend first is safe. The live frontend stopped calling `/customizations` in `d7ff588`
 
 ### Scheduled scraping + notifications
 
