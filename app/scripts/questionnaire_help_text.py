@@ -32,7 +32,8 @@ NEW_HELP = {
     "priorities": "Put what matters most to you first.",
     "screen_size": "Smaller is easier to carry; bigger is easier on the eyes.",
     "portability": "Say yes if you'll carry it most days. Lighter laptops often give up some performance.",
-    "brand_preferences": "Pick a brand you prefer, or choose no preference to see every brand.",
+    # A soft preference, never a filter (ADR-0007).
+    "brand_preferences": "Pick a brand you like and we'll lean towards it. Other brands still show up.",
 }
 OLD_NOTE_PREFIX = "To know"
 
