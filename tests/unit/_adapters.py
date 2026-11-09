@@ -805,3 +805,16 @@ def profile_body(body: dict):
 def user_read_fields() -> set:
     from app.users.models import UserRead
     return set(UserRead.model_fields)
+
+
+def pico_profile_text(pref_fields, background_fields):
+    """Pico's profile block from a preference row and a background row (either may be
+    None); returns the text or None."""
+    import uuid
+    from app.agent.graph import _profile_text
+    from app.users.background_model import UserBackground
+    from app.users.models import LaptopUserPreference
+    uid = uuid.uuid4()
+    pref = LaptopUserPreference(user_id=uid, **pref_fields) if pref_fields is not None else None
+    bg = UserBackground(user_id=uid, **background_fields) if background_fields is not None else None
+    return _profile_text(pref, bg)
