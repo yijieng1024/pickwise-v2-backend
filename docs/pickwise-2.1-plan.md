@@ -852,6 +852,12 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 3. **Backup:** the before / after JSON snapshots in `backups/`; Jack copies them to Google Drive by hand after `--apply`
 4. **Deploy order:** backend first is safe. The live frontend stopped calling `/customizations` in `d7ff588`
 
+*Q426 ASUS Commercial product guide (tidy-up, 2026-11-09):*
+1. **The 6 "Differs from guide" rows take the guide price (Jack).** B9406CAA U5 325 (11,999 → 8,499), B3605CCA U5 225H (5,999 → 6,499), B3605CCA U7 255H (5,999 → 7,199), B3606CCA U7 255H (8,499 → 7,199), P3606CCA U5 225H (4,499 → 3,799), P5606CCA U7 255H 32GB (9,899 → 7,999). The catalog prices were page prices copied across configurations on 06-29
+2. **Duplicate B3605CCA U5 225H 16/512:** `714137b2` (5,999, the row the guide matches) and `a4dd1eaf` (`b3605-ultra5-225h`, 8,399) are one machine. Keep the newer row by `created_at` (`714137b2`, 69 s newer, same 06-29 run) and suspend `a4dd1eaf`. Neither has conversation, review or wishlist references; both have 5 Pick Score rows
+3. **Still to review:** 9 base-code matches (B1503 guide cheaper, 7,384 / 8,099 vs 5,999 / 6,499; BM1403 guide dearer, 4,299 vs 5,799), 1 conflict (`41113426` B9406CAA U7 32/1TB, 11,999 vs 16,499), and 18 guide rows not in the catalog (e.g. B3406CCA, BM3406CGA, PM5606CGA, two more B9406CAA configurations) as candidates to add
+4. **Price history zero to look at:** P5606CCA (`e2d4f792`) has a 0.0 entry on 2026-08-14, which the no-zero-in-history rule should prevent. It predates the rule (`7b5e50b`, 2026-09-16), so it is old data, not a live bug; decide whether to delete the row
+
 ### Scheduled scraping + notifications
 
 **Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked).
