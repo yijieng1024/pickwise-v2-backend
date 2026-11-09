@@ -789,3 +789,8 @@ def preferences_read_fields() -> set:
 def preferences_request_fields() -> set:
     from app.users.schema import UserPreferences
     return set(UserPreferences.model_fields)
+
+
+def profile_fields_plan(rows: list[dict]) -> dict:
+    from app.scripts.retire_user_profile_fields import plan
+    return plan(rows)
