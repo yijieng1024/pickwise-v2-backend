@@ -44,6 +44,7 @@ from app.laptops.pickscore_general import LaptopPickScore
 from app.laptops.price_guide_model import PriceGuide
 from app.laptops.option_model import LaptopOption
 from app.users.avatar_model import UserAvatar
+from app.users.background_model import UserBackground
 
 load_dotenv()
 

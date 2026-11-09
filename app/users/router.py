@@ -15,6 +15,7 @@ from app.database import get_session
 from app.config import settings
 from app.users.models import User, UserRead, Token, LaptopUserPreference
 from app.users.avatar_model import UserAvatar
+from app.users.background_model import BackgroundRead, BackgroundUpdate, UserBackground, apply_update, to_read
 from app.users.auth import (
     create_password_reset_token,
     get_password_hash,
@@ -395,6 +396,32 @@ def google_login(request: GoogleLoginRequest, session: Session = Depends(get_ses
     session.refresh(user)
     _import_google_avatar(session, user, claims.get("picture"))
     return _issue_access_token(user)
+
+
+@router.get("/me/background", response_model=BackgroundRead)
+def get_my_background(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Onboarding background answers; all null before the first save."""
+    row = session.exec(select(UserBackground).where(UserBackground.user_id == current_user.id)).first()
+    return to_read(row)
+
+
+@router.put("/me/background", response_model=BackgroundRead)
+def update_my_background(
+    background_in: BackgroundUpdate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Partial: only the fields sent change (null clears one), so each answer can be
+    saved on its own. Creates the row on the first save."""
+    row = session.exec(select(UserBackground).where(UserBackground.user_id == current_user.id)).first()
+    row = apply_update(row or UserBackground(user_id=current_user.id), background_in)
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return to_read(row)
 
 
 @router.get("/me/preferences", response_model=UserPreferences)

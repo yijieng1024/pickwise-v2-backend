@@ -726,3 +726,10 @@ def registered_paths() -> list[str]:
     """Every route path the FastAPI app serves (importing app.main runs no lifespan)."""
     from app.main import app
     return [route.path for route in app.routes]
+
+
+def background_update(row_fields: dict, body: dict):
+    """Apply a PUT /auth/me/background body to a row built from row_fields; returns
+    the row. Raises pydantic.ValidationError (a 422) for an invalid body."""
+    from app.users.background_model import BackgroundUpdate, UserBackground, apply_update
+    return apply_update(UserBackground(**row_fields), BackgroundUpdate(**body))
