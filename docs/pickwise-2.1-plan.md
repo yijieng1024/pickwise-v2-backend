@@ -1,6 +1,6 @@
 # PickWise 2.1 Plan
 
-Last updated: 2026-11-08
+Last updated: 2026-11-09
 
 ## 1. Positioning
 
@@ -111,7 +111,8 @@ Different user groups (students, people who don't understand specs, people decid
 | 10a | Apple fields parsed by code + repair round 4 (decided 2026-11-03) | The LLM filled some Apple fields wrong or incomplete (max RAM, charger, Touch ID, keyboard, media engine), including on active rows; fix the source in code before step 11 runs it on a schedule |
 | 10b | Discontinued status (decided 2026-11-03) | Three discontinued Apple rows are still active at an old price. After 10a |
 | 10c | Apple build-to-order options (added 2026-11-04) | The 10 build-to-order Mac rows are a standard configuration plus options; settle how options and their add-on prices are stored before step 11 schedules the Apple scrape. After 10b |
-| 10d | Education prices (decided before 2026-11-08) | After 10c, before step 11, so step 11 schedules the edu scrape together with the Apple buy page |
+| 10c+ | Onboarding (decided 2026-11-09) | After 10c (g), before 10d: the background questions ask whether the user is a student, which 10d's education prices use. See "Decisions 2026-11-09" in section 4 |
+| 10d | Education prices (decided before 2026-11-08) | After onboarding, before step 11, so step 11 schedules the edu scrape together with the Apple buy page. Scope (detail page only, not Pico / budget / ranking) may change once onboarding asks student status |
 | 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status |
 | 12 | Software compatibility | The centrepiece of the new positioning; the largest piece of work |
 | 13 | XAI B, C: comparative explanations, constraint relaxation | Needs stable recommendation results first |
@@ -831,6 +832,19 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 *Step (f) applied to production 2026-11-05* (`app/scripts/retire_bto_10c.py`, snapshots `backups/retire_bto_10c_2026-11-05_195911_869107_pre.json` / `_195913_968063_post.json`): the 10 rows are `suspended`, embeddings, Pick Scores and price history kept; `a3205f6d`'s 49 review chunks and 2 links moved to `f3ebcce1` (same chip: M5 Pro 18-core CPU, 20-core GPU).
 24. **Tidy-up:** `a3205f6d`'s `laptop_review_summary` row stayed on the old (suspended) row, and `f3ebcce1` has no admin summary. Re-run `POST /reviews/aggregate/f3ebcce1…` and delete the old row (the public reviews page computes from chunks, so only the admin view is affected).
 
+### Decisions 2026-11-09
+
+*Production checks:* backend CI green; deleting an old conversation works in production; the admin Pick Score summary is called once in production (the double call seen locally was React dev mode). The summary still takes ~10 s, already in tidy-up.
+
+*Onboarding (decided 2026-11-09, Jack):*
+1. **Flow after registration:** the existing 6-step questionnaire (required), then background questions (all skippable)
+2. **Draft background questions**, to be confirmed after a survey: (a) student or not, feeds 10d education prices; (b) course / field of study, later feeds software / game compatibility; (c) user type (student / working / SME buying for staff / gamer); (d) how much they know about laptops, sets the depth of Pico / XAI explanations; (e) current laptop and why they want to change
+3. **Rule:** every question must feed something (scoring, Pico, education price, or stats). No collected-but-unused fields, like questionnaire Q4 screen size today
+4. **Order:** 10c (g) → onboarding → 10d education prices → step 11 → … (section 3)
+5. **Reminder:** new background data means a Privacy page update, and `DELETE /auth/me` must cover any new table
+
+*Selected configuration in the URL (decided 2026-11-09, Jack): yes.* A configuration can be shared, survives refresh / back, can be bookmarked, and Pico can link to a configured machine. Options in the URL that no longer exist fall back to the defaults; set a canonical URL so Google does not treat each configuration as duplicate content. Place in the order: to be decided by Jack.
+
 ### Scheduled scraping + notifications
 
 **Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked).
@@ -916,9 +930,8 @@ A laptop that fails stays inactive, and the notification says which condition fa
 - What Pico's opening on the compare page contains, and whether it is also the same for everyone (cacheable per set of laptops)
 - Which Google model is the backup (picked on the admin page, after it passes the eval harness)
 - How many courses, and which ones, in the first software compatibility batch (suggested: 5–10)
-- Whether a configured Apple build goes into the URL (survives a refresh, can be shared). Raised in step 10c (h), not answered yet
-- Onboarding + student prices per brand (added 2026-11-08, place in the order not decided): onboarding does not lead users to the questionnaire, some profile fields are collected and never used, and the system does not know whether a user is a student. Brands / shops with student prices: Apple, HP, Lenovo, Dell, Harvey Norman, ALL IT Hypermarket. Fairness to think through: not every laptop has a student price
-- Slow admin pages (seen 2026-11-08): the Pick Score page's summary call takes 12–24s and Reviews Pipeline also loads slowly; each summary was requested twice locally, likely React's dev-only double run, to confirm on production
+- Onboarding + student prices per brand (added 2026-11-08; onboarding placed 2026-11-09 as 10c+, see section 4): onboarding does not lead users to the questionnaire, some profile fields are collected and never used, and the system does not know whether a user is a student. Brands / shops with student prices: Apple, HP, Lenovo, Dell, Harvey Norman, ALL IT Hypermarket. Fairness to think through: not every laptop has a student price
+- Slow admin pages (seen 2026-11-08): the Pick Score page's summary call takes 12–24s and Reviews Pipeline also loads slowly; each summary was requested twice locally, React's dev-only double run (confirmed once in production 2026-11-09; the Pick Score summary still takes ~10 s there)
 - Configure flow issues (seen 2026-11-08 on `431adb7e`, Jack decided 2026-11-08): (1) Brand reason "No brand preference given" is correct, Jack's profile now has no brand preference (the weight question above still stands); (2) **to fix:** in Configured mode the title and spec grid must follow the chosen configuration, not the standard config; (3) **to fix:** memory / storage options are ordered by what the chosen chip allows: the selectable options first, in size order, then the ones that need a chip change, also in size order, re-ordering when the chip changes; (4) the card showing below the modal's sticky price bar is fine as it is
 - Self-service account deletion, `DELETE /auth/me` (backend, added 2026-11-08, Jack): there is no route today, and every FK to `users` is NO ACTION, so a deletion has to remove the user's rows from every table that references them first (conversations with their messages and `conversation_laptops`, `agent_run_logs` + `agent_model_calls`, `pipeline_eval_logs`, `llm_usage_logs`, `laptop_user_preference`, `saved_laptops`, `user_avatars`) and must go through the existing `assert_can_delete_user` (last active admin). Test it with a dry run before it ships. Until then the Privacy page tells users to request deletion by email
 - Whether software requirements are a hard constraint, a PickScore factor, or both
