@@ -32,7 +32,7 @@ from app.users.email import (
     send_password_reset_email,
     send_verification_email,
 )
-from app.users.schema import ForgotPasswordRequest, GoogleLoginRequest, ResendVerificationRequest, ResetPasswordRequest, UserPreferences, UserRegisterRequest, UserProfile
+from app.users.schema import ForgotPasswordRequest, GoogleLoginRequest, ResendVerificationRequest, ResetPasswordRequest, UserPreferences, UserPreferencesRead, UserRegisterRequest, UserProfile
 from app.users.auth import get_current_user
 from app.logger import get_logger
 
@@ -424,83 +424,56 @@ def update_my_background(
     return to_read(row)
 
 
-@router.get("/me/preferences", response_model=UserPreferences)
-def get_my_preferences(
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
-):
-    # Get user with preferences relationship loaded
-    user = session.exec(select(User).where(User.id == current_user.id)).first()
-    
-    if not user or not user.preferences:
-        return UserPreferences()
-    
-    # Convert database model to schema
-    prefs = user.preferences
-    return UserPreferences(
+def apply_preferences_update(pref: LaptopUserPreference, preferences_in: UserPreferences) -> LaptopUserPreference:
+    """Pure: set the fields the client sent and stamp updated_at, which the wizard
+    compares with its browser draft."""
+    for key, value in preferences_in.model_dump(exclude_unset=True).items():
+        setattr(pref, key, value)
+    pref.updated_at = datetime.now(timezone.utc)
+    return pref
+
+
+def _preferences_read(prefs: Optional[LaptopUserPreference]) -> UserPreferencesRead:
+    if prefs is None:
+        return UserPreferencesRead()
+    return UserPreferencesRead(
         budget=prefs.budget,
         purpose=prefs.purpose or [],
         priorities=prefs.priorities or {},
         screen_size=prefs.screen_size or [],
         portability=prefs.portability,
         brand_preferences=prefs.brand_preferences or [],
-        tech_savviness=prefs.tech_savviness
+        tech_savviness=prefs.tech_savviness,
+        updated_at=prefs.updated_at,
     )
 
-@router.put("/me/preferences", response_model=UserPreferences)
+
+@router.get("/me/preferences", response_model=UserPreferencesRead)
+def get_my_preferences(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    pref = session.exec(
+        select(LaptopUserPreference).where(LaptopUserPreference.user_id == current_user.id)
+    ).first()
+    return _preferences_read(pref)
+
+
+@router.put("/me/preferences", response_model=UserPreferencesRead)
 def update_my_preferences(
     preferences_in: UserPreferences,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    # Get user with preferences relationship
-    user = session.exec(select(User).where(User.id == current_user.id)).first()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Check if user already has preferences record
-    existing_pref = session.exec(
-        select(LaptopUserPreference).where(LaptopUserPreference.user_id == user.id)
+    """Partial for an existing row: only the fields sent change."""
+    pref = session.exec(
+        select(LaptopUserPreference).where(LaptopUserPreference.user_id == current_user.id)
     ).first()
-    
-    if existing_pref:
-        # Update existing preferences
-        pref_data = preferences_in.model_dump(exclude_unset=True)
-        for key, value in pref_data.items():
-            setattr(existing_pref, key, value)
-        existing_pref.updated_at = datetime.now(timezone.utc)
-        session.add(existing_pref)
-    else:
-        # Create new preferences record
-        new_pref = LaptopUserPreference(
-            user_id=user.id,
-            budget=preferences_in.budget,
-            purpose=preferences_in.purpose,
-            priorities=preferences_in.priorities,
-            screen_size=preferences_in.screen_size,
-            portability=preferences_in.portability,
-            brand_preferences=preferences_in.brand_preferences,
-            tech_savviness=preferences_in.tech_savviness
-        )
-        session.add(new_pref)
-    
+    pref = apply_preferences_update(pref or LaptopUserPreference(user_id=current_user.id), preferences_in)
+    session.add(pref)
     session.commit()
-    
-    # Fetch updated preferences
-    updated_pref = session.exec(
-        select(LaptopUserPreference).where(LaptopUserPreference.user_id == user.id)
-    ).first()
-    
-    return UserPreferences(
-        budget=updated_pref.budget, #type: ignore
-        purpose=updated_pref.purpose or [], #type: ignore
-        priorities=updated_pref.priorities or {}, #type: ignore
-        screen_size=updated_pref.screen_size or [], #type: ignore
-        portability=updated_pref.portability, #type: ignore
-        brand_preferences=updated_pref.brand_preferences or [], #type: ignore
-        tech_savviness=updated_pref.tech_savviness #type: ignore
-    )
+    session.refresh(pref)
+    return _preferences_read(pref)
 
 # --- Avatar gateway -------------------------------------------------------
 # Bytes live in the user_avatars table (Render's filesystem is ephemeral, so

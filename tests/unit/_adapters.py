@@ -771,3 +771,21 @@ def questionnaire_help_refused():
 def questionnaire_new_help() -> dict:
     from app.scripts.questionnaire_help_text import NEW_HELP
     return NEW_HELP
+
+
+def preferences_update(row_fields: dict, body: dict):
+    """Apply a PUT /auth/me/preferences body to a preference row; returns the row."""
+    from app.users.models import LaptopUserPreference
+    from app.users.router import apply_preferences_update
+    from app.users.schema import UserPreferences
+    return apply_preferences_update(LaptopUserPreference(**row_fields), UserPreferences(**body))
+
+
+def preferences_read_fields() -> set:
+    from app.users.schema import UserPreferencesRead
+    return set(UserPreferencesRead.model_fields)
+
+
+def preferences_request_fields() -> set:
+    from app.users.schema import UserPreferences
+    return set(UserPreferences.model_fields)

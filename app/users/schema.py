@@ -1,5 +1,5 @@
 import re
-from datetime import date
+from datetime import date, datetime
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Literal, Optional, Dict
 
@@ -85,3 +85,10 @@ class UserRoleUpdate(BaseModel):
 
 class UserStatusUpdate(BaseModel):
     status: Literal["active", "inactive", "suspended"]
+
+
+class UserPreferencesRead(UserPreferences):
+    """Response shape: the answers plus when they were last saved. Separate from the
+    request body so a client cannot set updated_at. The wizard compares it with its
+    browser draft and keeps whichever is newer; null on accounts with no row."""
+    updated_at: Optional[datetime] = None
