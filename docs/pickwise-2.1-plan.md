@@ -857,6 +857,12 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 2. **Duplicate B3605CCA U5 225H 16/512:** `714137b2` (5,999, the row the guide matches) and `a4dd1eaf` (`b3605-ultra5-225h`, 8,399) are one machine. Keep the newer row by `created_at` (`714137b2`, 69 s newer, same 06-29 run) and suspend `a4dd1eaf`. Neither has conversation, review or wishlist references; both have 5 Pick Score rows
 3. **Still to review:** 9 base-code matches (B1503 guide cheaper, 7,384 / 8,099 vs 5,999 / 6,499; BM1403 guide dearer, 4,299 vs 5,799), 1 conflict (`41113426` B9406CAA U7 32/1TB, 11,999 vs 16,499), and 18 guide rows not in the catalog (e.g. B3406CCA, BM3406CGA, PM5606CGA, two more B9406CAA configurations) as candidates to add
 4. **Price history zero to look at:** P5606CCA (`e2d4f792`) has a 0.0 entry on 2026-08-14, which the no-zero-in-history rule should prevent. It predates the rule (`7b5e50b`, 2026-09-16), so it is old data, not a live bug; decide whether to delete the row
+5. **Guide preview warnings (decided 2026-11-09, Jack):** more guides are coming, so the preview must show by itself what took two production queries to see today. A "Warnings" column with badges, details on expand, in every tab (Differs, Conflict, Base code):
+   - *Possible duplicate:* other rows in the same family with the same CPU / RAM / storage (price, status, link to the edit page)
+   - *Possible copied price:* other configurations in the same family (different CPU / RAM / storage) with the same price
+   - *Price history* per row (date, price, source)
+   - *Multi-SKU check:* for a guide row with several SKUs, whether every SKU's spec matches the catalog row
+   No suspend button on that page, only a link. Place in the order: to be decided by Jack
 
 ### Scheduled scraping + notifications
 
