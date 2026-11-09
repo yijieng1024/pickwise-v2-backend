@@ -1,15 +1,8 @@
 from typing import Any, Dict, List, Optional
 import uuid
-from datetime import datetime, timezone, date
-from enum import Enum
+from datetime import datetime, timezone
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Relationship, JSON, Column, SQLModel, Field
-
-class GenderEnum(str, Enum):
-    """Gender enum for user profile"""
-    MALE = "Male"
-    FEMALE = "Female"
-    OTHER = "Other"
 
 class User(SQLModel, table=True):
     __tablename__ = "users" # type: ignore
@@ -23,9 +16,6 @@ class User(SQLModel, table=True):
     auth_provider: str = Field(default="local", description="How the account was created: 'local' or 'google'")
     provider_sub: Optional[str] = Field(default=None, unique=True, index=True, description="Stable OAuth subject ID from the provider (Google 'sub')")
     is_verified: bool = Field(default=False)
-    birthday: Optional[date] = Field(default=None, description="User's date of birth")
-    gender: Optional[str] = Field(default=None, description="User's gender (Male, Female, Other)")
-    occupation: Optional[str] = Field(default=None, description="User's occupation")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationship to preferences
