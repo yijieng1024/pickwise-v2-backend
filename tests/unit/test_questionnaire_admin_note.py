@@ -42,3 +42,12 @@ def test_plan_refuses_a_second_run():
     done = [{**r, "admin_note": r["help_text"], "help_text": "Pick the range"} for r in _rows()]
     with pytest.raises(questionnaire_help_refused()):
         questionnaire_help_plan(done)
+
+
+def test_a_rerun_after_apply_changes_only_the_rewritten_question():
+    applied = [{**r, "admin_note": r["help_text"], "help_text": questionnaire_new_help()[r["target_field"]]}
+               for r in _rows()]
+    changed = [e["target_field"] for e in questionnaire_help_plan(applied) if e["changes"]]
+    assert changed == ["priorities"]
+    q3 = next(e for e in questionnaire_help_plan(applied) if e["target_field"] == "priorities")
+    assert q3["admin_note"] == "To know user's priorities" and q3["question_text_new"].startswith("What matters most")

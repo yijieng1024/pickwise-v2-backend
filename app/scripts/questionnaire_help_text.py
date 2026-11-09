@@ -1,7 +1,9 @@
 """
 Onboarding commit 2, decided 2026-11-09: move the questionnaire's internal notes out
 of help_text (which the wizard shows to users) into admin_note, and give each of the
-six laptop questions user-facing help text.
+six laptop questions user-facing help text. Also rewrites question texts that no
+longer describe the wizard (NEW_QUESTION: Q3 said "laptop/desktop" and "drag", but the
+wizard is laptops only and ranks by tapping).
 
     python -m app.scripts.questionnaire_help_text            # prints, writes nothing
     python -m app.scripts.questionnaire_help_text --apply    # one transaction, snapshots in backups/
@@ -9,9 +11,10 @@ six laptop questions user-facing help text.
 Reads and writes TEST_DATABASE_URL unless DATA_FIX_TARGET=production is set
 (app/common/db_target.py). Refused, nothing written: the admin_note column does not
 exist yet (--apply only; deploy migration e6a2c9f4b8d1 first), the laptop questions are
-not exactly the six target fields below, a row already has an admin_note, or a row's
-help_text is not an internal note (it does not start with "To know"), which is what a
-second run, or an admin who already rewrote it, looks like.
+not exactly the six target fields below, or a row is in neither state: not yet moved
+(no admin_note, help_text an internal note starting "To know") nor already moved
+(admin_note set, help_text exactly NEW_HELP). The second state is a row this script
+already applied; it gets no help-text change, so a re-run only applies what is new.
 """
 import argparse
 import json
@@ -35,6 +38,9 @@ NEW_HELP = {
     # A soft preference, never a filter (ADR-0007).
     "brand_preferences": "Pick a brand you like and we'll lean towards it. Other brands still show up.",
 }
+NEW_QUESTION = {
+    "priorities": "What matters most to you when choosing a laptop? Tap them in order of importance.",
+}
 OLD_NOTE_PREFIX = "To know"
 
 
@@ -57,18 +63,30 @@ def _rows(session: Session, with_note: bool) -> list[dict]:
 
 
 def plan(rows: list[dict]) -> list[dict]:
-    """Pure. One entry per row: the current help_text becomes admin_note, NEW_HELP the help_text."""
+    """Pure. One entry per row with its target state: admin_note, help_text and
+    question_text after the run, and whether anything changes."""
     fields = sorted(r["target_field"] for r in rows)
     if fields != sorted(NEW_HELP):
         raise Refused(f"active laptop questions are {fields}, expected exactly {sorted(NEW_HELP)}")
-    problems = [f"{r['target_field']}: admin_note already set" for r in rows if r["admin_note"]]
-    problems += [f"{r['target_field']}: help_text is not an internal note ({(r['help_text'] or '')[:40]!r})"
-                 for r in rows if not (r["help_text"] or "").startswith(OLD_NOTE_PREFIX)]
+    entries, problems = [], []
+    for r in rows:
+        field, help_now = r["target_field"], r["help_text"] or ""
+        moved = bool(r["admin_note"]) and help_now == NEW_HELP[field]
+        fresh = not r["admin_note"] and help_now.startswith(OLD_NOTE_PREFIX)
+        if not (moved or fresh):
+            problems.append(f"{field}: neither moved nor an internal note (admin_note={r['admin_note']!r}, "
+                            f"help_text={help_now[:40]!r})")
+            continue
+        question_new = NEW_QUESTION.get(field, r["question_text"])
+        entries.append({"id": str(r["id"]), "step_order": r["step_order"], "target_field": field,
+                        "question_text": r["question_text"], "question_text_new": question_new,
+                        "help_text_now": r["help_text"],
+                        "admin_note": r["admin_note"] if moved else r["help_text"],
+                        "help_text_new": NEW_HELP[field],
+                        "changes": fresh or question_new != r["question_text"]})
     if problems:
         raise Refused("; ".join(problems))
-    return [{"id": str(r["id"]), "step_order": r["step_order"], "target_field": r["target_field"],
-             "question_text": r["question_text"], "help_text_now": r["help_text"],
-             "admin_note": r["help_text"], "help_text_new": NEW_HELP[r["target_field"]]} for r in rows]
+    return entries
 
 
 def _snapshot(session: Session, label: str, backups: Path) -> Path:
@@ -90,8 +108,11 @@ def run(session: Session, write: bool, backups: Path = REPO / "backups") -> list
         return entries
     _snapshot(session, "pre", backups)
     for e in entries:
-        session.execute(text("update questionnaire_questions set admin_note = :note, help_text = :help where id = :id"),
-                        {"note": e["admin_note"], "help": e["help_text_new"], "id": e["id"]})
+        if e["changes"]:
+            session.execute(text("update questionnaire_questions set admin_note = :note, help_text = :help, "
+                                 "question_text = :question where id = :id"),
+                            {"note": e["admin_note"], "help": e["help_text_new"],
+                             "question": e["question_text_new"], "id": e["id"]})
     session.commit()
     _snapshot(session, "post", backups)
     return entries
@@ -121,8 +142,12 @@ def main() -> int:
                 print(f"   help_text now  : {e['help_text_now']}")
                 print(f"   -> admin_note  : {e['admin_note']}")
                 print(f"   -> help_text   : {e['help_text_new']}")
+                if e["question_text_new"] != e["question_text"]:
+                    print(f"   -> question    : {e['question_text_new']}")
+                print(f"   {'CHANGES' if e['changes'] else 'no change'}")
             if not args.apply:
                 session.rollback()
+            print(f"{sum(e['changes'] for e in entries)} of these rows change")
             print(f"\n{len(entries)} rows, {'written' if args.apply else 'nothing written'}")
     finally:
         engine.dispose()
