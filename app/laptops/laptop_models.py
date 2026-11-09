@@ -11,7 +11,6 @@ from pgvector.sqlalchemy import Vector
 from app.laptops.laptop_category_model import LaptopCategory
 
 if TYPE_CHECKING:
-    from app.laptops.customization_model import LaptopCustomization
     from app.taxonomy.category_model import Category
 
 
@@ -170,31 +169,25 @@ class Laptop(LaptopBase, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
 
-    # 1. Customizations cascade
-    customizations: List["LaptopCustomization"] = Relationship(
-        back_populates="laptop",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
-    )
-
-    # 2. Embeddings cascade (1-to-1)
+    # 1. Embeddings cascade (1-to-1)
     embedding: Optional["LaptopEmbedding"] = Relationship(
         back_populates="laptop",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
-    # 3. Price History cascade
+    # 2. Price History cascade
     price_history: List["LaptopPriceHistory"] = Relationship(
         back_populates="laptop",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
-    # 4. PickScore cache rows cascade
+    # 3. PickScore cache rows cascade
     pick_scores: List["LaptopPickScore"] = Relationship(
         back_populates="laptop",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
-    # 5. Many-to-Many Categories link table cascade.
+    # 4. Many-to-Many Categories link table cascade.
     # No passive_deletes: that would hand the junction rows to a database-level
     # ON DELETE CASCADE, and laptop_categories.laptop_id (like every FK to
     # laptops.id) is NO ACTION — so nothing would delete them and the parent
@@ -458,18 +451,16 @@ class LaptopUpdate(SQLModel):
 
 
 # --- Deferred imports: mapper registration, not usage ------------------------
-# Laptop's relationships name their targets as strings ("LaptopCustomization",
-# "Category"), and SQLAlchemy resolves a string only against classes that have
-# actually been imported. Both live in other modules, so importing this module
-# on its own — a standalone script, a test, the eval harness — used to configure
-# mappers against a registry that had never heard of them and die with
-#   InvalidRequestError: expression 'LaptopCustomization' failed to locate a name
-# Importing any name from a module registers all of its tables, so one import
-# each is enough. They sit at the bottom, after Laptop is defined, because both
-# modules refer back to Laptop (under TYPE_CHECKING) — the same deferred-import
-# trick that has always resolved the laptop_models <-> customization_model cycle.
+# Laptop's relationships name "Category" as a string, and SQLAlchemy resolves a
+# string only against classes that have actually been imported. It lives in
+# another module, so importing this module on its own — a standalone script, a
+# test, the eval harness — used to configure mappers against a registry that had
+# never heard of it and die with
+#   InvalidRequestError: expression 'Category' failed to locate a name
+# Importing any name from a module registers all of its tables, so one import is
+# enough. It sits at the bottom, after Laptop is defined, because category_model
+# refers back to Laptop — the deferred-import trick that breaks the cycle.
 # LaptopPickScore needs no entry here: it is declared in this module.
-from app.laptops.customization_model import LaptopCustomization  # noqa: E402,F401
 from app.taxonomy.category_model import Category  # noqa: E402,F401
 # laptop_family is not a relationship target — laptops.family_id is a plain FK
 # column and members are read with an explicit join — but the ForeignKey still

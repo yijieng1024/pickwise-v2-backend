@@ -27,12 +27,10 @@ from app.database import engine
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 from app.laptops.brand_model import LaptopBrand
 
-# Mapper registration for a standalone script: Laptop -> LaptopCustomization ->
-# Category is a chain of string-name relationships whose targets are only
+# Mapper registration for a standalone script: Laptop -> Category is a
+# string-name relationship whose targets are only
 # imported under TYPE_CHECKING. main.py resolves them by importing every
-# router; here each link has to be imported by hand or configure_mappers()
-# fails. The chain grew when category_id was added to customizations.
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
+# router; here it has to be imported by hand or configure_mappers() fails.
 from app.taxonomy.category_model import Category  # noqa: F401
 
 from app.laptops.laptop_models import Laptop

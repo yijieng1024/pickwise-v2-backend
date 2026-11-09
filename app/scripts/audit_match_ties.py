@@ -57,10 +57,9 @@ from sqlmodel import Session, select
 from app.database import engine
 
 # Mapper registration for a standalone script (same chain the other audit
-# scripts import): Laptop -> LaptopCustomization -> Category are linked by
-# string relationship names that SQLAlchemy can only resolve once the classes
+# scripts import): Laptop -> Category is linked by a
+# string relationship name that SQLAlchemy can only resolve once the classes
 # have been imported.
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
 from app.taxonomy.category_model import Category  # noqa: F401
 
 from app.laptops.brand_model import LaptopBrand

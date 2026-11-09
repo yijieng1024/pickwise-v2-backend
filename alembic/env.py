@@ -8,7 +8,6 @@ from alembic import context
 from sqlmodel import SQLModel
 from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopPriceHistory
 from app.scraper.models import RawScrapLaptop
-from app.laptops.customization_model import LaptopCustomization
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.family_model import LaptopFamily
 from app.laptops.laptop_category_model import LaptopCategory

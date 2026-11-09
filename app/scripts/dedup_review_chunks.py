@@ -29,7 +29,6 @@ from sqlalchemy import delete, text
 from sqlmodel import Session, select
 
 from app.database import get_engine
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
 from app.taxonomy.category_model import Category  # noqa: F401
 from app.laptops.laptop_models import Laptop
 from app.reviews.models import LaptopReviewChunk

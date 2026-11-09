@@ -7,7 +7,6 @@ from app.laptops.laptop_category_model import LaptopCategory
 
 if TYPE_CHECKING:
     from app.laptops.laptop_models import Laptop
-    from app.laptops.customization_model import LaptopCustomization
 
 
 class Category(SQLModel, table=True):
@@ -28,7 +27,6 @@ class Category(SQLModel, table=True):
         link_model=LaptopCategory,
         sa_relationship_kwargs={"overlaps": "category_links"},
     )
-    customizations: List["LaptopCustomization"] = Relationship(back_populates="category")
 
 
 class CategoryBase(SQLModel):
@@ -53,7 +51,7 @@ class CategoryRead(CategoryBase):
 
 
 # Deferred import so this module can be an entry point on its own — Category's
-# relationships name "Laptop"/"LaptopCustomization" as strings and SQLAlchemy
-# resolves those only against imported classes. Bottom of the file, after
+# relationship names "Laptop" as a string and SQLAlchemy
+# resolves that only against imported classes. Bottom of the file, after
 # Category exists, because laptop_models imports it straight back.
 from app.laptops.laptop_models import Laptop  # noqa: E402,F401

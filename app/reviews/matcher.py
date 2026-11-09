@@ -6,7 +6,7 @@ from sqlalchemy import select as sa_select
 from sqlmodel import Session
 
 from app.laptops.brand_model import LaptopBrand
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401 — must precede Laptop to register with SQLAlchemy mapper
+from app.taxonomy.category_model import Category  # noqa: F401 — must precede Laptop to register with SQLAlchemy mapper
 from app.laptops.laptop_models import Laptop
 
 MATCH_THRESHOLD = 73.0

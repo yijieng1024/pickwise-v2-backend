@@ -26,7 +26,6 @@ from app.database import engine
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 
 # Mapper registration for a standalone script -- same chain as dump-pickscore.
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
 from app.taxonomy.category_model import Category  # noqa: F401
 
 from app.laptops.laptop_models import Laptop

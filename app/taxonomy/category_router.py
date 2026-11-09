@@ -8,7 +8,6 @@ from app.taxonomy.category_model import (
     CategoryUpdate,
 )
 from app.laptops.laptop_category_model import LaptopCategory
-from app.laptops.customization_model import LaptopCustomization
 from typing import List
 from uuid import UUID
 
@@ -109,17 +108,11 @@ def delete_category(category_id: UUID, session: Session = Depends(get_session)):
     associated_laptops = session.exec(
         select(LaptopCategory).where(LaptopCategory.category_id == category_id)
     ).all()
-    associated_customizations = session.exec(
-        select(LaptopCustomization).where(LaptopCustomization.category_id == category_id)
-    ).all()
 
-    if associated_laptops or associated_customizations:
+    if associated_laptops:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Cannot delete category with {len(associated_laptops)} tagged laptops "
-                f"and {len(associated_customizations)} associated customizations"
-            ),
+            detail=f"Cannot delete category with {len(associated_laptops)} tagged laptops",
         )
 
     session.delete(db_category)

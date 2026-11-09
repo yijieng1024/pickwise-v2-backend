@@ -24,10 +24,9 @@ from sqlmodel import Session, select
 from app.database import engine
 from app.benchmark.model import GPUBenchmark
 
-# Mapper registration for a standalone script: Laptop -> LaptopCustomization ->
-# Category is a chain of string-name relationships whose targets are only
+# Mapper registration for a standalone script: Laptop -> Category is a
+# string-name relationship whose targets are only
 # imported under TYPE_CHECKING (same chain dump_pickscore.py imports).
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
 from app.taxonomy.category_model import Category  # noqa: F401
 
 from app.laptops.brand_model import LaptopBrand

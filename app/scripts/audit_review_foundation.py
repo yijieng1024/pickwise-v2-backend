@@ -55,7 +55,6 @@ from app.database import get_engine
 
 # Mapper registration for a standalone script (same chain the other audit
 # scripts import).
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
 from app.taxonomy.category_model import Category  # noqa: F401
 
 from app.reviews.link_model import MatchSource, ReviewLaptopLink

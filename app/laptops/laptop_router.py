@@ -338,7 +338,7 @@ def get_laptop_price_history(laptop_id: UUID, session: Session = Depends(get_ses
 # is no ON DELETE CASCADE anywhere in the schema. Each entry is
 # (model, fk column, singular noun) and is reported in the 409 detail.
 #
-# The tables that ARE cascaded from Laptop (customizations, embedding, price
+# The tables that ARE cascaded from Laptop (embedding, price
 # history, pick scores, category links) are deliberately absent: those are
 # derived data that should follow the laptop out. These five are not — they
 # belong to users, conversations, and the review pipeline.

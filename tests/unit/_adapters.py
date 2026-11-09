@@ -720,3 +720,9 @@ from app.scripts import retire_bto_10c  # noqa: E402,F401 - 10c step f
 # JSON 500 inside CORS - app/common/server_errors.py
 # --------------------------------------------------------------------------
 from app.common.server_errors import JsonServerErrors  # noqa: E402,F401
+
+
+def registered_paths() -> list[str]:
+    """Every route path the FastAPI app serves (importing app.main runs no lifespan)."""
+    from app.main import app
+    return [route.path for route in app.routes]

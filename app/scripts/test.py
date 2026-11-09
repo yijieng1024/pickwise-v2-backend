@@ -22,8 +22,7 @@ from app.database import engine
 from app.benchmark.model import CPUBenchmark, GPUBenchmark
 
 # Same mapper-registration chain the dump script needs (Laptop ->
-# LaptopCustomization -> Category are string-name relationships).
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
+# Category is a string-name relationship).
 from app.taxonomy.category_model import Category  # noqa: F401
 
 from app.laptops.laptop_models import Laptop

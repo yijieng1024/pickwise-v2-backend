@@ -63,10 +63,9 @@ from sqlmodel import Session
 
 from app.database import engine
 
-# Mapper registration for a standalone script: Laptop -> LaptopCustomization ->
-# Category is a chain of string-name relationships whose targets are only
+# Mapper registration for a standalone script: Laptop -> Category is a
+# string-name relationship whose targets are only
 # imported under TYPE_CHECKING (same chain audit_integrated_gpu.py imports).
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
 from app.taxonomy.category_model import Category  # noqa: F401
 
 from app.laptops.brand_model import LaptopBrand

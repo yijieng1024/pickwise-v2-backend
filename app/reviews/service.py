@@ -5,7 +5,7 @@ from sqlalchemy import select as sa_select
 from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
-from app.laptops.customization_model import LaptopCustomization  # noqa: F401
+from app.taxonomy.category_model import Category  # noqa: F401
 # The single definition of the model-line key, shared with the laptop_family
 # grouping (app/laptops/family_service.py). Two copies drifted apart is the
 # whole reason it moved out of this module: this pipeline searches YouTube
