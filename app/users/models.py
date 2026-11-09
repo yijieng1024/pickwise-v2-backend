@@ -61,9 +61,6 @@ class UserRead(SQLModel):
     email: str
     role: str
     is_verified: bool
-    birthday: Optional[date]
-    gender: Optional[str]
-    occupation: Optional[str]
     created_at: datetime
 
 # admin-facing user record — no password, adds moderation-relevant fields

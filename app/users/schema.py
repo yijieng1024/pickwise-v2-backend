@@ -1,6 +1,6 @@
 import re
-from datetime import date, datetime
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from typing import List, Literal, Optional, Dict
 
 class UserRegisterRequest(BaseModel):
@@ -37,18 +37,10 @@ class UserRegisterRequest(BaseModel):
         return v
 
 class UserProfile(BaseModel):
-    """User profile information update"""
-    birthday: Optional[date] = Field(default=None, description="User's date of birth (YYYY-MM-DD)")
-    gender: Optional[str] = Field(default=None, description="User's gender: 'Male', 'Female', or 'Other'")
-    occupation: Optional[str] = Field(default=None, description="User's occupation")
-    
-    @field_validator('gender')
-    @classmethod
-    def validate_gender(cls, v: Optional[str]) -> Optional[str]:
-        """Validate gender is one of the allowed values"""
-        if v is not None and v not in ["Male", "Female", "Other"]:
-            raise ValueError("Gender must be 'Male', 'Female', or 'Other'")
-        return v
+    """PUT /me/profile body. Empty since birthday, gender and occupation were
+    retired (2026-11-09; the frontend stopped sending them in 48a2357). Extra
+    fields are forbidden, so sending one is a 422 rather than silently ignored."""
+    model_config = ConfigDict(extra="forbid")
 
 class UserPreferences(BaseModel):
     budget: Optional[Dict[str, Optional[float]]] = Field(default=None, description="{min, max} RM range; max=null means no upper limit")

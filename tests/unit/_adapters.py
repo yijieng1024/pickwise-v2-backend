@@ -794,3 +794,14 @@ def preferences_request_fields() -> set:
 def profile_fields_plan(rows: list[dict]) -> dict:
     from app.scripts.retire_user_profile_fields import plan
     return plan(rows)
+
+
+def profile_body(body: dict):
+    """Validate a PUT /auth/me/profile body; raises pydantic.ValidationError (a 422)."""
+    from app.users.schema import UserProfile
+    return UserProfile(**body)
+
+
+def user_read_fields() -> set:
+    from app.users.models import UserRead
+    return set(UserRead.model_fields)
