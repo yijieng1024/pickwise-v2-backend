@@ -603,3 +603,33 @@ PassMark rows of 2026-11-04: the GPU resolves to the B390 by name, the CPU at 1.
 the ladder order, and no collisions. Pick Scores were not regenerated with this
 change; the M6 standard configs keep their flagged-neutral GPU score until the
 next `generate-all`.
+
+---
+
+## Amendment IV — 2026-11-10: Ryzen 5 7535U (Jack's decision)
+
+`_INTEGRATED_GPU_BY_CPU` gains `"ryzen 5 7535u": "Radeon 660M"`, the map's 57th
+entry. It points at the generic `Radeon 660M` row (3,196 on 2026-11-10), the same
+target as `ryzen 5 7535hs` and `ryzen 5 150`: one integrated part on three CPUs,
+so three entries that agree. PassMark also has `Ryzen 5 7535U with Radeon
+Graphics` (3,323) and `Radeon 660M Ryzen 5 7535U` (2,581); the generic row was
+chosen to match the two existing entries, not because it is the better number
+(see "A limit worth recording").
+
+Why now: the ExpertBook BM1403 row `4bccb37c` was stored as a Ryzen 5 150 and is
+the Ryzen 5 7535U configuration of its source page. Its GPU string is the
+anchorless `AMD Radeon Graphics`, so with no entry the corrected CPU would have
+turned a resolved 3,196 into a flagged neutral 50. The entry went in before the
+catalog row was corrected, for that reason.
+
+The key does not collide with `ryzen 5 7535hs`: neither string contains the
+other, so longest-first ordering is not what separates them. `Ryzen 5 PRO 7535U`
+finds no entry, deliberately: nothing in the catalog uses it and its integrated
+GPU has not been checked.
+
+Source: https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-7000-series/amd-ryzen-5-7535u.html
+(Graphics Model "AMD Radeon 660M", verified by Jack).
+
+`python -m app.scripts.audit_integrated_gpu --validate-only` passes with
+`matched_name == target` for the new entry; `tests/unit/test_qualcomm_parts.py`
+holds the lookup.

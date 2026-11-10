@@ -159,3 +159,20 @@ def test_hp_additions(cpu, expected_gpu):
 )
 def test_existing_neighbours_unchanged(cpu, expected_gpu):
     assert integrated_lookup(cpu) == expected_gpu
+
+
+@pytest.mark.parametrize(
+    "cpu,expected_gpu",
+    [
+        # BM1403 4bccb37c, the ASUS spelling and the plain one (ADR-0010 Amendment IV).
+        ("AMD Ryzen 5 7535U", "Radeon 660M"),
+        ("AMD Ryzen™ 5 7535U Processor 2.9GHz", "Radeon 660M"),
+        # Neither key is inside the other, so each CPU finds its own entry.
+        ("AMD Ryzen 5 7535HS", "Radeon 660M"),
+        ("AMD Ryzen 5 150", "Radeon 660M"),
+        # The Pro part has no entry: it must not borrow this one.
+        ("AMD Ryzen 5 PRO 7535U", None),
+    ],
+)
+def test_ryzen_5_7535u_has_its_own_entry(cpu, expected_gpu):
+    assert integrated_lookup(cpu) == expected_gpu

@@ -184,8 +184,9 @@ def test_apple_map_targets_are_names_not_numbers():
 
 
 def test_integrated_map_size():
-    """56 entries (9 HP CPUs added 2026-10-25), zero unmapped across the active catalog."""
-    assert len(integrated_gpu_map()) == 56
+    """57 entries (9 HP CPUs added 2026-10-25, the Ryzen 5 7535U 2026-11-10), zero unmapped
+    across the active catalog."""
+    assert len(integrated_gpu_map()) == 57
 
 
 def test_integrated_map_keys_are_normalized():

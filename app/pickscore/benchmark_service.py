@@ -207,6 +207,9 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
     # Generic row (3142), like ryzen 5 150 above. PassMark also has a
     # CPU-specific "Radeon 660M Ryzen 5 7535HS" row (3087, 1.7% lower).
     "ryzen 5 7535hs": "Radeon 660M",       # AMD product page: Graphics Model "AMD Radeon™ 660M"
+    # The same generic row as the 7535HS and the Ryzen 5 150 (Jack, 2026-11-10).
+    # PassMark also has "Ryzen 5 7535U with Radeon Graphics" and "Radeon 660M Ryzen 5 7535U".
+    "ryzen 5 7535u": "Radeon 660M",        # AMD support page: Graphics Model "AMD Radeon™ 660M"
     # No AMD product page exists (404); the spec block on AMD's support page.
     "athlon silver 7120u": "Radeon 610M",  # amd.com support page: Graphics Model "AMD Radeon™ 610M"
 
