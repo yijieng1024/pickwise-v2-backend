@@ -187,6 +187,12 @@ class Laptop(LaptopBase, table=True):
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
+    # 3b. Education price (step 10d): derived, at most one row
+    edu_price: Optional["LaptopEduPrice"] = Relationship(
+        back_populates="laptop",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
     # 4. Many-to-Many Categories link table cascade.
     # No passive_deletes: that would hand the junction rows to a database-level
     # ON DELETE CASCADE, and laptop_categories.laptop_id (like every FK to
@@ -355,6 +361,32 @@ class LaptopPickScore(SQLModel, table=True):
     breakdown: list = Field(default_factory=list, sa_column=Column(JSON))
     flags: dict = Field(default_factory=dict, sa_column=Column(JSON))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class LaptopEduPrice(SQLModel, table=True):
+    """A laptop's education-store price (step 10d, decided 2026-11-10). Brand-neutral:
+    `source` says whose store. Read only by the details page's Edu toggle
+    (options_service): never by Pico, rankings, budget filters, the scoring ranges or
+    generate-all, which tests/unit/test_edu_price_guard.py holds. Not in
+    laptop_price_history, and it has its own checked-at date. Declared here, like
+    LaptopPickScore, so Laptop's delete cascade can name it."""
+    __tablename__ = "laptop_edu_prices"  # type: ignore
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    laptop_id: uuid.UUID = Field(foreign_key="laptops.id", unique=True)
+    laptop: Optional["Laptop"] = Relationship(back_populates="edu_price")
+    price_rm: float
+    source: str = Field(max_length=40)             # "apple_my_edu"
+    source_url: Optional[str] = None
+    # Stamped on every successful check, changed or not.
+    checked_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    price_changed_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
 
 class LaptopUpdate(SQLModel):

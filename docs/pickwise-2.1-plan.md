@@ -113,7 +113,7 @@ Different user groups (students, people who don't understand specs, people decid
 | 10c | Apple build-to-order options (added 2026-11-04) | The 10 build-to-order Mac rows are a standard configuration plus options; settle how options and their add-on prices are stored before step 11 schedules the Apple scrape. After 10b |
 | 10c+ | Onboarding (decided 2026-11-09) | After 10c (g), before 10d: the background questions ask whether the user is a student, which 10d's education prices use. See "Decisions 2026-11-09" in section 4 |
 | 10c++ | Guide preview warnings (placed 2026-11-10, Jack) | After onboarding, before 10d: more guides are coming and the preview must show by itself what took production queries to see. Built 2026-11-10, see "Guide preview warnings: proposed rules" in section 4 |
-| 10d | Education prices (decided 2026-11-10) | After onboarding, before step 11, so step 11 schedules the edu scrape together with the Apple buy page. Scope is fixed: Apple only, Edu price and live Pick Score ring on the details page only; stored scores, rankings, use-case cards, Pico and budget filtering always use the official price |
+| 10d | Education prices (decided and built 2026-11-10) | After onboarding, before step 11, so step 11 schedules the edu scrape together with the Apple buy page (it already runs inside the Apple options step). Scope is fixed: Apple only, Edu price and live Pick Score ring on the details page only; stored scores, rankings, use-case cards, Pico and budget filtering always use the official price |
 | 10d+ | Selected configuration in the URL (placed 2026-11-09) | Right after 10d. See "Decisions 2026-11-09" in section 4 |
 | 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status |
 | 12 | Software compatibility | The centrepiece of the new positioning; the largest piece of work |
@@ -952,6 +952,23 @@ OPEN, for Jack:
 5. An Edu price older than the official one: when the official price changed after the Edu price was last checked, hide the toggle until the next successful check (recommended), or show it with its date
 6. Wording of the eligibility line, and whether it links to Apple's education store
 7. The compare page and saved list show the official price only (read from "details page only"; confirm)
+
+*Built 2026-11-10 (Jack's answers to the OPEN items above):*
+1. **Edu add-ons:** three nullable columns on `laptop_options` (`edu_add_on_rm`, `edu_kit_price_rm`, `edu_fetched_at`), no new table
+2. **Scraper:** one colour per configuration (+24 calls)
+3. **Toggle choice:** remembered in the browser only (`localStorage`), no account column
+4. **Personalized ring:** the budget comparison uses the Edu price
+5. **Still OPEN, not built.** The case: the weekly run updates a laptop's official price, but the Edu part of the same run fails (Apple blocks it, or a page does not parse), so the stored Edu price is last week's. The user would see last week's student price beside this week's official price, and a "Save RM …" worked out from the two, which can be wrong. The proposal was to hide the toggle until the Edu price is checked again; today it stays, with its own "Last checked" date. One part of it is already covered: an Edu price that is not below the official price is never shown
+6. **Eligibility line:** "Education pricing for university students, educators and parents. Eligibility is checked by Apple." with a link to `https://www.apple.com/my-edu/store`
+7. **Compare page and saved list:** official price only (nothing there changed)
+
+*What differs from the proposal:*
+- **Edu prices are fetched in the options step, not in the buy page scrape and the processor** (proposal items 3 and 4 are one pass in `apple_options_fetch.run_options_step`). The pass reads the stored buy pages, fetches one `/my-edu/` configuration page per standard config and matches it to a laptop by part number, so the admin "Fetch now" button fills Edu prices with no scrape and no processing run. A standard config with no laptop row yet is listed in `no_laptop` and picked up by the next run
+- **An Edu price not below the official one is stored as Apple states it and listed in `not_below_official`; the read side is what never shows it** (the proposal said not stored). One rule in one place, and it also covers an official price that later drops below a stored Edu price
+- **A failed Edu pass keeps last week's Edu add-ons:** the `/my/` write replaces a kit's rows, so it carries their `edu_` values over
+- **Reads:** `GET /laptops/{id}/edu-price`, and `?edu=true` on both `/options` and `/configure` (the configurator's "+RM" labels come from `/options`). Migration `b4d8f1a6c3e9` is additive: one table, three nullable columns
+
+*First Edu fetch (Jack runs it; nothing was fetched into production by the build):* after the deploy has applied the migration, Admin → Catalog → Apple options → **Fetch now** (`POST /admin/apple-options/fetch`), about 8 minutes and about 95 Apple calls. The job result's `apple_options.edu` should show 24 prices and 18 chip kits, the same counts as the 2026-11-10 check. Until then no laptop has an Edu price and the toggle appears nowhere
 
 ### Scheduled scraping + notifications
 

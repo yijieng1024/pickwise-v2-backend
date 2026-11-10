@@ -24,6 +24,13 @@ app/scripts/backfill_apple_options.py. Per product, line and size on a stored bu
 
 Reads are short and committed before the network part, so no transaction idles across
 minutes of HTTP; the write replaces each fetched kit's rows.
+
+Education prices (step 10d, decided 2026-11-10) are a second pass after that write, on
+Apple's education store: the same paths with /my/ as /my-edu/ (`edu_url`). One
+configuration page per standard config gives its Edu price (`laptop_edu_prices`), and
+the same chip-kit fetch gives each option's Edu add-on (the `edu_` columns of rows that
+already exist). The pass never touches an official price, and its failure is reported
+under `edu`, never raised.
 """
 import asyncio
 import json
@@ -34,6 +41,7 @@ from typing import Any, Callable, Mapping, Optional
 from sqlalchemy import delete
 from sqlmodel import Session, select
 
+from app.laptops.laptop_models import Laptop, LaptopEduPrice
 from app.laptops.option_model import LaptopOption
 from app.processor import apple_options
 from app.processor.apple_fields import section_for
@@ -221,10 +229,14 @@ def write(session: Session, kits: list[dict]) -> None:
     now = datetime.now(timezone.utc)
     for kit in kits:
         key = {k: kit[k] for k in _KEY}
-        session.exec(delete(LaptopOption).where(  # type: ignore[arg-type]
-            *(getattr(LaptopOption, k) == v for k, v in key.items())))
+        same_kit = [getattr(LaptopOption, k) == v for k, v in key.items()]
+        # The Edu pass runs after this one and may fail: a replaced row keeps its Edu numbers.
+        edu = {(o.option_group, o.value): {f: getattr(o, f) for f in _EDU_FIELDS}
+               for o in session.exec(select(LaptopOption).where(*same_kit))}
+        session.exec(delete(LaptopOption).where(*same_kit))  # type: ignore[arg-type]
         for row in kit["rows"]:
-            session.add(LaptopOption(**key, fetched_at=now, **row))
+            session.add(LaptopOption(**key, fetched_at=now, **row,
+                                     **edu.get((row["option_group"], row["value"]), {})))
     session.flush()
 
 
@@ -246,10 +258,133 @@ def summary(targets_failed: list[dict], fetched: dict) -> dict:
 
 
 async def run_options_step(session: Session, get: Get = http_get, pause_s: float = PAUSE_S) -> dict:
-    """The step inside the Apple buy page job: read, fetch (no transaction open), write."""
+    """The step inside the Apple buy page job: read, fetch (no transaction open), write.
+    Then the same again on the education store, unless Apple stopped the first pass."""
     targets, targets_failed = read_targets(session)
+    configs = read_edu_configs(session)
     session.commit()
     fetched = await asyncio.to_thread(fetch_all, targets, get, pause_s)
     write(session, fetched["kits"])
     session.commit()
-    return summary(targets_failed, fetched)
+    result = summary(targets_failed, fetched)
+    if fetched["stopped"]:
+        result["edu"] = {"skipped": "Apple stopped the options fetch"}
+        return result
+    try:
+        edu = await asyncio.to_thread(fetch_edu, configs, targets, get, pause_s)
+        result["edu"] = {**write_edu_prices(session, edu["prices"]),
+                         "option_rows": write_edu_options(session, edu["kits"]), "chip_kits": len(edu["kits"]),
+                         "prices_failed": edu["prices_failed"], "options_failed": edu["options_failed"],
+                         "stopped": edu["stopped"], "apple_calls": edu["calls"]}
+        session.commit()
+    except Exception as exc:  # the Edu pass is extra: its failure is reported, never the step's
+        session.rollback()
+        result["edu"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return result
+
+
+# --------------------------------------------------------------------------- education store
+
+EDU_SOURCE = "apple_my_edu"
+_EDU_FIELDS = ("edu_add_on_rm", "edu_kit_price_rm", "edu_fetched_at")
+
+
+def edu_url(url: str) -> str:
+    """The same page on Apple's Malaysian education store."""
+    return url.replace("apple.com/my/", "apple.com/my-edu/", 1)
+
+
+def read_edu_configs(session: Session) -> list[dict]:
+    """Every standard config on a stored buy page (MacBook Neo too): one colour's page
+    (decided 2026-11-10: one colour per configuration) and the part numbers of all of them."""
+    configs = []
+    for buy_url in SPECS_PAGES:
+        raw = _latest_raw(session, buy_url)
+        buy = (raw.raw_specs_dump or {}).get("buy_page") if raw else None
+        for config in (buy or {}).get("configs") or []:
+            if config.get("slugs") and config.get("part_numbers"):
+                configs.append({"url": f"{buy['url']}/{config['slugs'][0]}",
+                                "part_numbers": list(config["part_numbers"])})
+    return configs
+
+
+def fetch_edu(configs: list[dict], targets: list[dict], get: Get = http_get, pause_s: float = PAUSE_S) -> dict:
+    """The Edu price of each standard config, then the Edu chip kits. A page whose part
+    number is not one of the config's own is a different machine: failed, not stored."""
+    from app.scraper.apple_scraper import parse_detail_page
+
+    calls = 0
+
+    def edu_get(url: str) -> str:
+        nonlocal calls
+        calls += 1
+        return get(edu_url(url))
+
+    prices, failed, stopped = [], [], None
+    for config in configs:
+        url = edu_url(config["url"])
+        try:
+            page = parse_detail_page(edu_get(config["url"]))
+            time.sleep(pause_s)
+            if page["part_number"] not in config["part_numbers"]:
+                raise ValueError(f"part number {page['part_number']} is not this configuration's")
+            prices.append({"part_numbers": config["part_numbers"], "price_rm": page["price_rm"], "url": url})
+        except Blocked as exc:
+            stopped = {"url": url, "reason": str(exc)}
+            break
+        except Exception as exc:
+            failed.append({"url": url, "reason": f"{type(exc).__name__}: {exc}"})
+    kits = {"kits": [], "options_failed": [], "stopped": None}
+    if stopped is None:
+        kits = fetch_all(targets, edu_get, pause_s)
+    return {"prices": prices, "prices_failed": failed, "kits": kits["kits"],
+            "options_failed": kits["options_failed"], "stopped": stopped or kits["stopped"], "calls": calls}
+
+
+def write_edu_prices(session: Session, prices: list[dict]) -> dict:
+    """Upsert laptop_edu_prices by part number. Flushes; the caller commits. A price not
+    below the official one is stored as Apple states it and listed: the read side
+    (options_service.edu_row) is what never shows it."""
+    now = datetime.now(timezone.utc)
+    by_part = {part: laptop for laptop in session.exec(
+        select(Laptop).where(Laptop.part_numbers.isnot(None)))  # type: ignore[union-attr]
+        for part in laptop.part_numbers or []}
+    written, no_laptop, not_below = 0, [], []
+    for price in prices:
+        laptop = next((by_part[p] for p in price["part_numbers"] if p in by_part), None)
+        if laptop is None:
+            no_laptop.append(price["url"])
+            continue
+        row = session.exec(select(LaptopEduPrice).where(LaptopEduPrice.laptop_id == laptop.id)).first()
+        if row is None:
+            row = LaptopEduPrice(laptop_id=laptop.id, price_rm=price["price_rm"], source=EDU_SOURCE,
+                                 price_changed_at=now)
+        elif row.price_rm != price["price_rm"]:
+            row.price_rm, row.price_changed_at = price["price_rm"], now
+        row.source, row.source_url, row.checked_at = EDU_SOURCE, price["url"], now
+        session.add(row)
+        written += 1
+        if laptop.price_rm and price["price_rm"] >= laptop.price_rm:
+            not_below.append({"laptop_id": str(laptop.id), "edu": price["price_rm"], "official": laptop.price_rm})
+    session.flush()
+    return {"prices": written, "no_laptop": no_laptop, "not_below_official": not_below}
+
+
+def write_edu_options(session: Session, kits: list[dict]) -> int:
+    """Fill the Edu columns of the option rows that exist; a row only the education store
+    has is left out. Flushes; the caller commits."""
+    now = datetime.now(timezone.utc)
+    filled = 0
+    for kit in kits:
+        stored = {(o.option_group, o.value): o for o in session.exec(
+            select(LaptopOption).where(*(getattr(LaptopOption, k) == kit[k] for k in _KEY)))}
+        for row in kit["rows"]:
+            option = stored.get((row["option_group"], row["value"]))
+            if option is None:
+                continue
+            option.edu_add_on_rm, option.edu_kit_price_rm, option.edu_fetched_at = (
+                row["add_on_rm"], row["kit_price_rm"], now)
+            session.add(option)
+            filled += 1
+    session.flush()
+    return filled

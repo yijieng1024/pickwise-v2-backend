@@ -108,7 +108,7 @@ def test_the_personalized_score_is_the_engine_s_personalized_mode_on_the_configu
 def test_no_profile_means_no_personalized_score(monkeypatch):
     kits = _kits(14, "liquid-retina")
     c = options_service.Configurable(PRO14, [r for r in ROWS if r["size_inch"] == 14 and r["line"] == "liquid-retina"],
-                                     kits, "m6-12-12", {"memory": "16gb", "storage": "1tb"})
+                                     kits, "m6-12-12", {"memory": "16gb", "storage": "1tb"}, PRO14.price_rm)
     monkeypatch.setattr(options_service, "get_scoring_data", lambda session: SCORING)
     choices = options_service.choices_for(c, "m6-12-12", {})
     assert options_service.configure(None, c, "m6-12-12", choices)["personalized_score"] is None

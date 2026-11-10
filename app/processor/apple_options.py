@@ -219,7 +219,7 @@ def _json_after(page: str, marker: str) -> Any:
 
 
 def _endpoint(page: str, name: str) -> str:
-    match = re.search(rf"{name}: '(/my/shop/api/cto/[^']+)'", page)
+    match = re.search(rf"{name}: '(/my(?:-edu)?/shop/api/cto/[^']+)'", page)  # either store
     if not match:
         raise OptionsParseError(f"no {name} on the configure page")
     return html_lib.unescape(match.group(1))

@@ -34,7 +34,7 @@ def _configurable(size, line):
     for group in svc.GROUPS[2:]:
         if (v := svc._included(kits[chip], group)) is not None:
             standard[group] = v
-    return svc.Configurable(laptop, rows, kits, chip, standard)
+    return svc.Configurable(laptop, rows, kits, chip, standard, laptop.price_rm)
 
 
 @pytest.fixture

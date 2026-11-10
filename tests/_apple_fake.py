@@ -53,3 +53,29 @@ class FakeApple:
                     '"storage-dimensionCapacity": "512gb"', '"storage-dimensionCapacity": "1tb"')
             return self.configure
         raise AssertionError(f"unexpected URL {url}")
+
+
+EDU_PRICES = {AIR13_SLUG: ("MDH74ZP/A", 5099.0), AIR13_1010_SLUG: ("MDHA4ZP/A", 6449.0)}
+EDU_KIT_PRICE = {"10-8": 5099.0, "10-10": 6449.0}
+
+
+class FakeAppleEdu(FakeApple):
+    """Apple's education store (step 10d): refuses anything not under /my-edu/. A
+    configuration page also states its part number and Edu price (the Air 13 base's for
+    any slug it does not know), and each kit is RM 400 cheaper than on the main store."""
+
+    def __init__(self):
+        super().__init__()
+        for chip, price in EDU_KIT_PRICE.items():
+            payload = json.loads(self.update_config[chip])
+            payload["body"]["selectedKits"]["priceData"]["amount"] = price
+            self.update_config[chip] = json.dumps(payload)
+
+    def __call__(self, url: str) -> str:
+        assert "apple.com/my-edu/" in url, f"not the education store: {url}"
+        body = super().__call__(url)
+        if "/shop/buy-mac/" in url and "/cto/" not in url:
+            part, price = EDU_PRICES.get(url.rsplit("/", 1)[1], EDU_PRICES[AIR13_SLUG])
+            body += ('"products":[{"sku":"X","partNumber":"%s","price":{"fullPrice":%.2f},'
+                     '"category":"mac","name":"MacBook Air"}]' % (part, price))
+        return body

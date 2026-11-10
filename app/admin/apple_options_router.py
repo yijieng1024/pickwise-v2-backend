@@ -34,7 +34,8 @@ router = APIRouter(prefix="/admin/apple-options", tags=["Admin - Apple options"]
                    dependencies=[Depends(get_current_admin)])
 
 # Measured 2026-11-05 (backfill dry run against Apple): 33 calls, 16 chip kits, 249 s.
-FETCH_SECONDS = 250
+# Doubled 2026-11-10: the education-store pass (step 10d) adds about 60 calls.
+FETCH_SECONDS = 500
 _SCRAPES = (JobType.BULK_SCRAPE, JobType.SCRAPE_TARGETS)
 _RESULT_SCAN = 50
 
@@ -77,7 +78,7 @@ def _latest_options_run(session: Session) -> Optional[dict[str, Any]]:
             return {"job_id": str(job.id), "job_type": job.job_type, "finished_at": job.finished_at,
                     "error": options.get("error"),
                     **{k: options.get(k) for k in ("chip_kits", "apple_calls", "stopped",
-                                                    "chip_not_offered", "options_failed")}}
+                                                    "chip_not_offered", "options_failed", "edu")}}
     return None
 
 

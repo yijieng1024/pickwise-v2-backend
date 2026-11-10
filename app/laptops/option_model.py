@@ -45,6 +45,12 @@ class LaptopOption(SQLModel, table=True):
     is_blocked: bool = False                       # listed for the chip, not orderable
     cpu_model: Optional[str] = None                # chip row only, from the specs page
     gpu_model: Optional[str] = None
+    # The same row on Apple's education store (step 10d). Null edu_fetched_at: never
+    # fetched there, and a kit with any such row offers no Edu price.
+    edu_add_on_rm: Optional[float] = None
+    edu_kit_price_rm: Optional[float] = None       # chip row only
+    edu_fetched_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     fetched_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
