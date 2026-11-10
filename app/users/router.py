@@ -8,7 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, 
 from fastapi.security import OAuth2PasswordRequestForm
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
-from sqlmodel import Session, select
+from sqlmodel import Session, col, delete, or_, select, update
+
+from app.agent.monitoring_models import AgentModelCall, AgentRunLog
+from app.common.job_model import BackgroundJob
+from app.common.llm_usage import LLMUsageLog
+from app.laptops.price_guide_model import PriceGuide
+from app.rag.models import Conversation, ConversationLaptop, Message, PipelineEvalLog
+from app.saved.models import SavedLaptop
+from app.users.admin_router import assert_not_last_admin
 
 from app.common.http_rate_limit import check_quota, client_ip, rate_limit
 from app.database import get_session
@@ -574,6 +582,51 @@ def delete_my_avatar(
 
     session.delete(avatar)
     session.commit()
+    return None
+
+
+def delete_account(session: Session, user_id: UUID) -> None:
+    """Remove a user and everything that points at them. Does not commit.
+
+    Every FK to users is NO ACTION, so the order is children first. Rows with
+    the user's text are deleted; rows that are someone else's record of work
+    (usage counts, jobs, price guides) stay and lose the user id.
+    """
+    conv_ids = select(Conversation.id).where(Conversation.user_id == user_id)
+    theirs = lambda model: or_(  # noqa: E731 - a row by this user or in their conversation
+        model.user_id == user_id, col(model.conversation_id).in_(conv_ids)
+    )
+    run_ids = select(AgentRunLog.id).where(theirs(AgentRunLog))
+
+    session.exec(delete(AgentModelCall).where(col(AgentModelCall.run_id).in_(run_ids)))
+    session.exec(delete(AgentRunLog).where(theirs(AgentRunLog)))
+    session.exec(delete(PipelineEvalLog).where(theirs(PipelineEvalLog)))
+    for model in (Message, ConversationLaptop):
+        session.exec(delete(model).where(col(model.conversation_id).in_(conv_ids)))
+    for model in (Conversation, LaptopUserPreference, UserBackground, SavedLaptop, UserAvatar):
+        session.exec(delete(model).where(model.user_id == user_id))
+
+    for column in (LLMUsageLog.user_id, BackgroundJob.created_by, PriceGuide.uploaded_by):
+        session.exec(update(column.class_).where(column == user_id).values({column.key: None}))
+
+    session.exec(delete(User).where(User.id == user_id))
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_my_account(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Delete the current user's account and their data. Cannot be undone.
+
+    An admin may delete their own account unless they are the last active one
+    (400). Not `assert_can_delete_user`: that guard is for an admin deleting
+    someone else and refuses every self-deletion.
+    """
+    assert_not_last_admin(session, current_user)
+    delete_account(session, current_user.id)
+    session.commit()
+    logger.info("Account deleted: user_id=%s", current_user.id)
     return None
 
 

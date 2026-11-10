@@ -233,6 +233,8 @@ def _run_search(
                 gate=gate,
                 query=user_query,
                 relaxation=relaxation,
+                # So DELETE /auth/me can find the search text this user typed.
+                user_id=user_id,
                 session=session,
                 retrieval_fallback=retrieval_fallback,
             )
