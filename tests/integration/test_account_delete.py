@@ -4,6 +4,7 @@ IntegrityError 500, and a too-wide delete takes another user's rows.
 """
 import uuid
 
+import pytest
 from sqlmodel import select
 
 from app.agent.monitoring_models import AgentModelCall, AgentRunLog
@@ -16,6 +17,7 @@ from app.users.admin_router import LAST_ADMIN_MESSAGE
 from app.users.avatar_model import UserAvatar
 from app.users.background_model import UserBackground
 from app.users.models import LaptopUserPreference, User
+from app.users.router import USERNAME_CONFIRM_MESSAGE
 
 DELETED = (AgentModelCall, AgentRunLog, PipelineEvalLog, Message, ConversationLaptop, Conversation,
            LaptopUserPreference, UserBackground, SavedLaptop, UserAvatar)
@@ -53,6 +55,11 @@ def _seed(session, user, laptop) -> None:
     ])
 
 
+def _delete(client, username, **kwargs):
+    # TestClient.delete() takes no body.
+    return client.request("DELETE", "/api/v2/auth/me", json={"username": username}, **kwargs)
+
+
 def _count(session, model) -> int:
     return len(session.exec(select(model)).all())
 
@@ -67,7 +74,7 @@ def test_deleting_an_account_removes_its_rows_and_only_its_rows(
     session.commit()
     user_id, other_id = api_user.id, other.id
 
-    response = api_client.delete("/api/v2/auth/me")
+    response = _delete(api_client, api_user.username)
 
     assert response.status_code == 204, response.text
     session.expire_all()
@@ -90,7 +97,7 @@ def test_an_admin_with_jobs_and_guides_can_delete_their_account(admin_client, ad
     session.commit()
     admin_id, job_id, guide_id = admin_user.id, job.id, guide.id
 
-    response = admin_client.delete("/api/v2/auth/me")
+    response = _delete(admin_client, admin_user.username)
 
     assert response.status_code == 204, response.text
     session.expire_all()
@@ -100,8 +107,39 @@ def test_an_admin_with_jobs_and_guides_can_delete_their_account(admin_client, ad
 
 
 def test_the_last_active_admin_cannot_delete_their_account(admin_client, admin_user, session):
-    response = admin_client.delete("/api/v2/auth/me")
+    response = _delete(admin_client, admin_user.username)
 
     assert response.status_code == 400
     assert response.json()["detail"] == LAST_ADMIN_MESSAGE
     assert session.get(User, admin_user.id) is not None
+
+
+@pytest.mark.parametrize("request_kwargs", [
+    {},                                  # no body
+    {"json": {}},                        # no username
+    {"json": {"username": None}},
+    {"json": {"username": "someone-else"}},
+    {"json": {"username": ""}},
+], ids=["no-body", "no-field", "null", "wrong", "empty"])
+def test_a_wrong_or_missing_username_deletes_nothing(api_client, api_user, session, request_kwargs):
+    session.add(UserBackground(user_id=api_user.id))
+    session.commit()
+
+    response = api_client.request("DELETE", "/api/v2/auth/me", **request_kwargs)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == USERNAME_CONFIRM_MESSAGE
+    session.expire_all()
+    assert session.get(User, api_user.id) is not None
+    assert _count(session, UserBackground) == 1
+
+
+def test_another_users_username_is_wrong_even_for_an_admin(admin_client, admin_user, session):
+    other = _user(session, role="admin")
+    session.commit()
+
+    response = _delete(admin_client, other.username)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == USERNAME_CONFIRM_MESSAGE
+    assert session.get(User, other.id) is not None

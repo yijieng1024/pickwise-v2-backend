@@ -4,7 +4,7 @@ import requests
 from datetime import timedelta, datetime, timezone
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
@@ -612,17 +612,28 @@ def delete_account(session: Session, user_id: UUID) -> None:
     session.exec(delete(User).where(User.id == user_id))
 
 
+USERNAME_CONFIRM_MESSAGE = "Type your username exactly to delete your account."
+
+
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_my_account(
+    # Optional so a missing body or field is this route's 400, not a 422.
+    username: Optional[str] = Body(default=None, embed=True),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     """Delete the current user's account and their data. Cannot be undone.
 
+    The body must repeat the account's username (`{"username": "..."}`), or
+    the answer is 400 and nothing is deleted. Username rather than password
+    because Google accounts have no password.
+
     An admin may delete their own account unless they are the last active one
     (400). Not `assert_can_delete_user`: that guard is for an admin deleting
     someone else and refuses every self-deletion.
     """
+    if username is None or username.strip() != current_user.username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=USERNAME_CONFIRM_MESSAGE)
     assert_not_last_admin(session, current_user)
     delete_account(session, current_user.id)
     session.commit()
