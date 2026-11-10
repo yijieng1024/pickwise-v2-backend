@@ -22,7 +22,9 @@ from sqlmodel import Session, delete, select
 
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, PriceSource
-from app.laptops.price_guide import CatalogRow, GuideRow, MatchResult, match, panels_differ
+from app.laptops.price_guide import (
+    CatalogRow, GuideRow, MatchResult, PricePoint, match, panels_differ, row_warnings,
+)
 from app.laptops.price_guide_model import PriceGuide, PriceGuideRow
 
 
@@ -79,14 +81,30 @@ def _match(session: Session, guide: PriceGuide, laptops: list[Laptop]) -> MatchR
     ).all()
     return match(
         [GuideRow(r.sku, r.model_code, r.price_rm, r.cpu, r.ram_gb, r.ssd_gb, r.page, r.panel) for r in rows],
-        [
-            CatalogRow(
-                l.id, l.model_code, l.product_name, l.processor_model, l.ram_gb, l.ssd_gb, l.manufacturer_sku,
-                l.display_type,
-            )
-            for l in laptops
-        ],
+        _catalog_rows(laptops),
     )
+
+
+def _catalog_rows(laptops: list[Laptop]) -> list[CatalogRow]:
+    return [
+        CatalogRow(
+            l.id, l.model_code, l.product_name, l.processor_model, l.ram_gb, l.ssd_gb, l.manufacturer_sku,
+            l.display_type, family_id=l.family_id, gpu=l.gpu_model, price_rm=l.price_rm,
+        )
+        for l in laptops
+    ]
+
+
+def _histories(session: Session) -> dict[uuid.UUID, list[PricePoint]]:
+    histories: dict[uuid.UUID, list[PricePoint]] = {}
+    for laptop_id, recorded_at, price, source in session.exec(
+        select(
+            LaptopPriceHistory.laptop_id, LaptopPriceHistory.recorded_at,
+            LaptopPriceHistory.price_rm, LaptopPriceHistory.source,
+        ).order_by(LaptopPriceHistory.recorded_at)  # type: ignore[arg-type]
+    ).all():
+        histories.setdefault(laptop_id, []).append(PricePoint(recorded_at, price, source))
+    return histories
 
 
 def _guide_row(row: GuideRow) -> dict:
@@ -109,6 +127,19 @@ def preview(session: Session, guide: PriceGuide) -> dict:
     by_id = {l.id: l for l in laptops}
     result = _match(session, guide, laptops)
     sources = _latest_sources(session)
+    # _catalog leaves out suspended and discontinued rows, so neither can be the
+    # other half of a duplicate: retiring a row is how a duplicate is fixed.
+    catalog_rows = _catalog_rows(laptops)
+    histories = _histories(session)
+
+    claims = {
+        c.id: rows
+        for group in (result.matched, result.conflict, result.suffix_rule, result.base_code)
+        for c, rows in group
+    }
+
+    def warn(row: CatalogRow, rows: list[GuideRow]) -> list[dict]:
+        return row_warnings(row, rows, catalog_rows, histories.get(row.id, []), claims)
 
     matched, differs = [], []
     for catalog_row, rows in result.matched:
@@ -121,6 +152,7 @@ def preview(session: Session, guide: PriceGuide) -> dict:
             "action": action.value,
             "price_source": sources.get(laptop.id),
             "rows": [_guide_row(r) for r in rows],
+            "warnings": warn(catalog_row, rows),
         }
         (differs if action == Action.DIFFERS else matched).append(entry)
 
@@ -147,6 +179,7 @@ def preview(session: Session, guide: PriceGuide) -> dict:
                 "guide_sku": rows[0].sku,
                 "guide_price_rm": rows[0].price_rm,
                 "rows": [_guide_row(r) for r in rows],
+                "warnings": warn(catalog_row, rows),
             }
             for catalog_row, rows in result.suffix_rule
         ],
@@ -157,6 +190,7 @@ def preview(session: Session, guide: PriceGuide) -> dict:
                 "guide_sku": rows[0].sku,
                 "guide_price_rm": rows[0].price_rm,
                 "rows": [_guide_row(r) for r in rows],
+                "warnings": warn(catalog_row, rows),
             }
             for catalog_row, rows in result.base_code
         ],
@@ -172,12 +206,14 @@ def preview(session: Session, guide: PriceGuide) -> dict:
                 "reason": "panel" if panels_differ(c, rows) else "price",
                 "catalog_panel": c.panel,
                 "rows": [_guide_row(r) for r in rows],
+                "warnings": warn(c, rows),
             }
             for c, rows in result.conflict
         ],
         "unmatched_guide": [_guide_row(r) for r in result.unmatched_guide],
         "unpriced": [_guide_row(r) for r in result.unpriced],
-        "uncovered": [_laptop(by_id[c.id]) for c in result.uncovered],
+        # No guide row, so only the duplicate and price history checks can speak.
+        "uncovered": [{**_laptop(by_id[c.id]), "warnings": warn(c, [])} for c in result.uncovered],
     }
 
 

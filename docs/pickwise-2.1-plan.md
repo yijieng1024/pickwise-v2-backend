@@ -112,6 +112,7 @@ Different user groups (students, people who don't understand specs, people decid
 | 10b | Discontinued status (decided 2026-11-03) | Three discontinued Apple rows are still active at an old price. After 10a |
 | 10c | Apple build-to-order options (added 2026-11-04) | The 10 build-to-order Mac rows are a standard configuration plus options; settle how options and their add-on prices are stored before step 11 schedules the Apple scrape. After 10b |
 | 10c+ | Onboarding (decided 2026-11-09) | After 10c (g), before 10d: the background questions ask whether the user is a student, which 10d's education prices use. See "Decisions 2026-11-09" in section 4 |
+| 10c++ | Guide preview warnings (placed 2026-11-10, Jack) | After onboarding, before 10d: more guides are coming and the preview must show by itself what took production queries to see. Built 2026-11-10, see "Guide preview warnings: proposed rules" in section 4 |
 | 10d | Education prices (decided before 2026-11-08) | After onboarding, before step 11, so step 11 schedules the edu scrape together with the Apple buy page. Scope (detail page only, not Pico / budget / ranking) may change once onboarding asks student status |
 | 10d+ | Selected configuration in the URL (placed 2026-11-09) | Right after 10d. See "Decisions 2026-11-09" in section 4 |
 | 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status |
@@ -879,7 +880,38 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
    - *Possible copied price:* other configurations in the same family (different CPU / RAM / storage) with the same price
    - *Price history* per row (date, price, source)
    - *Multi-SKU check:* for a guide row with several SKUs, whether every SKU's spec matches the catalog row
-   No suspend button on that page, only a link. Place in the order: to be decided by Jack
+   No suspend button on that page, only a link. Place in the order: before 10d (Jack, 2026-11-10)
+
+*Guide preview warnings: proposed rules (plan only, 2026-11-10; nothing built):*
+
+Decided (Jack, 2026-11-10): every tab gets warnings; a summary box at the top of each tab ("3 warnings in this tab") plus an icon beside each affected row, the reason on hover; four types. This replaces item 5's "Warnings column with badges, details on expand".
+
+Where: all four are computed in the backend, in `price_guide_service.preview`, as a `warnings: [{type, message, related}]` list on each row, from a pure function next to `match` so it is unit-tested without a database. They need the family, the price history and the suspended rows, none of which the page has. The frontend only counts and renders them. Warnings never change what an apply writes.
+
+Each rule was run read-only against the three stored guides on 2026-11-10 (Consumer Q3, 27 laptop rows; ROG Q3, 45; Q426 Commercial, 17):
+
+1. **Possible duplicate row.** Another ASUS laptop in the same family with the same CPU part, RAM, storage, **GPU** and panel kind. GPU is required: without it the ROG guide fires 28 times, all of them one chassis sold with two GPUs (Strix G16 RTX 5060 / 5070). Q426: fires on B3605CCA U5 225H `714137b2` against `a4dd1eaf` (now suspended), and on a pair not known before, B3605CCA U7 255H `0fa49d4c` and `416b293a`, both active at 7,199. False positives: two real machines that differ only in a column the rule does not read (colour, OS, warranty); low
+2. **Suspected wrong price.** Either (a) the guide price is 10% or more away from the stored price, or (b) the stored price differs from the guide and another configuration in the family (different specs) is stored at the same price, the copied-price case. Q426: BM1403 `b6edc91d` 4,299 against 5,799 is +35% and shares 4,299 with a sibling, so both fire; `41113426` fires both (+38%); B1503 fires (a) at -19% and -20%. ROG: (a) 7 rows, (b) the five TUF F16 rows all stored at 5,899. Without "differs from the guide", (b) fires on 6 Consumer rows the guide confirms, so that condition stays. False positives: a real price change of 10% or more between editions; medium, which is why it is a warning
+3. **Price history problem.** Any of: an entry of 0 or less; two entries within 24 hours at different prices; consecutive entries 30% or more apart; the latest entry not equal to the stored price. P5606CCA `e2d4f792` had all of the first three before the 2026-11-10 clean-up (5,299 then 0.0 a minute later, 9,899 the next day) and still fires the third (5,299 → 7,999). All guides: 5 rows on the 30% rule, none on the others today. False positives: the 30% rule also fires when a guide correctly replaced a copied page price, which is the commonest way a price gets fixed; medium to high
+4. **Multiple SKUs that may not match.** A laptop claimed by two or more guide rows that differ in price, model code, printed specs or panel, or in SKU suffix class (`-X` against `-WS`). `41113426`: four SKUs, identical printed specs, two prices, and the 16,499 pair are the `-X` SKUs, so it fires on price and on suffix. Item 5's rule (each SKU's specs against the catalog row) does **not** fire there, because all four rows print the same specs. Also fires on P3606CCA `e808cf68` (`P3606CCA` and `P3606CCAP` on one laptop) and Consumer `61f1b315` (`S3607A` and `S3607AA`). Of 23 multi-SKU rows, 3 fire; the other 20 are SKU pairs with the same specs and price. False positives: low
+
+OPEN, for Jack:
+- **Thresholds:** 10% for the price gap and 30% for a history jump are proposals. The measured gaps are 10, 14, 17, 17, 19, 19, 20, 30, 33, 34, 35 and 38%
+- **Suspended duplicates:** show a duplicate whose other row is already suspended? Suspending is the fix, so the proposal is to leave them out, which means B3605CCA U5 no longer fires today
+- **History jump on a guide-written entry:** keep, or skip a jump whose later entry has `source = guide`? Skipping silences P5606CCA's remaining warning
+- **Tabs with guide rows only** (Unmatched, Unpriced, Ambiguous): none of the four types reads a guide row alone. Either the box says "No warnings" there, or a fifth check is wanted (for example a guide row priced far from the other rows of its model code)
+- **The pair `0fa49d4c` / `416b293a`:** a live duplicate, both active. Suspend one, as with `a4dd1eaf`?
+
+*Guide preview warnings: built 2026-11-10 (Jack's answers to the OPEN items):*
+1. **Thresholds:** 10% and 30%, as proposed
+2. **Suspended rows** are not counted as duplicates (nor discontinued ones: the preview's catalog already leaves both out)
+3. **A history jump written by a guide** is shown as a lighter "info" reminder with its own icon, and is not in the tab's warning count ("2 warnings · 1 info"). The other history problems stay warnings
+4. **Guide-row tabs** (Ambiguous, Not in catalog, Unpriced) say "No warnings apply to this tab". No fifth check
+5. **`0fa49d4c` / `416b293a` are not a duplicate; nothing is suspended.** Compared read-only: `0fa49d4c` is the B3605CCA (Wi-Fi 6E, 1.83 kg, two USB-C, no Thunderbolt) and `416b293a` the B3606CCA, the B3 G1 (Wi-Fi 7, 1.78 kg, Thunderbolt 4). 15 of 62 columns differ. The guide prices them on two rows, `B3605CCA-MB2197X` and `B3606CCA-MB7150X`, both 7,199 on page 8. Neither has saved, conversation or review rows. Recommendation: keep both (Jack to confirm)
+6. **Rule change from that finding:** two rows the guide prices under model codes that do not overlap are not flagged as duplicates. Without it the pair above would warn on every preview of this guide. The earlier B3605CCA U5 pair still fires under this rule, because the guide matched only one of the two
+7. **Where:** `price_guide.row_warnings` (pure), attached by `price_guide_service.preview` to every laptop row; the page shows a summary box under the tab's hint, an icon beside the laptop name with the reasons on hover or keyboard focus, a mark on each tab that has warnings, and lists the affected laptops first so they are on page 1
+8. **Measured on the three stored guides, 2026-11-10** (warnings / info, tabs other than "Not in this guide"): Consumer Q3 1 / 4, ROG Q3 11 / 0, Q426 Commercial 7 / 1. "Not in this guide" adds 7 / 1, 7 / 5 and 5 / 4: the same laptops' duplicate and history checks, repeated in each guide that does not cover them
+9. **Found by the warnings, for Jack to decide (nothing changed):** (a) BM1403 `38246257` (5,999) and `4bccb37c` (4,298) are both active, both `AMD Ryzen 5 150` 16GB / 512GB, created 0.6 s apart on 06-29; `4bccb37c`'s model code says `ryzen5-7535u`. This looks like a real duplicate. (b) Vivobook 16 A1605VA `1603eae1` has a 0.0 history entry on 2026-08-14 (`5e287d1d`), the same kind as P5606CCA's. The 2026-11-10 check that reported no other zero rows was wrong: its filter dropped every laptop with no `manufacturer_sku`. This is the only one left. (c) The B3605CCA / B3606CCA pair still warns in the Consumer and ROG guides' "Not in this guide" tab, where no guide row tells the two apart
 
 ### Scheduled scraping + notifications
 

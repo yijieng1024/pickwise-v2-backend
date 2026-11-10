@@ -14,6 +14,7 @@ matched, a laptop whose panel plainly differs from the guide's is a conflict.
 """
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from app.pickscore.benchmark_service import _normalize
@@ -72,6 +73,10 @@ class CatalogRow:
     ssd_gb: Optional[int] = None
     manufacturer_sku: Optional[str] = None
     panel: Optional[str] = None
+    # Read by the preview's warnings only, never by `match`.
+    family_id: Any = None
+    gpu: Optional[str] = None
+    price_rm: Optional[float] = None
 
 
 @dataclass
@@ -194,3 +199,128 @@ def match(guide_rows: list[GuideRow], catalog_rows: list[CatalogRow]) -> MatchRe
 
     result.uncovered = [c for c in catalog_rows if c.id not in claims and c.id not in in_doubt]
     return result
+
+
+# --- Preview warnings: things an admin should look at before trusting a row. ---
+# They never change what `match` decides or what an apply writes.
+
+PRICE_GAP = 0.10      # guide price this far from the stored one (Jack, 2026-11-10)
+HISTORY_JUMP = 0.30   # consecutive history entries this far apart
+_GUIDE_SOURCE = "guide"  # PriceSource.GUIDE.value; not imported, this module stays pure
+
+
+@dataclass(frozen=True)
+class PricePoint:
+    recorded_at: datetime
+    price_rm: float
+    source: Optional[str] = None
+
+
+def _rm(price: Optional[float]) -> str:
+    return f"RM {price:,.0f}" if price else "no price"
+
+
+def _config(row: CatalogRow) -> tuple:
+    """What makes two rows one machine. GPU is in it: a Strix G16 is sold with an
+    RTX 5060 and an RTX 5070 on one CPU, RAM and storage."""
+    gpu = " ".join((row.gpu or "").lower().split())
+    return (cpu_part(row.processor_model), row.ram_gb, row.ssd_gb, gpu, panel_kind(row.panel))
+
+
+def _suffix(sku: str) -> str:
+    """The letters a SKU ends on: -X and -WS are different editions of one machine."""
+    found = re.search(r"[A-Z]+$", sku_key(sku))
+    return found.group(0) if found else ""
+
+
+def _history_problems(points: list[PricePoint], stored: float) -> tuple[list[str], list[str]]:
+    """(warnings, info). A jump whose later entry a guide wrote is how a copied page
+    price gets corrected, so it is a reminder, not a warning."""
+    problems, info = [], []
+    for point in points:
+        if point.price_rm <= 0:
+            problems.append(f"An entry of RM 0 on {point.recorded_at:%Y-%m-%d}")
+    for before, after in zip(points, points[1:]):
+        day = f"{after.recorded_at:%Y-%m-%d}"
+        if before.price_rm != after.price_rm and after.recorded_at - before.recorded_at <= timedelta(hours=24):
+            problems.append(f"RM {before.price_rm:,.0f} then RM {after.price_rm:,.0f} within 24 hours ({day})")
+        if before.price_rm > 0 and after.price_rm > 0:
+            change = round((after.price_rm - before.price_rm) / before.price_rm, 4)
+            if abs(change) >= HISTORY_JUMP:
+                text = f"{_rm(before.price_rm)} to {_rm(after.price_rm)} ({change:+.0%}) on {day}"
+                if after.source == _GUIDE_SOURCE:
+                    info.append(f"A guide changed the price from {text}")
+                else:
+                    problems.append(f"Price jumped from {text}")
+    if points and stored and points[-1].price_rm != stored:
+        problems.append(f"Latest entry {_rm(points[-1].price_rm)} is not the stored price {_rm(stored)}")
+    return problems, info
+
+
+def _guide_says_two_models(mine: list[GuideRow], theirs: list[GuideRow]) -> bool:
+    """The guide prices both rows, under model codes that do not overlap: B3605CCA
+    and B3606CCA share a family, CPU, RAM, storage, GPU and panel, and are two
+    machines (Wi-Fi 6E against Wi-Fi 7, 1.83 kg against 1.78 kg)."""
+    codes = lambda rows: {g.model_code.upper() for g in rows}  # noqa: E731
+    return bool(mine) and bool(theirs) and not codes(mine) & codes(theirs)
+
+
+def row_warnings(
+    row: CatalogRow,
+    guide_rows: list[GuideRow],
+    catalog: list[CatalogRow],
+    history: list[PricePoint],
+    claims: Optional[dict[Any, list[GuideRow]]] = None,
+) -> list[dict]:
+    """At most one entry per type and level: {type, level, message}. `catalog` is the
+    rows a duplicate or a copied price may be found among, so the caller leaves out
+    the suspended ones: suspending is how a duplicate is fixed. `claims` is the guide
+    rows each other catalog row matched, by id."""
+    claims = claims or {}
+    out: list[dict] = []
+
+    def add(kind: str, reasons: list[str], level: str = "warning") -> None:
+        if reasons:
+            out.append({"type": kind, "level": level, "message": "; ".join(reasons)})
+
+    family = [c for c in catalog if c.id != row.id and row.family_id is not None and c.family_id == row.family_id]
+    add("duplicate", [
+        f"Same family, CPU, RAM, storage, GPU and panel as {c.model_code} ({_rm(c.price_rm)})"
+        for c in family
+        if _config(c) == _config(row) and not _guide_says_two_models(guide_rows, claims.get(c.id, []))
+    ])
+
+    stored = row.price_rm or 0
+    prices = sorted({g.price_rm for g in guide_rows if g.price_rm})
+    reasons = []
+    if stored and prices:
+        far = max(prices, key=lambda p: abs(p - stored))
+        gap = round((far - stored) / stored, 4)
+        if abs(gap) >= PRICE_GAP:
+            reasons.append(f"Guide price {_rm(far)} is {gap:+.0%} from the stored {_rm(stored)}")
+        # Only when the guide disagrees: two configurations the guide prices alike are not a copy.
+        copies = [c.model_code for c in family if c.price_rm == stored and _config(c) != _config(row)]
+        if copies and any(p != stored for p in prices):
+            reasons.append(
+                f"The stored {_rm(stored)} is also the price of another configuration in this family "
+                f"({', '.join(copies)}), so it may have been copied"
+            )
+    add("wrong_price", reasons)
+
+    problems, info = _history_problems(sorted(history, key=lambda p: p.recorded_at), stored)
+    add("price_history", problems)
+    add("price_history", info, level="info")
+
+    if len(guide_rows) > 1:
+        checks = (
+            ("price", lambda g: g.price_rm),
+            ("model code", lambda g: g.model_code.upper()),
+            ("CPU, RAM or storage", lambda g: (cpu_part(g.cpu), g.ram_gb, g.ssd_gb)),
+            ("panel", lambda g: panel_kind(g.panel)),
+            ("SKU suffix", lambda g: _suffix(g.sku)),
+        )
+        differ = [label for label, key in checks if len({key(g) for g in guide_rows}) > 1]
+        if differ:
+            skus = ", ".join(f"{g.sku} ({_rm(g.price_rm)})" for g in guide_rows)
+            add("multi_sku", [f"The {len(guide_rows)} SKUs on this laptop differ in {', '.join(differ)}: {skus}"])
+    return out
