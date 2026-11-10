@@ -265,6 +265,22 @@ def _guide_says_two_models(mine: list[GuideRow], theirs: list[GuideRow]) -> bool
     return bool(mine) and bool(theirs) and not codes(mine) & codes(theirs)
 
 
+# A base model code in a product name: B3605 in "(B3605CCA)". Not after a hyphen, so
+# the second half of a SKU in a ROG name ("G615L-PS5104W") is not read as one.
+_NAMED_BASE = re.compile(r"(?<![A-Z0-9-])([A-Z]{1,3}\d{3,4})[A-Z]*(?![A-Z0-9])")
+
+
+def base_codes(row: CatalogRow) -> set[str]:
+    return set(_NAMED_BASE.findall(row.product_name.upper()))
+
+
+def _names_say_two_models(row: CatalogRow, other: CatalogRow) -> bool:
+    """Both names state a base model code and they share none: B3605 and B3606
+    (Jack, 2026-11-10). A name with no code says nothing, so it exempts nothing."""
+    mine, theirs = base_codes(row), base_codes(other)
+    return bool(mine) and bool(theirs) and not mine & theirs
+
+
 def row_warnings(
     row: CatalogRow,
     guide_rows: list[GuideRow],
@@ -287,7 +303,9 @@ def row_warnings(
     add("duplicate", [
         f"Same family, CPU, RAM, storage, GPU and panel as {c.model_code} ({_rm(c.price_rm)})"
         for c in family
-        if _config(c) == _config(row) and not _guide_says_two_models(guide_rows, claims.get(c.id, []))
+        if _config(c) == _config(row)
+        and not _names_say_two_models(row, c)
+        and not _guide_says_two_models(guide_rows, claims.get(c.id, []))
     ])
 
     stored = row.price_rm or 0

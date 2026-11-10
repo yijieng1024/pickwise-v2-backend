@@ -11,8 +11,8 @@ FAMILY = "expertbook-b3-16"
 
 
 def laptop(id, price=None, cpu="Intel Core Ultra 5 225H", ram=16, ssd=512, gpu="Intel Graphics",
-           panel="Anti-glare display", family=FAMILY):
-    return CatalogRow(id=id, model_code=f"asus-{id}", product_name="ASUS ExpertBook", processor_model=cpu,
+           panel="Anti-glare display", family=FAMILY, name="ASUS ExpertBook"):
+    return CatalogRow(id=id, model_code=f"asus-{id}", product_name=name, processor_model=cpu,
                       ram_gb=ram, ssd_gb=ssd, panel=panel, family_id=family, gpu=gpu, price_rm=price)
 
 
@@ -69,6 +69,44 @@ def test_two_rows_the_guide_prices_under_two_model_codes_are_two_machines():
     # With only one of them in the guide, nothing says they are two machines.
     assert found(row_warnings(b3605, rows["0fa49d4c"], [b3605, b3606], [], {}), "duplicate")
     assert found(row_warnings(b3606, [], [b3605, b3606], [], rows), "duplicate")
+
+
+B3605 = 'ASUS ExpertBook B3 (B3605) (B3605CCA) (Intel Core Ultra 7 255H, 16GB RAM, 512GB SSD)'
+B3606 = 'ASUS ExpertBook B3 G1 (16" Intel) (B3606CCA) (Intel Core Ultra 7 255H, 16GB RAM, 512GB SSD)'
+BM1403 = "ASUS ExpertBook BM1 (BM1403) (AMD Ryzen 5 150, 16GB RAM, 512GB SSD)"
+
+
+def test_two_base_model_codes_are_two_machines_with_no_guide_row_at_all():
+    # The "Not in this guide" tab: 0fa49d4c and 416b293a kept warning in the other guides.
+    b3605, b3606 = laptop("0fa49d4c", 7199.0, name=B3605), laptop("416b293a", 7199.0, name=B3606)
+
+    assert row_warnings(b3605, [], [b3605, b3606], []) == []
+    assert row_warnings(b3606, [], [b3605, b3606], []) == []
+
+
+def test_the_same_base_model_code_is_still_a_possible_duplicate():
+    # 714137b2 / a4dd1eaf are both B3605CCA; 38246257 / 4bccb37c are both BM1403.
+    kept, other = laptop("714137b2", 5999.0, name=B3605), laptop("a4dd1eaf", 8399.0, name=B3605)
+    bm_a, bm_b = laptop("38246257", 5999.0, name=BM1403), laptop("4bccb37c", 4298.0, name=BM1403)
+
+    assert found(row_warnings(kept, [], [kept, other], []), "duplicate")
+    assert found(row_warnings(bm_a, [], [bm_a, bm_b], []), "duplicate")
+    assert found(row_warnings(bm_b, [], [bm_a, bm_b], []), "duplicate")
+
+
+def test_a_name_with_no_model_code_exempts_nothing():
+    named, bare = laptop("a", name=B3605), laptop("b", name='ASUS ExpertBook B3 G2 (16" Intel)')
+
+    assert found(row_warnings(named, [], [named, bare], []), "duplicate")
+
+
+def test_the_second_half_of_a_sku_in_a_name_is_not_a_model_code():
+    # Two ROG rows of one model, each named with its own SKU: G615 is shared, PS5104 and MS5078 are not codes.
+    one = laptop("a", name="ROG Strix G16 (2025) G615 (G615L-PS5104W)")
+    two = laptop("b", name="ROG Strix G16 (2025) G615 (G615L-MS5078W)")
+
+    assert price_guide.base_codes(one) == {"G615"}
+    assert found(row_warnings(one, [], [one, two], []), "duplicate")
 
 
 # --- suspected wrong price: BM1403 b6edc91d, stored 4,299, guide 5,799 ---
