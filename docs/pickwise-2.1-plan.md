@@ -1001,24 +1001,33 @@ Plan only: nothing here is built. The goal: the configuration chosen on a laptop
 12. **The configured price is rendered on the server:** the page reads `searchParams` and calls `/configure`. The Edu price still swaps in the browser, as today. *Why:* no flash of the standard price, and the page a link opens is right before any script runs
 13. **Vitest in the frontend, only for the pure functions that parse and build the configuration URL.** Each new test must be shown to catch the bug: with the function's change reverted, the test is red
 
-*The URL rule (one function on each side, the same cases):* params in the order `chip`, `memory`, `storage`, `adapter`, `display`. Never `keyboard`, never `edu`. The standard config's own picks are the plain URL with no params. The two builders (`config_path` in the backend, `buildConfigQuery` in the frontend) are held to the same literal cases, on the Pro 14 Liquid Retina M6 standard config (16GB, 1TB):
+*The URL rule (decided 2026-11-12, Jack; one function on each side, held to the same cases):*
+- **Fixed order:** `chip`, `memory`, `storage`, `adapter`, `display`. The backend's `config_path` and the frontend's `buildConfigQuery` (commit 2) both write this order and no other
+- **`chip`, `memory` and `storage` are always written**, also when they are the standard config's own. There is no special case: the plain `/laptops/{id}` is the page with no configuration
+- **`adapter` and `display` are written only when they differ from what the chosen chip's kit comes with** (the kit's included value). Known and accepted cost: if Apple changes what a kit comes with, an old link without that param follows the new default
+- Never `keyboard`, never `edu`
+- A laptop with no options has no path: the tool returns none, and nothing invents one
+
+The cases, on the Pro 14 Liquid Retina M6 standard config (16GB, 1TB; its kit comes with the 70W adapter and the standard display):
 
 | Picks | Path |
 |---|---|
-| the standard config's own | `/laptops/{id}` |
+| the standard config's own, as a configuration | `/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb` |
 | 32GB, 4TB | `/laptops/{id}?chip=m6-12-12&memory=32gb&storage=4tb` |
 | M5 Pro 15c/16g, 48GB, 2TB, nano-texture | `/laptops/{id}?chip=m5pro-15-16&memory=48gb&storage=2tb&display=nano_texture` |
-| a non-default adapter | `adapter` between `storage` and `display` |
+| 96W adapter (the kit comes with 70W) | `/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb&adapter=96w` |
+| 32GB, 96W adapter, nano-texture | `/laptops/{id}?chip=m6-12-12&memory=32gb&storage=1tb&adapter=96w&display=nano_texture` |
+| M5 Pro 18c/20g (its kit comes with 96W) | `/laptops/{id}?chip=m5pro-18-20&memory=24gb&storage=1tb`, no `adapter` |
 
 *Where the decisions do not fit the code as surveyed (said, not worked around):*
 1. **Decision 7 and "backend first":** the chat only turns `http(s)://` text into a link, so a path such as `/laptops/…` would show as plain text. The frontend has to accept links to PickWise's own pages first. So the backend goes first with the tool's `path` (harmless alone), and the prompt line that makes Pico use it is the **last** commit, after the frontend renders such links
 2. **Decision 12 and the personalized ring:** the server has no sign-in token (it is in the browser's storage), so the server-rendered configuration is general-mode only. A signed-in user with wizard preferences gets their own score from a second `/configure` call in the browser, and the ring number changes once after load. The original view already behaves this way
 3. **Decision 4, "clean the URL":** a server component cannot change the address without a redirect, and a redirect would lose the notice. So the server renders the corrected configuration with the notice, and the browser then replaces the address. The first response is still served at the bad URL (its canonical is the plain one either way)
 4. **Decision 1, "one configuration has one URL", holds per laptop page only.** With decision 9, the same machine reached from two standard configs has two URLs (one per page). Both have the plain canonical of their own page
-5. **Decision 1, which params are written: OPEN.** Jack's example has three, and the Pro also has adapter and display options. Proposed: `chip`, `memory` and `storage` always; `adapter` and `display` only when they differ from what the chip's kit comes with. The cost: if Apple changes what a kit comes with, an old link without that param shows the new default
-6. **Decision 10, `metadataBase`:** the frontend has no setting for its own public address. It needs a new `NEXT_PUBLIC_SITE_URL` that Jack sets on Vercel; without it a canonical cannot be an absolute URL
+5. **Decision 1, which params are written: decided 2026-11-12**, see "The URL rule" above. Jack's example has three, and the Pro also has adapter and display options; those two are written only when they differ from the kit's own
+6. **Decision 10, `metadataBase`:** the frontend has no setting for its own public address. It needs a new `NEXT_PUBLIC_SITE_URL`. **Decided 2026-11-12: `https://pickwise.ngyijie.com` for Production and Preview on Vercel, with a localhost fallback in the code when it is not set.** Jack sets it on Vercel himself before commit 5
 7. **Decision 10, `generateMetadata`:** the page fetches the laptop uncached on purpose, so metadata would fetch it a second time. One request-scoped `cache()` around that fetch keeps it at one call
-8. **Decision 13, no CI:** the frontend has no workflow, so the Vitest tests run only when someone runs `npm test`. **OPEN:** add a small GitHub Actions workflow for them, or keep them local
+8. **Decision 13, no CI:** the frontend has no workflow, so the Vitest tests run only when someone runs `npm test`. **Decided 2026-11-12: local only, no CI workflow**
 9. **Decision 6, replace:** Next's router replace would re-run the server page (five backend calls) for a change the browser already has the result of. `window.history.replaceState` avoids that; AGENTS.md requires checking it against this Next version's own docs before writing it
 10. **Decision 3 with a remembered Edu toggle:** a configured link first shows the official configured price from the server, then swaps to the Edu price. This is decision 12 as written
 11. **A link with options on a laptop that has none** (not a Mac, or no longer active): the params are ignored and removed, with the notice
@@ -1028,19 +1037,19 @@ Plan only: nothing here is built. The goal: the configuration chosen on a laptop
 
 | # | Repo | Commit | What it changes | How it is tested | What Jack checks in the browser |
 |---|---|---|---|---|---|
-| 1 | backend | `feat: get_configuration_options returns the configuration's path` | A pure `config_path()` beside the configurator; the tool's configured answer gains `path` (the listing gains the plain path). No prompt change | Unit: the table's cases; fixed order; no `keyboard`, no `edu`; every path's params go back through `checked_choices` to the same total; the tool output still fits the eval truncation budget; the Edu source guard still passes | Nothing visible yet |
+| 1 | backend | `feat: get_configuration_options returns the configuration's path` | A pure `config_path()` beside the configurator; the tool's configured answer gains `path`. The listing, a refused choice and a laptop with no options get none. No prompt change | Unit: the table's cases; all three base params present; adapter and display left out when equal to the kit's own and written when different; fixed order; no `keyboard`, no `edu`; a laptop with no options has no path; every path's params go back through `checked_choices` to the same total; the tool output still fits the eval truncation budget; the Edu source guard still passes | Nothing visible yet |
 | 2 | frontend | `feat: parse and build the configuration URL` | Adds Vitest and `npm test`. `lib/config-url.ts`: `parseConfigParams(params, options)` gives the picks and the list of dropped params (decision 4); `buildConfigQuery(options, picks)` gives the query. Used by nothing yet | Vitest: the table's cases, both directions; a bad memory drops only memory; a bad chip drops everything; unknown params ignored; repeated params. Shown red with each function's body reverted | Nothing visible yet |
 | 3 | frontend | `feat: a laptop link with a configuration opens that configuration` | The page reads `searchParams`, checks them with commit 2, calls `/configure` on the server and gives the result to `ConfiguratorProvider` as its first state, in the "Configured" view. Dropped params: the notice, then the address is replaced. A `/configure` failure shows the standard config with the notice | Vitest for the check; type check and lint. Browser steps on the right | Open a hand-typed configured link: the configured price is there on first paint, also with scripts off. Change `memory` to nonsense: memory falls back, the rest stays, one line says so, the address is cleaned. Change `chip` to nonsense: the standard config. Add params to an ASUS laptop: ignored and removed. Signed in with wizard answers: the ring becomes the personal score |
-| 4 | frontend | `feat: Done writes the configuration to the URL` | "Done" replaces the address with the picks' URL (the plain URL for the standard picks). "Original" / "Configured" and the Edu toggle never touch it | Vitest already covers the builder; type check and lint | Configure and press Done: the address changes with no reload. Refresh: the configuration is still there. Back: leaves the page. Share: the copied link opens the same configuration in another browser. Edu on: the address has no `edu` |
-| 5 | frontend | `feat: laptop pages have their own title, description and canonical` | `metadataBase` from `NEXT_PUBLIC_SITE_URL`; `generateMetadata` with the laptop's name and a one-line description; the canonical is the plain `/laptops/{id}` whatever the params | Type check and lint; a Vitest case for the description text if it has any logic | Jack sets `NEXT_PUBLIC_SITE_URL` on Vercel first. Then: the tab shows the laptop's name; in the page source of a configured link the `<link rel="canonical">` is the plain URL |
+| 4 | frontend | `feat: Done writes the configuration to the URL` | "Done" replaces the address with the picks' URL (the three base params always, by the URL rule). "Original" / "Configured" and the Edu toggle never touch it | Vitest already covers the builder; type check and lint | Configure and press Done: the address changes with no reload. Refresh: the configuration is still there. Back: leaves the page. Share: the copied link opens the same configuration in another browser. Edu on: the address has no `edu` |
+| 5 | frontend | `feat: laptop pages have their own title, description and canonical` | `metadataBase` from `NEXT_PUBLIC_SITE_URL` (localhost when unset); `generateMetadata` with the laptop's name and a one-line description; the canonical is the plain `/laptops/{id}` whatever the params | Type check and lint; a Vitest case for the description text if it has any logic | Jack sets `NEXT_PUBLIC_SITE_URL` to `https://pickwise.ngyijie.com` on Vercel (Production and Preview) first. Then: the tab shows the laptop's name; in the page source of a configured link the `<link rel="canonical">` is the plain URL |
 | 6 | frontend | `feat: chat links to PickWise pages` | The chat's link rule also accepts a path that starts with `/laptops/`, opened in the same tab; nothing else relative | Vitest on the link rule (moved to a pure function): a `/laptops/…` path is a link, `//evil.example` and `javascript:` are not | Nothing visible until commit 7 |
 | 7 | backend | `feat: Pico links a configuration with the tool's path` | One prompt line: link a configured machine with the tool's `path` as a markdown link, never build a URL. An eval case | Unit: the prompt names `path`. Eval rule check: the reply contains the tool's path exactly and no other `/laptops/` URL | After commit 6 is live: ask Pico for a Pro 14 with M5 Pro, 48GB and 2TB; the reply has a link; it opens the details page on that configuration at the same total |
 | later | frontend | `feat: sitemap and robots` | Separate small commit, not part of this task (decision 10) | | |
 
-*OPEN (Jack):*
-1. Which params are written (item 5 above): the proposal, or every group always
-2. Frontend tests in CI (item 8 above): a small workflow, or local only
-3. `NEXT_PUBLIC_SITE_URL`: the value to set on Vercel (the production address), and whether preview deployments use the production address in their canonical too
+*Decided 2026-11-12 (Jack's answers to the three OPEN items):*
+1. **Params written:** `chip`, `memory` and `storage` always; `adapter` and `display` only when they differ from what the chip kit comes with. The cost is known and accepted
+2. **Frontend Vitest tests run locally only.** No CI workflow
+3. **`NEXT_PUBLIC_SITE_URL`** is `https://pickwise.ngyijie.com` for Production and Preview, with a localhost fallback when it is not set
 
 ### Apple scrapers are manual only (decided 2026-11-12)
 
