@@ -1050,6 +1050,8 @@ Plan only: nothing here is built. The goal: the configuration chosen on a laptop
 | 7 | backend | `feat: Pico links a configuration with the tool's path` | One prompt line: link a configured machine with the tool's `path` as a markdown link, never build a URL. An eval case | Unit: the prompt names `path`. Eval rule check: the reply contains the tool's path exactly and no other `/laptops/` URL | After commit 6 is live: ask Pico for a Pro 14 with M5 Pro, 48GB and 2TB; the reply has a link; it opens the details page on that configuration at the same total |
 | later | frontend | `feat: sitemap and robots` | Separate small commit, not part of this task (decision 10) | | |
 
+*Built 2026-11-12 to 13:* commits 1 to 7 and the sitemap and robots commit. Commit 7 as built: one prompt bullet (link a configuration with exactly the tool's path, never build, edit or guess a URL, no path means no link); the eval check `site_links_grounded` in every category (every link into the site must be word for word in a tool output); two cases with `configuration_link: true`, `tool_en_005` and `tool_zh_004`, whose answer must contain a path the tool returned. Run only those: `python eval/run_eval.py run --label config-link --ids tool_en_005,tool_zh_004`
+
 *Decided 2026-11-12 (Jack's answers to the three OPEN items):*
 1. **Params written:** `chip`, `memory` and `storage` always; `adapter` and `display` only when they differ from what the chip kit comes with. The cost is known and accepted
 2. **Frontend Vitest tests run locally only.** No CI workflow

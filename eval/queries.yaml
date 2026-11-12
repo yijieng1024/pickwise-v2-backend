@@ -254,6 +254,26 @@
     tools: [get_configuration_options]
     rubric: "Answers from get_configuration_options whether 32GB is offered on the 13-inch Air, with the add-on price (and which chip, if only another chip offers it); every price comes from the tool; does not present the configured machine as a catalog laptop"
 
+# A configuration that is not a catalog laptop: the answer must link it with the path
+# get_configuration_options returned (plan step 10d+, commit 7).
+- id: tool_en_005
+  category: tool_routing
+  lang: en
+  query: "How much is the 13-inch MacBook Air with 32GB memory and 2TB storage?"
+  expect:
+    tools: [get_configuration_options]
+    configuration_link: true
+    rubric: "Gives the configured total from get_configuration_options for the 13-inch Air with 32GB and 2TB (naming the chip that offers it if the standard chip does not), and links that configuration with a markdown link whose target is exactly the path the tool returned; every price comes from the tool; does not present the configured machine as a catalog laptop"
+
+- id: tool_zh_004
+  category: tool_routing
+  lang: zh
+  query: "15 寸 MacBook Air 升级到 32GB 内存和 2TB 储存要多少钱?"
+  expect:
+    tools: [get_configuration_options]
+    configuration_link: true
+    rubric: "用 get_configuration_options 的数字给出 15 寸 Air 配 32GB 和 2TB 的总价,并用 markdown 链接给出该配置,链接目标必须与工具返回的 path 完全一致;所有价格来自工具;不把定制机当作目录中的现货机型"
+
 - id: tool_en_003
   category: tool_routing
   lang: en

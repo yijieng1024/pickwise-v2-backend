@@ -190,6 +190,14 @@ def test_pico_has_the_configurator_and_not_the_customizations_tool():
     assert "calculate_custom_apple_price" not in prompt and "not a catalog ranking" in prompt
 
 
+def test_pico_is_told_to_link_a_configuration_with_the_tools_path_and_never_its_own():
+    from ._adapters import agent_graph
+    prompt = " ".join(agent_graph._SYSTEM_PROMPT.split())
+    assert "get_configuration_options returns a path" in prompt
+    assert "markdown link with exactly that path" in prompt
+    assert "Never build, edit or guess a URL" in prompt and "returned no path, give no link" in prompt
+
+
 def test_a_build_to_order_row_points_at_its_family_s_standard_configs(monkeypatch):
     def none(session, laptop_id):
         raise svc.NotConfigurable

@@ -357,6 +357,38 @@ def _ungrounded_rm(
         if not any(abs(v - g) <= _RM_TOLERANCE for g in grounded)
     )
 
+# A link into PickWise itself: a markdown target that is a path, or a /laptops/... address
+# written out (with a host in front of it or not). Other http(s) links are not ours.
+_MD_TARGET = re.compile(r"\]\(\s*(/[^\s)]*)\s*\)")
+_LAPTOP_ADDRESS = re.compile(r"(?:https?://[^\s)\]>\"'`*]*)?/laptops/[^\s)\]>\"'`*]+")
+# A configuration's path as get_configuration_options returns it.
+_TOOL_CONFIG_PATH = re.compile(r"/laptops/[0-9a-f-]{36}\?[^\s\"'\\]+")
+
+
+def _site_links(text: str) -> list[str]:
+    """Every site-internal link the response gives, as written."""
+    found = [m.group(1) for m in _MD_TARGET.finditer(text)]
+    found += [m.group(0).rstrip(".,;:!?") for m in _LAPTOP_ADDRESS.finditer(text)]
+    return list(dict.fromkeys(link for link in found if not link.startswith("//")))
+
+
+def _ungrounded_links(response: str, tool_texts: list[str]) -> list[str]:
+    """Site-internal links the response gives that no tool returned, word for word.
+
+    Pico is told to link a configuration with exactly the path get_configuration_options
+    returned and never to build, edit or guess a URL. So a link is grounded only if the
+    whole of it, as written, appears in a tool output of this conversation: a changed
+    param, an invented path and a host put in front of a real path all fail. External
+    http(s) links (marketplace searches) are not this check's business.
+    """
+    return [link for link in _site_links(response) if not any(link in t for t in tool_texts)]
+
+
+def _tool_config_paths(tool_texts: list[str]) -> list[str]:
+    """Every configuration path the tools returned in this conversation."""
+    return list(dict.fromkeys(p for t in tool_texts for p in _TOOL_CONFIG_PATH.findall(t)))
+
+
 def rule_checks(
     expect: dict,
     category: str,
@@ -411,6 +443,25 @@ def rule_checks(
             "name": "rm_figures_grounded",
             "passed": not ungrounded,
             "detail": f"ungrounded={ungrounded}",
+        })
+
+    # Every category, tool output or not: a link into the site that no tool returned is
+    # a URL the model made up.
+    invented = _ungrounded_links(result["text"], tool_texts)
+    checks.append({
+        "name": "site_links_grounded",
+        "passed": not invented,
+        "detail": f"ungrounded={invented}",
+    })
+
+    # The case asks for a configuration: the answer must carry a path the tool returned.
+    if expect.get("configuration_link"):
+        paths = _tool_config_paths(tool_texts)
+        linked = [p for p in paths if p in result["text"]]
+        checks.append({
+            "name": "configuration_link_given",
+            "passed": bool(linked),
+            "detail": f"tool_paths={paths}, in_response={linked}",
         })
 
     return checks
