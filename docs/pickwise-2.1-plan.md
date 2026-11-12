@@ -1140,7 +1140,8 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 
 **3. Every new laptop from any scrape (scheduled, manual, Apple) is inserted `inactive`. The go-live check makes it active when it passes.**
 - Reason: today a new priced laptop is public before anything has checked it (see the survey). One rule for every scrape, so a manual run cannot go around the check
-- Not decided: when the go-live check runs after a manual scrape or an Apple run (inside the processing job, or only in the weekly run)
+- When the check runs (Jack, 2026-11-12): at the end of every processing job (manual, Apple or scheduled), and again in every weekly run
+  - Reason: a laptop from a manual or Apple run would otherwise wait up to a week for the weekly run, and Apple has no weekly run at all
 
 **4. Go-live conditions (all must pass). This replaces the earlier list.**
 - Price is over 0
@@ -1155,6 +1156,8 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 **5. Held-back laptops are re-checked every run and go live by themselves once they pass.**
 - Reason: a held-back laptop usually waits for something outside it (a guide price, a PassMark row, a benchmark map entry). When that arrives, nobody should have to remember the laptop
 - The summary email lists each held-back laptop with the condition that failed
+- The weekly re-check covers only laptops that the go-live check itself held back, recorded by a marker on the laptop (Jack, 2026-11-12). A laptop Jack set inactive by hand is never activated automatically
+  - Reason: an `inactive` laptop may be delisted for other reasons, and making it active again is the admin's call (decision of 2026-09, the same rule as "restoring a price does not re-activate"). Without a marker the re-check could not tell the two kinds of inactive laptop apart
 
 **6. ROG and HP pages with a SKU: lift the URL skip and re-scrape weekly. `www.asus.com` and TUF pages with no SKU: new URLs only for now.**
 - Reason: with a SKU, a re-scrape finds the same laptop row and updates it. Without one the processor goes by the LLM's wording of the slug, and a new wording makes a second row (6 of the 10 ASUS duplicate groups are TUF). So pages with no SKU keep the skip until they have a key
@@ -1186,9 +1189,10 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 - Reason: one admin and one run a week, so one email holds everything. 30% is the guide preview's `HISTORY_JUMP`, so the email and the preview flag the same changes
 - Supersedes "email + in-app" and "more than ~20%"
 
-**14. Sunday 03:00 Malaysia time (Saturday 19:00 UTC, cron `0 19 * * 6`). If a deploy or another job is active, the run is skipped and the summary email says so.**
-- Reason: the quietest hour of the week. A Render restart fails every active job, and two runs writing the same laptops would collide, so the run does not start beside either. A skipped run that said nothing would look like a week with no changes
-- Not decided: how the run tells that a deploy is in progress
+**14. Sunday 03:00 Malaysia time (Saturday 19:00 UTC, cron `0 19 * * 6`). If another scrape or processing job is active, the run is skipped and the summary email says so.**
+- Reason: the quietest hour of the week. Two runs writing the same laptops would collide, so the run does not start beside another scrape or processing job. A skipped run that said nothing would look like a week with no changes
+- The run does not detect deploys (Jack, 2026-11-12; supersedes "if a deploy ... is active")
+  - Reason: it writes to the database directly from Actions (decision 2), so a deploy does not touch it. The real problem was `reset_stale_jobs()` failing every active job on a Render start, the run's own job included. The marker for jobs that run outside Render (commit 2) solves that: `reset_stale_jobs()` leaves those jobs alone
 
 **Pipeline per run (replaces the list above)**
 1. Crawl, then scrape: new URLs for all three sites, and a re-scrape of ROG and HP pages with a SKU
@@ -1205,12 +1209,12 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 2. Job records: a "started by schedule" marker, a marker for jobs that run outside Render so `reset_stale_jobs` leaves them alone, and a lock against a second scrape or processing run
 3. Feed crawler as a job
 4. The processor records raw → `laptop_id` in the job result, the single-record route included (decided 2026-11-03)
-5. New laptops inserted `inactive`, and the go-live check as one function with tests, returning the condition that failed and reporting a null family (decisions 3, 4, 5)
+5. New laptops inserted `inactive`, and the go-live check as one function with tests, returning the condition that failed and reporting a null family. It runs at the end of every processing job, and sets the held-back marker the weekly re-check reads (decisions 3, 4, 5)
 6. Re-scrape for ROG and HP pages with a SKU: HP's SKU read first, then the skip lifted, the raw row replaced, and unchanged content kept from the processor (decisions 6, 7)
 7. ASUS website price: the investigation in decision 10 first, then the source `website`, the single-configuration rule, and the guide replacing it
 8. One pipeline script in the order above, run by hand first
 9. The summary email through Brevo, email only (decisions 8, 13)
-10. The weekly cron with the skip rule (decision 14), last
+10. The weekly cron, skipped only while another scrape or processing job is active (decision 14), last
 
 ### Price
 - Details page shows the official price + a "Last Checked" date. Price history only records changes, so a separate last-checked timestamp is needed; until scheduled scraping (step 9) is live it reflects the last manual scrape
