@@ -94,3 +94,63 @@ def test_a_finished_or_unrelated_job_does_not_block(start, session, route):
     _active(session, JobType.GENERATE_PICK_SCORES)
 
     assert start(route).status_code == 202
+
+
+# --- a dead job outside Render ----------------------------------------------------
+
+def _hours_ago(hours):
+    from datetime import datetime, timedelta, timezone
+
+    return datetime.now(timezone.utc) - timedelta(hours=hours)
+
+
+def test_an_outside_job_silent_for_7_hours_is_failed_and_stops_blocking(start, session):
+    dead = _active(session, JobType.BULK_SCRAPE, runs_outside_render=True, updated_at=_hours_ago(7))
+
+    assert start("process-pending").status_code == 202
+
+    session.expire_all()
+    job = session.get(BackgroundJob, dead.id)
+    assert job.status == JobStatus.FAILED
+    assert job.finished_at is not None and "6 hours" in job.error_message
+
+
+def test_an_outside_job_updated_an_hour_ago_still_blocks(start, session):
+    alive = _active(session, JobType.BULK_SCRAPE, runs_outside_render=True, updated_at=_hours_ago(1))
+
+    assert start("process-pending").status_code == 409
+
+    session.expire_all()
+    assert session.get(BackgroundJob, alive.id).status == JobStatus.PROCESSING
+
+
+def test_startup_cleanup_applies_the_same_6_hour_rule(admin_client, session):
+    dead = _active(session, JobType.BULK_SCRAPE, runs_outside_render=True, updated_at=_hours_ago(7))
+    alive = _active(session, JobType.BULK_SCRAPE, runs_outside_render=True, updated_at=_hours_ago(1))
+
+    reset_stale_jobs()
+
+    session.expire_all()
+    assert session.get(BackgroundJob, dead.id).status == JobStatus.FAILED
+    assert session.get(BackgroundJob, alive.id).status == JobStatus.PROCESSING
+
+
+def test_a_render_job_silent_for_7_hours_still_blocks(start, session):
+    """Jobs on Render keep today's behaviour: only a restart fails them."""
+    old = _active(session, JobType.BULK_SCRAPE, updated_at=_hours_ago(7))
+
+    assert start("process-pending").status_code == 409
+
+    session.expire_all()
+    assert session.get(BackgroundJob, old.id).status == JobStatus.PROCESSING
+
+
+def test_a_progress_write_stamps_updated_at(admin_client, session):
+    from app.common.job_service import JobProgress
+
+    job = _active(session, JobType.BULK_SCRAPE, runs_outside_render=True, updated_at=_hours_ago(7))
+
+    JobProgress(job.id).advance(item="one page")
+
+    session.expire_all()
+    assert session.get(BackgroundJob, job.id).updated_at > _hours_ago(1)

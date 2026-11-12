@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, String, Text, false
+from sqlalchemy import Boolean, Column, DateTime, String, Text, false, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -164,6 +164,12 @@ class BackgroundJob(SQLModel, table=True):
 
     created_at: datetime = Field(
         default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    # Stamped by every JobProgress write. A job that runs outside Render and
+    # has not been updated for OUTSIDE_JOB_DEAD_AFTER is taken as dead.
+    updated_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
     started_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)

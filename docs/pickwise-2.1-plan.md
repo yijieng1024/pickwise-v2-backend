@@ -1207,6 +1207,9 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 **Commit order**
 1. Block-test workflow (decision 1), on the `block-test` branch only
 2. Job records: a "started by schedule" marker, a marker for jobs that run outside Render so `reset_stale_jobs` leaves them alone, and a lock against a second scrape or processing run
+   - **A job outside Render with no update for 6 hours counts as dead (Jack, 2026-11-12)**: it is marked failed and no longer holds the lock. The rule is applied wherever a lock is checked and in `reset_stale_jobs()`, so both agree. Jobs on Render keep today's behaviour: a restart fails them
+   - Reason: nothing else fails a job that runs outside Render. A worker killed in Actions (timeout, cancelled run) would hold the scrape and processing lock for good, and every weekly run after it would skip
+   - "Updated" is `background_jobs.updated_at`, stamped by every progress write of the job. 6 hours is far above the longest step that writes no progress (a PassMark refresh, about 12 minutes)
 3. Feed crawler as a job
 4. The processor records raw → `laptop_id` in the job result, the single-record route included (decided 2026-11-03)
 5. New laptops inserted `inactive`, and the go-live check as one function with tests, returning the condition that failed and reporting a null family. It runs at the end of every processing job, and sets the held-back marker the weekly re-check reads (decisions 3, 4, 5)

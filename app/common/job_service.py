@@ -58,6 +58,12 @@ logger = get_logger(__name__)
 # multi-megabyte JSONB blob.
 _MAX_STORED_ERRORS = 50
 
+# A job that runs outside Render (GitHub Actions) is failed by nothing when its
+# worker is killed: no restart of this server touches it. Without this it would
+# hold its lock for good, and every weekly run after it would skip. The longest
+# single step with no progress write is a PassMark refresh, about 12 minutes.
+OUTSIDE_JOB_DEAD_AFTER = timedelta(hours=6)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -96,6 +102,7 @@ class JobProgress:
             # happening anyway.
             self._status = job.status
             mutate(job)
+            job.updated_at = _utcnow()
             session.add(job)
             session.commit()
 
@@ -229,6 +236,31 @@ def create_job(
     return job
 
 
+def fail_dead_outside_jobs(session: Session) -> int:
+    """Fail every active job that runs outside Render and has not been updated
+    for OUTSIDE_JOB_DEAD_AFTER. Called wherever a lock is checked and at
+    startup, so the two agree on which jobs are alive."""
+    dead = session.exec(
+        select(BackgroundJob).where(
+            BackgroundJob.runs_outside_render == True,  # noqa: E712
+            BackgroundJob.status.in_(list(JobStatus.ACTIVE)),  # type: ignore[attr-defined]
+            BackgroundJob.updated_at < _utcnow() - OUTSIDE_JOB_DEAD_AFTER,
+        )
+    ).all()
+    for job in dead:
+        job.status = JobStatus.FAILED
+        job.finished_at = _utcnow()
+        job.error_message = (
+            "No update for 6 hours. The worker outside Render is taken as dead "
+            "(killed or timed out); re-run it."
+        )
+        session.add(job)
+    if dead:
+        session.commit()
+        logger.warning("marked %d dead outside-Render job(s) as failed", len(dead))
+    return len(dead)
+
+
 def refuse_if_running(session: Session, job_types: tuple[str, ...], message: str) -> None:
     """409 with the active job's id when any of *job_types* is queued or running.
 
@@ -236,6 +268,7 @@ def refuse_if_running(session: Session, job_types: tuple[str, ...], message: str
     picking the same windows, two transcript fetchers sharing one proxy's
     rate limit), so the caller names the whole group.
     """
+    fail_dead_outside_jobs(session)
     running = session.exec(
         select(BackgroundJob)
         .where(BackgroundJob.job_type.in_(list(job_types)))  # type: ignore[attr-defined]
@@ -369,10 +402,12 @@ def reset_stale_jobs() -> int:
     forever and the UI would poll a job that no longer exists.
 
     A job marked `runs_outside_render` is left alone: its worker is in GitHub
-    Actions, and this server restarting did not stop it.
+    Actions, and this server restarting did not stop it. It is failed only by
+    the 6-hour rule, the same one the lock check applies.
     """
     try:
         with Session(engine) as session:
+            dead = fail_dead_outside_jobs(session)
             stale = session.exec(
                 select(BackgroundJob).where(
                     BackgroundJob.status.in_(  # type: ignore[attr-defined]
@@ -394,7 +429,7 @@ def reset_stale_jobs() -> int:
             if stale:
                 session.commit()
                 logger.warning("marked %d interrupted job(s) as failed on startup", len(stale))
-            return len(stale)
+            return len(stale) + dead
     except Exception:
         # Never block startup on bookkeeping (e.g. migrations not yet applied).
         logger.exception("could not reset stale jobs on startup")
