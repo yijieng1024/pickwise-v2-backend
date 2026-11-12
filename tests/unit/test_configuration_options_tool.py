@@ -97,37 +97,53 @@ def test_a_choice_another_chip_offers_names_that_chip_and_does_not_switch(pro):
 
 
 # --------------------------------------------------------------------------- the configuration's path
-# Plan step 10d+ ("The URL rule", 2026-11-12). The Pro 14 Liquid Retina M6 standard config
-# is 16GB / 1TB; its kit comes with the 70W adapter and the standard display.
+# Plan step 10d+ ("The URL rule"). The cases are shared with the frontend's buildConfigPath:
+# the same file is its src/lib/config-url.cases.json, and its test fails when the two differ.
+
+SHARED = json.loads((Path(__file__).parent / "fixtures" / "config_url_cases.json").read_text(encoding="utf-8"))
+
 
 def _path(c, selections):
     return _call(c, selections)["path"].replace(str(c.laptop.id), "{id}")
 
 
-def test_a_path_always_has_chip_memory_and_storage_even_when_they_are_the_standard_configs_own(pro):
+@pytest.mark.parametrize("case", SHARED["cases"], ids=lambda case: case["name"])
+def test_a_configurations_path_is_the_shared_cases(pro, case):
+    assert _path(pro(14, "liquid-retina"), case["picks"]) == case["path"]
+
+
+def test_the_shared_cases_options_are_this_laptops_own():
+    """The frontend builds its paths from `options`; it has to be what GET /options gives."""
+    c = _configurable(14, "liquid-retina")
+    options = SHARED["options"]
+    assert (options["standard_chip"], options["standard"], options["standard_price_rm"]) == (
+        c.chip, c.standard, c.standard_price_rm)
+    assert options["kits"] == json.loads(json.dumps(svc.kits_listing(c)))
+
+
+def test_picks_that_are_the_standard_configs_own_are_the_plain_path(pro):
     c = pro(14, "liquid-retina")
-    assert _path(c, {"memory": "16gb"}) == "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb"
-    assert _path(c, {"memory": "32gb", "storage": "4tb"}) == "/laptops/{id}?chip=m6-12-12&memory=32gb&storage=4tb"
+    assert _path(c, {"memory": "16gb"}) == "/laptops/{id}"
+    assert _path(c, {"chip": "m6-12-12", "storage": "1tb", "adapter": "70w", "display": "standard"}) == "/laptops/{id}"
+    # One pick away from the standard config: params, and all three base ones.
+    assert _path(c, {"storage": "2tb"}) == "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=2tb"
+    assert _path(c, {"adapter": "96w"}) == "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb&adapter=96w"
+    assert _path(c, {"chip": "m5pro-15-16"}) == "/laptops/{id}?chip=m5pro-15-16&memory=24gb&storage=1tb"
 
 
 def test_adapter_and_display_are_left_out_when_they_are_what_the_kit_comes_with(pro):
     c = pro(14, "liquid-retina")
-    assert _path(c, {"adapter": "70w", "display": "standard"}) == "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb"
     # The M5 Pro 18c/20g kit comes with 96W, so 96W on that chip is not a choice to write.
     assert _path(c, {"chip": "m5pro-18-20"}) == "/laptops/{id}?chip=m5pro-18-20&memory=24gb&storage=1tb"
     assert _path(c, {"chip": "m5pro-18-20", "adapter": "96w"}) == _path(c, {"chip": "m5pro-18-20"})
-
-
-def test_adapter_and_display_are_written_when_they_differ_from_the_kit(pro):
-    c = pro(14, "liquid-retina")
-    assert _path(c, {"adapter": "96w"}) == "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb&adapter=96w"
-    assert _path(c, {"display": "nano-texture glass"}) ==         "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb&display=nano_texture"
+    assert _path(c, {"memory": "32gb", "adapter": "70w", "display": "standard"}) == \
+        "/laptops/{id}?chip=m6-12-12&memory=32gb&storage=1tb"
 
 
 def test_the_param_order_is_fixed_whatever_order_the_selections_came_in(pro):
     c = pro(14, "liquid-retina")
     expected = "/laptops/{id}?chip=m6-12-12&memory=32gb&storage=1tb&adapter=96w&display=nano_texture"
-    assert _path(c, {"display": "nano_texture", "adapter": "96w", "memory": "32gb"}) == expected
+    assert _path(c, {"display": "nano-texture glass", "adapter": "96w", "memory": "32gb"}) == expected
     assert _path(c, {"memory": "32gb", "chip": "m6-12-12", "adapter": "96w", "display": "nano_texture"}) == expected
     assert "keyboard" not in expected
 

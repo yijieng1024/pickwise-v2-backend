@@ -39,6 +39,7 @@ from app.processor import apple_options
 from app.processor.apple_name import line_of_code
 
 GROUPS = ("memory", "storage", "adapter", "display", "keyboard")
+_URL_GROUPS = GROUPS[:4]   # what a configuration's URL can carry, in its fixed order after chip
 _CODE = re.compile(r"^apple-macbook-(air|pro)-(\d+)-")
 _SIZE = re.compile(r"(\d+)(gb|tb)")
 
@@ -204,14 +205,20 @@ def total_of(c: Configurable, chip: str, choices: dict[str, str]) -> float:
 def config_path(c: Configurable, chip: str, choices: dict[str, str]) -> str:
     """The details page's path for this configuration (plan step 10d+, 2026-11-12): the
     same names and values /configure takes, in one fixed order so a configuration has
-    one URL. chip, memory and storage are always written; adapter and display only when
-    they differ from what the chip's kit comes with. The keyboard is never written. The
-    frontend's buildConfigQuery follows the same rule and order."""
+    one URL. Picks that are the standard config's own are the plain path: it is the
+    laptop row's own chip, RAM and storage, so its meaning never changes. Otherwise
+    chip, memory and storage are always written; adapter and display only when they
+    differ from what the chip's kit comes with. The keyboard is never written. The
+    frontend's buildConfigPath follows the same rule and order, and both are held to
+    tests/unit/fixtures/config_url_cases.json."""
+    plain = f"/laptops/{c.laptop.id}"
+    if chip == c.chip and all(choices.get(g) == c.standard.get(g) for g in _URL_GROUPS):
+        return plain
     kit = c.kits[chip]
     params = [("chip", chip), ("memory", choices["memory"]), ("storage", choices["storage"])]
     params += [(g, choices[g]) for g in ("adapter", "display")
                if g in choices and choices[g] != _included(kit, g)]
-    return f"/laptops/{c.laptop.id}?{urlencode(params)}"
+    return f"{plain}?{urlencode(params)}"
 
 
 def chip_row(c: Configurable, chip: str) -> dict:

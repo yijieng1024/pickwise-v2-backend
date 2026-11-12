@@ -1,0 +1,663 @@
+{
+  "about": "The shared cases of the configuration URL (plan step 10d+, docs/pickwise-2.1-plan.md). The backend's config_path and the frontend's buildConfigPath must both give `path` for `picks`. The same file is in both repos: pickwise-v2-backend/tests/unit/fixtures/config_url_cases.json and pickwise-v2-frontend/src/lib/config-url.cases.json. Change both together.",
+  "laptop": "MacBook Pro 14 Liquid Retina, the M6 standard config (16GB, 1TB): the body of GET /laptops/{id}/options from the chip kits stored on 2026-11-04",
+  "options": {
+    "laptop_id": "{id}",
+    "standard_chip": "m6-12-12",
+    "standard": {
+      "memory": "16gb",
+      "storage": "1tb",
+      "adapter": "70w",
+      "display": "standard",
+      "keyboard": "none"
+    },
+    "standard_price_rm": 8299.0,
+    "kits": [
+      {
+        "chip": "m6-12-12",
+        "label": "12-core CPU, 12-core GPU",
+        "cpu_model": "Apple M6 (12-core)",
+        "gpu_model": "12-core GPU",
+        "kit_price_rm": 8299.0,
+        "chip_add_on_rm": 0.0,
+        "options": {
+          "keyboard": [
+            {
+              "value": "none",
+              "label": "US English",
+              "add_on_rm": null,
+              "is_included": true
+            },
+            {
+              "value": "chn",
+              "label": "Chinese (Pinyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "twn",
+              "label": "Chinese (Zhuyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "sau",
+              "label": "Arabic",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "gbr",
+              "label": "British English",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "jpn",
+              "label": "Japanese",
+              "add_on_rm": null,
+              "is_included": false
+            }
+          ],
+          "memory": [
+            {
+              "value": "16gb",
+              "label": "16GB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "24gb",
+              "label": "24GB",
+              "add_on_rm": 900.0,
+              "is_included": false
+            },
+            {
+              "value": "32gb",
+              "label": "32GB",
+              "add_on_rm": 1800.0,
+              "is_included": false
+            }
+          ],
+          "storage": [
+            {
+              "value": "1tb",
+              "label": "1TB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "2tb",
+              "label": "2TB",
+              "add_on_rm": 2250.0,
+              "is_included": false
+            },
+            {
+              "value": "4tb",
+              "label": "4TB",
+              "add_on_rm": 6750.0,
+              "is_included": false
+            }
+          ],
+          "display": [
+            {
+              "value": "standard",
+              "label": "Standard display",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "nano_texture",
+              "label": "Nano-texture display",
+              "add_on_rm": 675.0,
+              "is_included": false
+            }
+          ],
+          "adapter": [
+            {
+              "value": "70w",
+              "label": "70W",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "96w",
+              "label": "96W",
+              "add_on_rm": 80.0,
+              "is_included": false
+            }
+          ]
+        }
+      },
+      {
+        "chip": "m5pro-15-16",
+        "label": "15-core CPU, 16-core GPU",
+        "cpu_model": "Apple M5 Pro (15-core)",
+        "gpu_model": "16-core GPU",
+        "kit_price_rm": 10299.0,
+        "chip_add_on_rm": 2000.0,
+        "options": {
+          "keyboard": [
+            {
+              "value": "none",
+              "label": "US English",
+              "add_on_rm": null,
+              "is_included": true
+            },
+            {
+              "value": "chn",
+              "label": "Chinese (Pinyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "twn",
+              "label": "Chinese (Zhuyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "sau",
+              "label": "Arabic",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "gbr",
+              "label": "British English",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "jpn",
+              "label": "Japanese",
+              "add_on_rm": null,
+              "is_included": false
+            }
+          ],
+          "memory": [
+            {
+              "value": "24gb",
+              "label": "24GB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "48gb",
+              "label": "48GB",
+              "add_on_rm": 2700.0,
+              "is_included": false
+            }
+          ],
+          "storage": [
+            {
+              "value": "1tb",
+              "label": "1TB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "2tb",
+              "label": "2TB",
+              "add_on_rm": 2250.0,
+              "is_included": false
+            },
+            {
+              "value": "4tb",
+              "label": "4TB",
+              "add_on_rm": 6750.0,
+              "is_included": false
+            }
+          ],
+          "display": [
+            {
+              "value": "standard",
+              "label": "Standard display",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "nano_texture",
+              "label": "Nano-texture display",
+              "add_on_rm": 675.0,
+              "is_included": false
+            }
+          ],
+          "adapter": [
+            {
+              "value": "70w",
+              "label": "70W",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "96w",
+              "label": "96W",
+              "add_on_rm": 80.0,
+              "is_included": false
+            }
+          ]
+        }
+      },
+      {
+        "chip": "m5pro-18-20",
+        "label": "18-core CPU, 20-core GPU",
+        "cpu_model": "Apple M5 Pro (18-core)",
+        "gpu_model": "20-core GPU",
+        "kit_price_rm": 11249.0,
+        "chip_add_on_rm": 2950.0,
+        "options": {
+          "keyboard": [
+            {
+              "value": "none",
+              "label": "US English",
+              "add_on_rm": null,
+              "is_included": true
+            },
+            {
+              "value": "chn",
+              "label": "Chinese (Pinyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "twn",
+              "label": "Chinese (Zhuyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "sau",
+              "label": "Arabic",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "gbr",
+              "label": "British English",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "jpn",
+              "label": "Japanese",
+              "add_on_rm": null,
+              "is_included": false
+            }
+          ],
+          "memory": [
+            {
+              "value": "24gb",
+              "label": "24GB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "48gb",
+              "label": "48GB",
+              "add_on_rm": 2700.0,
+              "is_included": false
+            },
+            {
+              "value": "64gb",
+              "label": "64GB",
+              "add_on_rm": 4500.0,
+              "is_included": false
+            }
+          ],
+          "storage": [
+            {
+              "value": "1tb",
+              "label": "1TB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "2tb",
+              "label": "2TB",
+              "add_on_rm": 2250.0,
+              "is_included": false
+            },
+            {
+              "value": "4tb",
+              "label": "4TB",
+              "add_on_rm": 6750.0,
+              "is_included": false
+            }
+          ],
+          "display": [
+            {
+              "value": "standard",
+              "label": "Standard display",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "nano_texture",
+              "label": "Nano-texture display",
+              "add_on_rm": 675.0,
+              "is_included": false
+            }
+          ],
+          "adapter": [
+            {
+              "value": "96w",
+              "label": "96W",
+              "add_on_rm": 0.0,
+              "is_included": true
+            }
+          ]
+        }
+      },
+      {
+        "chip": "m5max-18-32",
+        "label": "18-core CPU, 32-core GPU",
+        "cpu_model": "Apple M5 Max (18-core)",
+        "gpu_model": "32-core GPU",
+        "kit_price_rm": 17599.0,
+        "chip_add_on_rm": 9300.0,
+        "options": {
+          "keyboard": [
+            {
+              "value": "none",
+              "label": "US English",
+              "add_on_rm": null,
+              "is_included": true
+            },
+            {
+              "value": "chn",
+              "label": "Chinese (Pinyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "twn",
+              "label": "Chinese (Zhuyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "sau",
+              "label": "Arabic",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "gbr",
+              "label": "British English",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "jpn",
+              "label": "Japanese",
+              "add_on_rm": null,
+              "is_included": false
+            }
+          ],
+          "memory": [
+            {
+              "value": "36gb",
+              "label": "36GB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            }
+          ],
+          "storage": [
+            {
+              "value": "2tb",
+              "label": "2TB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "4tb",
+              "label": "4TB",
+              "add_on_rm": 4500.0,
+              "is_included": false
+            },
+            {
+              "value": "8tb",
+              "label": "8TB",
+              "add_on_rm": 13500.0,
+              "is_included": false
+            }
+          ],
+          "display": [
+            {
+              "value": "standard",
+              "label": "Standard display",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "nano_texture",
+              "label": "Nano-texture display",
+              "add_on_rm": 675.0,
+              "is_included": false
+            }
+          ],
+          "adapter": [
+            {
+              "value": "96w",
+              "label": "96W",
+              "add_on_rm": 0.0,
+              "is_included": true
+            }
+          ]
+        }
+      },
+      {
+        "chip": "m5max-18-40",
+        "label": "18-core CPU, 40-core GPU",
+        "cpu_model": "Apple M5 Max (18-core)",
+        "gpu_model": "40-core GPU",
+        "kit_price_rm": 20299.0,
+        "chip_add_on_rm": 12000.0,
+        "options": {
+          "keyboard": [
+            {
+              "value": "none",
+              "label": "US English",
+              "add_on_rm": null,
+              "is_included": true
+            },
+            {
+              "value": "chn",
+              "label": "Chinese (Pinyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "twn",
+              "label": "Chinese (Zhuyin)",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "sau",
+              "label": "Arabic",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "gbr",
+              "label": "British English",
+              "add_on_rm": null,
+              "is_included": false
+            },
+            {
+              "value": "jpn",
+              "label": "Japanese",
+              "add_on_rm": null,
+              "is_included": false
+            }
+          ],
+          "memory": [
+            {
+              "value": "48gb",
+              "label": "48GB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "64gb",
+              "label": "64GB",
+              "add_on_rm": 1800.0,
+              "is_included": false
+            },
+            {
+              "value": "128gb",
+              "label": "128GB",
+              "add_on_rm": 9000.0,
+              "is_included": false
+            }
+          ],
+          "storage": [
+            {
+              "value": "2tb",
+              "label": "2TB",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "4tb",
+              "label": "4TB",
+              "add_on_rm": 4500.0,
+              "is_included": false
+            },
+            {
+              "value": "8tb",
+              "label": "8TB",
+              "add_on_rm": 13500.0,
+              "is_included": false
+            }
+          ],
+          "display": [
+            {
+              "value": "standard",
+              "label": "Standard display",
+              "add_on_rm": 0.0,
+              "is_included": true
+            },
+            {
+              "value": "nano_texture",
+              "label": "Nano-texture display",
+              "add_on_rm": 675.0,
+              "is_included": false
+            }
+          ],
+          "adapter": [
+            {
+              "value": "96w",
+              "label": "96W",
+              "add_on_rm": 0.0,
+              "is_included": true
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "the standard config's own picks: the plain path",
+      "path": "/laptops/{id}",
+      "picks": {
+        "chip": "m6-12-12",
+        "memory": "16gb",
+        "storage": "1tb",
+        "adapter": "70w",
+        "display": "standard"
+      }
+    },
+    {
+      "name": "memory and storage changed",
+      "path": "/laptops/{id}?chip=m6-12-12&memory=32gb&storage=4tb",
+      "picks": {
+        "chip": "m6-12-12",
+        "memory": "32gb",
+        "storage": "4tb",
+        "adapter": "70w",
+        "display": "standard"
+      }
+    },
+    {
+      "name": "only storage changed: chip, memory and storage are all written",
+      "path": "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=2tb",
+      "picks": {
+        "chip": "m6-12-12",
+        "memory": "16gb",
+        "storage": "2tb",
+        "adapter": "70w",
+        "display": "standard"
+      }
+    },
+    {
+      "name": "only the adapter changed",
+      "path": "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb&adapter=96w",
+      "picks": {
+        "chip": "m6-12-12",
+        "memory": "16gb",
+        "storage": "1tb",
+        "adapter": "96w",
+        "display": "standard"
+      }
+    },
+    {
+      "name": "only the display changed",
+      "path": "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb&display=nano_texture",
+      "picks": {
+        "chip": "m6-12-12",
+        "memory": "16gb",
+        "storage": "1tb",
+        "adapter": "70w",
+        "display": "nano_texture"
+      }
+    },
+    {
+      "name": "memory, adapter and display changed: the fixed order",
+      "path": "/laptops/{id}?chip=m6-12-12&memory=32gb&storage=1tb&adapter=96w&display=nano_texture",
+      "picks": {
+        "chip": "m6-12-12",
+        "memory": "32gb",
+        "storage": "1tb",
+        "adapter": "96w",
+        "display": "nano_texture"
+      }
+    },
+    {
+      "name": "another chip with the 96W its kit comes with: no adapter",
+      "path": "/laptops/{id}?chip=m5pro-18-20&memory=24gb&storage=1tb",
+      "picks": {
+        "chip": "m5pro-18-20",
+        "memory": "24gb",
+        "storage": "1tb",
+        "adapter": "96w",
+        "display": "standard"
+      }
+    },
+    {
+      "name": "another chip whose kit comes with 70W, with 96W: adapter written",
+      "path": "/laptops/{id}?chip=m5pro-15-16&memory=48gb&storage=2tb&adapter=96w",
+      "picks": {
+        "chip": "m5pro-15-16",
+        "memory": "48gb",
+        "storage": "2tb",
+        "adapter": "96w",
+        "display": "standard"
+      }
+    },
+    {
+      "name": "only the chip changed",
+      "path": "/laptops/{id}?chip=m5pro-15-16&memory=24gb&storage=1tb",
+      "picks": {
+        "chip": "m5pro-15-16",
+        "memory": "24gb",
+        "storage": "1tb",
+        "adapter": "70w",
+        "display": "standard"
+      }
+    }
+  ]
+}
