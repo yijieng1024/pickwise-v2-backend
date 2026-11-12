@@ -25,6 +25,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, List, Optional
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import or_
@@ -370,6 +371,40 @@ def _finalise(report: BulkScrapeReport, run_ts: datetime) -> BulkScrapeReport:
         print(f"✅ Scrape completed successfully. {report.succeeded} URL(s) scraped.")
 
     return report
+
+
+async def run_feed_crawl(brand_id: UUID, session: Session) -> dict:
+    """
+    Crawl one brand's site from its own `base_scrape_url` and queue every URL
+    not yet in laptop_scrape_urls. Returns the counts, in total and per site
+    (one ASUS crawl covers www.asus.com and rog.asus.com).
+    """
+    brand: Optional[LaptopBrand] = session.get(LaptopBrand, brand_id)
+    if brand is None:
+        raise ValueError(f"Brand with id={brand_id} not found.")
+    brand_name, start_url = brand.name, (brand.base_scrape_url or "").strip()
+    scrapers = SCRAPERS.get(brand_name.lower())
+    if scrapers is None:
+        raise ValueError(f"Crawling is not supported for brand: {brand_name}")
+    # Release the pooled connection before the crawl: a brand-wide crawl walks
+    # every listing page, and the read above left a transaction open.
+    session.commit()
+
+    crawl, _ = scrapers
+    found_urls = await crawl(start_url, session, brand_id)
+
+    sites: dict[str, dict[str, int]] = {}
+    added = 0
+    for url in found_urls:
+        site = sites.setdefault(urlsplit(url).netloc, {"pages_found": 0, "targets_added": 0})
+        site["pages_found"] += 1
+        if not session.exec(select(ScrapeTarget).where(ScrapeTarget.url == url)).first():
+            session.add(ScrapeTarget(url=url, brand_id=brand_id))
+            site["targets_added"] += 1
+            added += 1
+    session.commit()
+
+    return {"brand": brand_name, "total_found": len(found_urls), "added_to_queue": added, "sites": sites}
 
 
 # ---------------------------------------------------------------------------

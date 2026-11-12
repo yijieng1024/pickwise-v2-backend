@@ -14,6 +14,13 @@ from app.scraper.models import ScrapeTarget
 
 API = "/api/v2"
 
+# What the stand-in crawler finds: two sites, as one ASUS crawl does.
+CRAWLED = (
+    "https://www.asus.com/my/laptops/a/",
+    "https://www.asus.com/my/laptops/b/",
+    "https://rog.asus.com/my/laptops/c/",
+)
+
 
 def _active(session, job_type, **fields) -> BackgroundJob:
     job = BackgroundJob(job_type=job_type, status=JobStatus.PROCESSING, **fields)
@@ -53,12 +60,23 @@ def test_startup_cleanup_leaves_a_job_running_outside_render(admin_client, sessi
 # --- one lock for scraping and processing ----------------------------------------
 
 @pytest.fixture
-def start(admin_client, session, brand):
-    """Each route that starts a scrape or processing job, by name."""
+def start(admin_client, session, brand, monkeypatch):
+    """Each route that starts a scrape or processing job, by name. The brand's
+    crawler and scraper are stand-ins, so no test here reaches a real site."""
+    from app.scraper import bulk_scraper
+
+    async def crawl(start_url, session, brand_id):
+        return list(CRAWLED)
+
+    async def scrape(url, brand_id, session):
+        return []
+
+    monkeypatch.setitem(bulk_scraper.SCRAPERS, brand.name.lower(), (crawl, scrape))
     target = ScrapeTarget(url="https://example.test/laptop", brand_id=brand.id)
     session.add(target)
     session.commit()
     calls = {
+        "feed-crawler": lambda: admin_client.post(f"{API}/scraper/feed-crawler", json={"brand_id": str(brand.id)}),
         "bulk-scrape": lambda: admin_client.post(f"{API}/scraper/bulk-scrape", json={"brand_id": str(brand.id)}),
         "scrape-targets": lambda: admin_client.post(
             f"{API}/scraper/scrape-targets", json={"target_ids": [str(target.id)]}
@@ -69,7 +87,9 @@ def start(admin_client, session, brand):
     return lambda route: calls[route]()
 
 
-@pytest.mark.parametrize("route", ["bulk-scrape", "scrape-targets", "process-pending", "retry-failed"])
+@pytest.mark.parametrize(
+    "route", ["feed-crawler", "bulk-scrape", "scrape-targets", "process-pending", "retry-failed"]
+)
 @pytest.mark.parametrize("running", JobType.SCRAPE_AND_PROCESS)
 def test_scrape_and_process_refuse_a_second_start(start, session, route, running):
     job = _active(session, running)
@@ -80,6 +100,7 @@ def test_scrape_and_process_refuse_a_second_start(start, session, route, running
     assert res.json()["detail"]["code"] == "job_running"
     assert res.json()["detail"]["job_id"] == str(job.id)
     assert len(session.exec(select(BackgroundJob)).all()) == 1  # refused before a job row exists
+    assert len(session.exec(select(ScrapeTarget)).all()) == 1  # and before a crawl added any target
 
 
 def test_a_job_outside_render_holds_the_lock_too(start, session):
@@ -87,7 +108,7 @@ def test_a_job_outside_render_holds_the_lock_too(start, session):
     assert start("process-pending").status_code == 409
 
 
-@pytest.mark.parametrize("route", ["bulk-scrape", "process-pending", "retry-failed"])
+@pytest.mark.parametrize("route", ["feed-crawler", "bulk-scrape", "process-pending", "retry-failed"])
 def test_a_finished_or_unrelated_job_does_not_block(start, session, route):
     session.add(BackgroundJob(job_type=JobType.PROCESS_PENDING, status=JobStatus.FAILED))
     session.commit()
@@ -154,3 +175,41 @@ def test_a_progress_write_stamps_updated_at(admin_client, session):
 
     session.expire_all()
     assert session.get(BackgroundJob, job.id).updated_at > _hours_ago(1)
+
+
+# --- the feed crawler as a job ------------------------------------------------------
+
+def test_a_crawl_is_a_job_whose_result_counts_pages_and_new_targets_per_site(start, admin_client, admin_user, session, brand):
+    session.add(ScrapeTarget(url=CRAWLED[0], brand_id=brand.id))  # already queued
+    session.commit()
+
+    res = start("feed-crawler")
+
+    assert res.status_code == 202
+    assert res.json()["job_type"] == JobType.FEED_CRAWLER
+    job = admin_client.get(f"{API}/jobs/{res.json()['job_id']}").json()
+    assert job["status"] == JobStatus.COMPLETED
+    assert (job["started_by"], job["runs_outside_render"]) == ("admin", False)
+    assert job["created_by"] == str(admin_user.id)
+    assert (job["processed_count"], job["failed_count"]) == (1, 0)
+    assert job["result"] == {
+        "brand": brand.name,
+        "total_found": 3,
+        "added_to_queue": 2,
+        "sites": {
+            "www.asus.com": {"pages_found": 2, "targets_added": 1},
+            "rog.asus.com": {"pages_found": 1, "targets_added": 1},
+        },
+    }
+    queued = set(session.exec(select(ScrapeTarget.url).where(ScrapeTarget.brand_id == brand.id)).all())
+    assert set(CRAWLED) <= queued
+
+
+def test_a_crawl_that_finds_nothing_is_a_failed_item(start, admin_client, monkeypatch):
+    monkeypatch.setattr("tests.integration.test_job_records.CRAWLED", ())
+
+    job = admin_client.get(f"{API}/jobs/{start('feed-crawler').json()['job_id']}").json()
+
+    assert job["status"] == JobStatus.COMPLETED
+    assert job["failed_count"] == 1 and job["errors"][0]["error"] == "No URLs found."
+    assert job["result"]["total_found"] == 0

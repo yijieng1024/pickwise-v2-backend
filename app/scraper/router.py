@@ -43,7 +43,14 @@ from app.common.job_model import JobAccepted, JobType
 from app.scraper.apple_options_fetch import apple_brand_ids
 from app.common.job_service import JobProgress, create_job, job_accepted, refuse_if_running, run_job
 from app.users.models import User
-from .bulk_scraper import SCRAPERS, _success_status, run_bulk_scrape, run_scrape_for_targets, stored_rows_of
+from .bulk_scraper import (
+    SCRAPERS,
+    _success_status,
+    run_bulk_scrape,
+    run_feed_crawl,
+    run_scrape_for_targets,
+    stored_rows_of,
+)
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -79,16 +86,28 @@ class TargetScrapeRequest(BaseModel):
     target_ids: List[UUID] = Field(..., min_length=1)
 
 
-@router.post("/feed-crawler", dependencies=[Depends(get_current_admin)])
+@router.post(
+    "/feed-crawler",
+    response_model=JobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def feed_crawler_queue(
-    request: CrawlerQueueRequest, session: Session = Depends(get_session)
-) -> dict:
+    request: CrawlerQueueRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_admin: User = Depends(get_current_admin),
+) -> JobAccepted:
     """
     Crawl a brand's official website and queue every laptop it finds.
 
     The URL crawled is the brand's own `base_scrape_url` from `laptop_brands` —
     it is not accepted from the client, so a brand can never be crawled against
     another brand's site.
+
+    **Returns 202 immediately.** Poll `GET /api/v2/jobs/{job_id}`; the finished
+    job's `result` holds `total_found`, `added_to_queue` and the same two
+    counts per site (`sites`). It shares the scrape and processing lock, since
+    it adds the targets a bulk scrape reads.
     """
     # Verify the brand_id exists
     brand = session.get(LaptopBrand, request.brand_id)
@@ -105,44 +124,30 @@ async def feed_crawler_queue(
             ),
         )
 
-    # Same as scrape_url below: release the pooled connection before the crawl.
-    # `Depends(get_current_admin)` already opened a transaction on this shared
-    # session, and a brand-wide crawl walks every listing page -- holding a
-    # connection idle-in-transaction for the whole of it.
-    brand_name = brand.name
-    session.commit()
-
-    # 1. Route based on Brand
-    scrapers = SCRAPERS.get(brand_name.lower())
-    if scrapers is None:
+    brand_name, brand_id = brand.name, brand.id
+    if brand_name.lower() not in SCRAPERS:
         raise HTTPException(
             status_code=400, detail=f"Currently, {brand_name} brand crawling is not supported."
         )
-    crawl, _ = scrapers
-    found_urls = await crawl(start_url, session, brand.id)
+    refuse_if_running(session, JobType.SCRAPE_AND_PROCESS, "A scrape or processing job is already running.")
 
-    if not found_urls:
-        return {"message": "No URLs found to add to the queue.", "added_count": 0}
+    job = create_job(
+        session,
+        job_type=JobType.FEED_CRAWLER,
+        total_count=1,  # one crawl; the URL counts are in the result
+        params={"brand_id": str(brand_id), "brand_name": brand_name},
+        created_by=current_admin.id,
+    )
 
-    # 2. Add found URLs to the laptop_scrape_urls table (ScrapeTarget)
-    added_count = 0
-    for url in found_urls:
-        existing = session.exec(
-            select(ScrapeTarget).where(ScrapeTarget.url == url)
-        ).first()
+    async def worker(work_session: Session, progress: JobProgress) -> dict:
+        result = await run_feed_crawl(brand_id, work_session)
+        found = result["total_found"]
+        progress.advance(succeeded=found > 0, item=brand_name, error=None if found else "No URLs found.")
+        return result
 
-        if not existing:
-            new_target = ScrapeTarget(url=url, brand_id=brand.id)
-            session.add(new_target)
-            added_count += 1
+    background_tasks.add_task(run_job, job.id, worker)
 
-    session.commit()
-
-    return {
-        "message": f"Successfully processed {brand_name} crawler queue.",
-        "total_found": len(found_urls),
-        "added_to_queue": added_count,
-    }
+    return job_accepted(job, message=f"Crawling {brand_name} in the background.")
 
 
 @router.post("/scrape-url", dependencies=[Depends(get_current_admin)])

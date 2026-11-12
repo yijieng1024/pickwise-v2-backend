@@ -42,7 +42,8 @@ def test_a_brand_missing_from_scrapers_gets_400_from_the_crawl_route(monkeypatch
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(scraper_router.feed_crawler_queue(
-            scraper_router.CrawlerQueueRequest(brand_id=brand.id), _Session(brand),
+            scraper_router.CrawlerQueueRequest(brand_id=brand.id),
+            background_tasks=None, session=_Session(brand), current_admin=None,
         ))
 
     assert exc.value.status_code == 400

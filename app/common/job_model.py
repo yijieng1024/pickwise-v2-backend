@@ -72,6 +72,7 @@ class JobType:
     CATEGORIZE_UNTAGGED = "processor.categorize_untagged"
     BULK_SCRAPE = "scraper.bulk_scrape"
     SCRAPE_TARGETS = "scraper.scrape_targets"
+    FEED_CRAWLER = "scraper.feed_crawler"
     GENERATE_EMBEDDINGS = "embeddings.generate_all"
     GENERATE_PICK_SCORES = "pickscore.generate_all"
     REVIEW_INGEST_BULK = "reviews.ingest_bulk"
@@ -89,6 +90,7 @@ class JobType:
         CATEGORIZE_UNTAGGED,
         BULK_SCRAPE,
         SCRAPE_TARGETS,
+        FEED_CRAWLER,
         GENERATE_EMBEDDINGS,
         GENERATE_PICK_SCORES,
         REVIEW_INGEST_BULK,
@@ -103,8 +105,9 @@ class JobType:
     )
 
     # One lock for scraping and processing: a scrape replaces the raw rows that
-    # processing reads, and two runs of either would write the same rows.
-    SCRAPE_AND_PROCESS = (BULK_SCRAPE, SCRAPE_TARGETS, PROCESS_PENDING)
+    # processing reads, and two runs of either would write the same rows. The
+    # feed crawler is in it because it adds the targets a bulk scrape reads.
+    SCRAPE_AND_PROCESS = (BULK_SCRAPE, SCRAPE_TARGETS, FEED_CRAWLER, PROCESS_PENDING)
 
     # One lock for both lists: each run holds a connection for about 12 minutes.
     PASSMARK = (PASSMARK_CPU, PASSMARK_GPU)
