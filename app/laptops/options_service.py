@@ -25,6 +25,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 from sqlmodel import Session, select
 
@@ -198,6 +199,19 @@ def total_of(c: Configurable, chip: str, choices: dict[str, str]) -> float:
     """The chip kit's price plus the chosen options' add-ons on that kit."""
     kit = c.kits[chip]
     return round(kit.price_rm + sum(kit.add_on(g, v) for g, v in choices.items()), 2)
+
+
+def config_path(c: Configurable, chip: str, choices: dict[str, str]) -> str:
+    """The details page's path for this configuration (plan step 10d+, 2026-11-12): the
+    same names and values /configure takes, in one fixed order so a configuration has
+    one URL. chip, memory and storage are always written; adapter and display only when
+    they differ from what the chip's kit comes with. The keyboard is never written. The
+    frontend's buildConfigQuery follows the same rule and order."""
+    kit = c.kits[chip]
+    params = [("chip", chip), ("memory", choices["memory"]), ("storage", choices["storage"])]
+    params += [(g, choices[g]) for g in ("adapter", "display")
+               if g in choices and choices[g] != _included(kit, g)]
+    return f"/laptops/{c.laptop.id}?{urlencode(params)}"
 
 
 def chip_row(c: Configurable, chip: str) -> dict:

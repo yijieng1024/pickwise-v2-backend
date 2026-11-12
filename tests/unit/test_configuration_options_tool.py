@@ -96,6 +96,64 @@ def test_a_choice_another_chip_offers_names_that_chip_and_does_not_switch(pro):
     assert offered_total == 22999.0 + problem["offered_by"][0]["add_on_rm"]
 
 
+# --------------------------------------------------------------------------- the configuration's path
+# Plan step 10d+ ("The URL rule", 2026-11-12). The Pro 14 Liquid Retina M6 standard config
+# is 16GB / 1TB; its kit comes with the 70W adapter and the standard display.
+
+def _path(c, selections):
+    return _call(c, selections)["path"].replace(str(c.laptop.id), "{id}")
+
+
+def test_a_path_always_has_chip_memory_and_storage_even_when_they_are_the_standard_configs_own(pro):
+    c = pro(14, "liquid-retina")
+    assert _path(c, {"memory": "16gb"}) == "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb"
+    assert _path(c, {"memory": "32gb", "storage": "4tb"}) == "/laptops/{id}?chip=m6-12-12&memory=32gb&storage=4tb"
+
+
+def test_adapter_and_display_are_left_out_when_they_are_what_the_kit_comes_with(pro):
+    c = pro(14, "liquid-retina")
+    assert _path(c, {"adapter": "70w", "display": "standard"}) == "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb"
+    # The M5 Pro 18c/20g kit comes with 96W, so 96W on that chip is not a choice to write.
+    assert _path(c, {"chip": "m5pro-18-20"}) == "/laptops/{id}?chip=m5pro-18-20&memory=24gb&storage=1tb"
+    assert _path(c, {"chip": "m5pro-18-20", "adapter": "96w"}) == _path(c, {"chip": "m5pro-18-20"})
+
+
+def test_adapter_and_display_are_written_when_they_differ_from_the_kit(pro):
+    c = pro(14, "liquid-retina")
+    assert _path(c, {"adapter": "96w"}) == "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb&adapter=96w"
+    assert _path(c, {"display": "nano-texture glass"}) ==         "/laptops/{id}?chip=m6-12-12&memory=16gb&storage=1tb&display=nano_texture"
+
+
+def test_the_param_order_is_fixed_whatever_order_the_selections_came_in(pro):
+    c = pro(14, "liquid-retina")
+    expected = "/laptops/{id}?chip=m6-12-12&memory=32gb&storage=1tb&adapter=96w&display=nano_texture"
+    assert _path(c, {"display": "nano_texture", "adapter": "96w", "memory": "32gb"}) == expected
+    assert _path(c, {"memory": "32gb", "chip": "m6-12-12", "adapter": "96w", "display": "nano_texture"}) == expected
+    assert "keyboard" not in expected
+
+
+def test_a_paths_params_are_configure_s_own_and_give_the_same_total(pro):
+    from urllib.parse import parse_qsl, urlsplit
+
+    c = pro(14, "liquid-retina")
+    out = _call(c, {"chip": "m5pro-15-16", "memory": "48gb", "storage": "2tb", "adapter": "96w"})
+    params = dict(parse_qsl(urlsplit(out["path"]).query))
+    assert list(params) == ["chip", "memory", "storage", "adapter"]
+    assert _call(c, params)["total_rm"] == out["total_rm"] == 15249.0 + 80.0
+
+
+def test_only_a_configuration_has_a_path(pro, monkeypatch):
+    c = pro(16, "proled")
+    assert "path" not in _call(c), "the listing is not a configuration"
+    assert "path" not in _call(c, {"memory": "36gb"}), "a choice the chip does not allow"
+
+    def none(session, laptop_id):
+        raise svc.NotConfigurable
+    monkeypatch.setattr(svc, "configurable", none)
+    monkeypatch.setattr(tool_mod, "_configurable_siblings", lambda session, laptop_id: [])
+    assert "path" not in tool_mod.configuration_options(None, str(uuid.uuid4())), "a laptop with no options"
+
+
 def test_a_laptop_without_options_says_so(monkeypatch):
     def none(session, laptop_id):
         raise svc.NotConfigurable

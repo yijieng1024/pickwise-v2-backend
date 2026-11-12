@@ -87,7 +87,10 @@ def _configured(c: svc.Configurable, result: dict) -> dict:
            "standard_price_rm": result["standard_price_rm"], "chip_add_on_rm": result["chip_add_on_rm"],
            "add_ons": {a["group"]: {"value": a["value"], "add_on_rm": a["add_on_rm"]}
                        for a in result["add_ons"] if a["group"] in _LISTED},
-           "total_rm": result["total_rm"]}
+           "total_rm": result["total_rm"],
+           # The details page on this configuration, built by code. Pico is not told to
+           # link it yet (plan step 10d+, commit 7).
+           "path": svc.config_path(c, result["chip"], {a["group"]: a["value"] for a in result["add_ons"]})}
     if result["scores"] is None:
         out["pick_score"] = None
         out["pick_score_unavailable"] = result["score_unavailable_reason"]
