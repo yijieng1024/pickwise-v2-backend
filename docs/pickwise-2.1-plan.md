@@ -76,10 +76,10 @@ Different user groups (students, people who don't understand specs, people decid
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
 | Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs. **Apple is the exception (Jack, 2026-11-12, supersedes the 2026-10-21 "all scrapers weekly" decision for Apple only): its scrapers are manual only**, see "Apple scrapers are manual only" in section 4 |
 | Writing scraped data | Processed results are written straight into the catalog (no approval queue) |
-| New laptops | Go live automatically, but only if they pass every go-live condition (see section 4); otherwise they stay inactive |
+| New laptops | Inserted inactive by every scrape (scheduled, manual, Apple). The go-live check makes them active when they pass every go-live condition, and re-checks the held-back ones every run (Jack, 2026-11-12; see "Step 11 decisions" in section 4) |
 | After each scheduled run | Embeddings for new laptops and PickScore `generate-all` re-run automatically |
-| Notifications | Build a PickWise notification feature: email (Brevo) + in-app notifications. Sent to Jack (admin) only for now; the schema should allow user notifications later |
-| Large price changes | Still written straight to the catalog, but trigger a notification (e.g. a change of more than 20%) |
+| Notifications | One summary email (Brevo) per scheduled run, sent to Jack (admin) only. No in-app bell for now (Jack, 2026-11-12, supersedes "email + in-app"); see "Step 11 decisions" in section 4 |
+| Large price changes | Still written straight to the catalog, but flagged in the run's summary email when the change is 30% or more (Jack, 2026-11-12; was "more than 20%") |
 | Date shown with the price | "Last Checked": the last time the scraper confirmed the price, even if it didn't change |
 | Access to Pico | Open. No login or Needs Wizard required. Not logged in → temporary chat; logged in without the wizard → Pico suggests completing it for better results |
 | Temporary chats | Claimed automatically into the user's history when they register **or** log in from the same browser. Unclaimed ones are deleted after 3 days |
@@ -664,7 +664,7 @@ Survey 2026-10-25 (read-only, from code): 22 pages in 8 sidebar groups, under `s
   - Reviews: Review pipeline, Sources, Link reviews (Match queue merged into Link reviews, the family-first ADR-0012 design). Match queue moves whole into an "All reviews" tab on Link reviews, keeping its laptop-first "Match to laptop…" dialog for now (unifying it needs backend work; clean up later). Rematch pending moves to Review pipeline beside Run ingest. The old /admin/reviews/raw URL is removed with no redirect (Jack, 2026-10-25)
   - Users: Users, Questionnaire
   - Pico & System: Chatbot monitoring, LLM settings, Token usage
-- Notifications: a bell in the admin topbar next to the avatar, opening a panel like YouTube's (unread dot, "Important" section then "More notifications", time ago, a settings gear). Not in the sidebar. Built with the notifications feature in step 11
+- Notifications: a bell in the admin topbar next to the avatar, opening a panel like YouTube's (unread dot, "Important" section then "More notifications", time ago, a settings gear). Not in the sidebar. Built with the notifications feature in step 11 (superseded 2026-11-12: no in-app bell for now, step 11 sends one summary email per run)
 - Dashboard: redesign completely
 - Move features to where they belong; remove duplicates (two ways to link a review, processor model in two places); fix stale copy; confirmations for actions that change the live site or cost quota; one type scale instead of ~220 arbitrary pixel sizes
 - Principle: each page starts from the question it answers, then shows what that needs
@@ -1081,7 +1081,7 @@ Plan only: nothing here is built. The goal: the configuration chosen on a laptop
 5. Update "Last Checked" for every laptop whose price the run confirmed, changed or not
 6. Send notifications
 
-**Go-live conditions for a new laptop** (all must pass)
+**Go-live conditions for a new laptop** (all must pass) *(superseded 2026-11-12 by decision 4 in "Step 11 decisions" below; kept for the record)*
 - Has a price (already enforced: an active laptop with no price is forced to inactive)
 - CPU and GPU both resolve to a benchmark, so PickScore is not withheld
 - Core specs present: RAM, storage, screen size, weight
@@ -1092,7 +1092,7 @@ Plan only: nothing here is built. The goal: the configuration chosen on a laptop
 
 A laptop that fails stays inactive, and the notification says which condition failed.
 
-*ASUS website price (decided, Jack, 2026-11-03; not built)*: the ASUS website price is allowed only when the product page has a single configuration **and** no stored guide has that laptop. The price source is recorded as `website`
+*ASUS website price (decided, Jack, 2026-11-03; not built; extended 2026-11-12 by decision 10 in "Step 11 decisions" below)*: the ASUS website price is allowed only when the product page has a single configuration **and** no stored guide has that laptop. The price source is recorded as `website`
 - Multi-configuration pages keep the guide-only rule: the website shows a starting price, not the price of any one configuration
 - When a guide later covers the laptop, the normal guide rules apply
 - Example: ASUS Gaming V16 (V3607) is a single-configuration page, so its website price is used; ProArt P14/P16 RTX Spark are multi-configuration pages, so they wait for a guide
@@ -1112,10 +1112,105 @@ A laptop that fails stays inactive, and the notification says which condition fa
 - Failed jobs feed the notifications below
 - PickScore `generate-all` moved to a background job early (2026-10-25), before step 6 and 6b deploy, so Jack can follow the run in /admin/jobs
 
-**Notifications (new feature)**
+**Notifications (new feature)** *(2026-11-12, decision 13 below: one summary email per run, no in-app bell for now, and the price threshold is 30%, not ~20%. The event list still says what the email reports)*
 - Email through Brevo (already set up for auth emails) + in-app notifications in the admin
 - Recipient: Jack (admin) only for now. Design the table so user notifications can be added later without a rewrite
 - Events: scheduled run failed; a site returned no data (likely a redesign or block); a price changed by more than ~20%; new laptops that went live; new laptops held back and why; laptops added without a price (not in any guide), listing each one so Jack can fill them in; run summary; a configured LLM returned 404 (model retired or renamed by Google; a 404 does not trigger fallback, so that feature stays broken until the setting is changed); processor result lists `model_codes_replaced`, `identity_conflicts`, `split_failures`, `field_parse_failures`, `matched_suspended`, `not_on_buy_page`, `relisted`, `options_failed`, `chip_not_offered` when not empty
+
+### Step 11 decisions (Jack, 2026-11-12)
+
+Decided after a read-only survey of the code the same day. Where a decision differs from the text above, this section wins. Scope: ASUS, ROG and HP. Apple is manual only and Acer stays on HTML upload.
+
+*What the survey found (the reasons below refer to these)*
+- Every step is a separate admin click today: crawl, scrape, process, guide apply, embeddings, Pick Score. Only two links are automatic: a PassMark refresh queues Pick Score, and an Apple scrape runs its options step
+- A scheduled run of today's code would update no existing price: `_process_target` skips every non-Apple URL that already has a raw row, and a bulk scrape picks only targets never scraped or failed
+- A new laptop is inserted with the model's default status, `active`. With a page price (ROG, HP) it is public as soon as it is processed, with no embedding, no Pick Score rows and possibly no family. Only a price of 0 demotes it (the mapper event)
+- All three scrapers use plain HTTP (`Fetcher`). `StealthyFetcher` is installed and called by nothing
+- No notification code exists: three Brevo senders, all for auth; no table, no route, no bell
+- `reset_stale_jobs()` fails every active job on each Render start, so a deploy during an Actions run would mark that run's job failed while it is still running. Bulk scrape and processing have no lock against a second run. The feed crawler leaves no job record, and nothing marks a job as started by the schedule
+- Only ROG raw rows carry `specs["SKU"]`, which is what the processor's SKU-first lookup reads. HP pages hold the part number as `Product Info / Sku`, and `raw_sku` does not read it, so HP rows are matched by slug today
+
+**1. Block test now, one page per site (www.asus.com, rog.asus.com, HP).** A site that blocks GitHub stays manual like Acer; what to do about it is decided then.
+- Reason: nothing else in step 11 is worth building for a site GitHub cannot read. A block is on the IP range, not on a page, so one page shows it. The fix for a blocked site depends on what the block is, so it is not decided ahead
+- How: a workflow that runs on a push to the branch `block-test` (a `workflow_dispatch` workflow must be on `main` before it can be started). No secrets, no database, no writes. It runs `python -m app.scripts.block_test`, which calls the scrapers' own fetch and parse code and prints the status code, the response size and whether the laptop data was in the page
+
+**2. The Actions run writes to the database directly, like `price-guide.yml`, with the same production check. No service account.**
+- Reason: that path exists and is tested (`app/common/db_target.py`). Going through the API would need an admin credential stored as a secret, which does not exist, and the work would run on Render, where the free tier kills running work on every deploy and when the service sleeps
+- The same rules as the guide workflow apply: never a `pull_request` trigger, and each step sees only the secret it needs
+
+**3. Every new laptop from any scrape (scheduled, manual, Apple) is inserted `inactive`. The go-live check makes it active when it passes.**
+- Reason: today a new priced laptop is public before anything has checked it (see the survey). One rule for every scrape, so a manual run cannot go around the check
+- Not decided: when the go-live check runs after a manual scrape or an Apple run (inside the processing job, or only in the weekly run)
+
+**4. Go-live conditions (all must pass). This replaces the earlier list.**
+- Price is over 0
+- CPU, GPU, RAM, storage, screen size and weight are present
+- No other laptop has the same `model_code`, in any status
+- Both the CPU and the GPU resolve to a benchmark
+- A null `family_id` does not block. It is reported
+- Reason: each condition is something that makes a public page or a score wrong. A missing spec gives a wrong factor, and an unresolved benchmark gives a made-up neutral 50. This is stricter than the withheld rule, which needs both to be unresolved. A null family is a safe state (dedup lets it through untouched), so it is reported for Jack to group and does not hold the laptop back
+- Dropped from the earlier list: battery capacity not 0, family assigned, embedding generated (the run builds the embedding, decision 11)
+- Note: the processor already looks a laptop up by `model_code` before it inserts, so the `model_code` condition is a second check, not the main guard against duplicates
+
+**5. Held-back laptops are re-checked every run and go live by themselves once they pass.**
+- Reason: a held-back laptop usually waits for something outside it (a guide price, a PassMark row, a benchmark map entry). When that arrives, nobody should have to remember the laptop
+- The summary email lists each held-back laptop with the condition that failed
+
+**6. ROG and HP pages with a SKU: lift the URL skip and re-scrape weekly. `www.asus.com` and TUF pages with no SKU: new URLs only for now.**
+- Reason: with a SKU, a re-scrape finds the same laptop row and updates it. Without one the processor goes by the LLM's wording of the slug, and a new wording makes a second row (6 of the 10 ASUS duplicate groups are TUF). So pages with no SKU keep the skip until they have a key
+- To do first: HP's part number is not read as a SKU today (see the survey). The HP scraper or `raw_sku` must supply it before HP's skip is lifted
+
+**7. A re-scrape replaces the raw row, as Apple does. Unchanged raw content is not sent to the processor.**
+- Reason: `source_url` is unique, so one page has one raw row and the newest wins. Skipping unchanged content saves LLM quota and keeps hand fixes on laptops whose page did not change
+- Known cost, accepted: when the page did change, the laptop is processed again and hand-fixed fields are overwritten
+
+**8. A page that disappears from the crawl: notify only, no status change.**
+- Reason: a missing page can be a failed crawl or a moved URL, not a discontinued laptop. A wrong status change would hide a laptop that is still sold. Jack decides from the email
+
+**9. ROG: the page price wins over the guide (decision of 2026-10-27).**
+- Reason: the ROG spec page carries a price per SKU. A guide apply already never overwrites a price whose source is `page`, and lists it as differing. No change in code
+
+**10. ASUS website price.** `www.asus.com` does show a price on some pages, not on all. Find out first which pages show one and why the scraper does not capture it.
+- Known already: the scraper returns `"N/A"` for every `www.asus.com` page on purpose. The `PDPriceList` / `modelPrice` / `modelSkuPrice` lookup was deleted after the 2026-10-27 decision, because `GetPrice` returns a shared "starting at" price. So the investigation is: which pages show a price, which field holds it, whether it is the price of one configuration, and how a single-configuration page is told apart
+- Rule: a page with one configuration and no guide row uses the website price, with source `website`. When a guide later covers that laptop, the guide price replaces it
+- Reason: a single-configuration page's price is that laptop's price, and without it the laptop waits inactive for a guide that may never list it. The guide is the better source when it exists
+- In code: a `website` price must be one a guide apply may fill over, as it does for 0 and for `guide`, unlike `page` and `manual`
+
+**11. Embeddings are rebuilt for new laptops and for laptops whose specs changed.**
+- Reason: Pico cannot find a laptop with no embedding, and a changed spec leaves the old embedding describing another machine. `generate-all` embeds every laptop, and the embedding quota (1,000 a day) is shared with Pico search, so the run embeds only what changed
+
+**12. The PassMark refresh runs inside the weekly run, before the go-live check.**
+- Reason: a new laptop often has a new CPU or GPU, and the go-live check needs its benchmark. A refresh also holds a database connection for about 12 minutes, which the plan already wanted off Render
+
+**13. One summary email per run. No in-app bell for now. A price change of 30% or more is flagged.**
+- Reason: one admin and one run a week, so one email holds everything. 30% is the guide preview's `HISTORY_JUMP`, so the email and the preview flag the same changes
+- Supersedes "email + in-app" and "more than ~20%"
+
+**14. Sunday 03:00 Malaysia time (Saturday 19:00 UTC, cron `0 19 * * 6`). If a deploy or another job is active, the run is skipped and the summary email says so.**
+- Reason: the quietest hour of the week. A Render restart fails every active job, and two runs writing the same laptops would collide, so the run does not start beside either. A skipped run that said nothing would look like a week with no changes
+- Not decided: how the run tells that a deploy is in progress
+
+**Pipeline per run (replaces the list above)**
+1. Crawl, then scrape: new URLs for all three sites, and a re-scrape of ROG and HP pages with a SKU
+2. Process the raw rows that are new or changed
+3. Apply the latest guide of each kind
+4. PassMark refresh
+5. Go-live check: this run's new laptops and every held-back one
+6. Embeddings for new laptops and laptops whose specs changed
+7. Pick Score `generate-all`
+8. Summary email
+
+**Commit order**
+1. Block-test workflow (decision 1), on the `block-test` branch only
+2. Job records: a "started by schedule" marker, a marker for jobs that run outside Render so `reset_stale_jobs` leaves them alone, and a lock against a second scrape or processing run
+3. Feed crawler as a job
+4. The processor records raw → `laptop_id` in the job result, the single-record route included (decided 2026-11-03)
+5. New laptops inserted `inactive`, and the go-live check as one function with tests, returning the condition that failed and reporting a null family (decisions 3, 4, 5)
+6. Re-scrape for ROG and HP pages with a SKU: HP's SKU read first, then the skip lifted, the raw row replaced, and unchanged content kept from the processor (decisions 6, 7)
+7. ASUS website price: the investigation in decision 10 first, then the source `website`, the single-configuration rule, and the guide replacing it
+8. One pipeline script in the order above, run by hand first
+9. The summary email through Brevo, email only (decisions 8, 13)
+10. The weekly cron with the skip rule (decision 14), last
 
 ### Price
 - Details page shows the official price + a "Last Checked" date. Price history only records changes, so a separate last-checked timestamp is needed; until scheduled scraping (step 9) is live it reflects the last manual scrape
