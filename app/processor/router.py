@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlmodel import Session, select
 
 from app.common.job_model import JobAccepted, JobType
-from app.common.job_service import JobProgress, create_job, job_accepted, run_job
+from app.common.job_service import JobProgress, create_job, job_accepted, refuse_if_running, run_job
 from app.database import get_session
 from app.laptops.laptop_category_model import LaptopCategory
 from app.laptops.laptop_models import Laptop
@@ -93,6 +93,7 @@ def process_all_pending_laptops(
     per-item errors and a percentage. Stop polling when `status` is
     `completed` or `failed`.
     """
+    refuse_if_running(session, JobType.SCRAPE_AND_PROCESS, "A scrape or processing job is already running.")
     queued = len(
         session.exec(
             select(RawScrapLaptop.id)
@@ -149,6 +150,7 @@ def retry_failed_laptops(
     a run that may be cancelled or cut short by the daily quota. This takes the
     same job machinery and the same 202 envelope, scoped to the failures.
     """
+    refuse_if_running(session, JobType.SCRAPE_AND_PROCESS, "A scrape or processing job is already running.")
     queued = len(
         session.exec(
             select(RawScrapLaptop.id)

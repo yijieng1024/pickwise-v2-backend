@@ -676,6 +676,7 @@ async def scrape_selected_targets(
     if any(t.brand_id in apple_brand_ids(session) for t in session.exec(
             select(ScrapeTarget).where(ScrapeTarget.id.in_(request.target_ids)))):  # type: ignore[attr-defined]
         _refuse_while_options_fetch(session)
+    refuse_if_running(session, JobType.SCRAPE_AND_PROCESS, "A scrape or processing job is already running.")
 
     job = create_job(
         session,
@@ -744,6 +745,7 @@ async def bulk_scrape(
         )
     if brand.name.lower() == "apple":
         _refuse_while_options_fetch(session)
+    refuse_if_running(session, JobType.SCRAPE_AND_PROCESS, "A scrape or processing job is already running.")
 
     queued = len(
         session.exec(

@@ -48,7 +48,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
-from app.common.job_model import BackgroundJob, JobAccepted, JobStatus
+from app.common.job_model import BackgroundJob, JobAccepted, JobStarter, JobStatus
 from app.database import engine, session_scope
 from app.logger import get_logger
 
@@ -205,6 +205,8 @@ def create_job(
     created_by: Optional[UUID] = None,
     seconds_per_item: Optional[float] = None,
     overhead_seconds: int = 5,
+    started_by: str = JobStarter.ADMIN,
+    runs_outside_render: bool = False,
 ) -> BackgroundJob:
     """Insert a `queued` job row. Commits so the background task can find it."""
     estimated = None
@@ -215,6 +217,8 @@ def create_job(
         job_type=job_type,
         status=JobStatus.QUEUED,
         created_by=created_by,
+        started_by=started_by,
+        runs_outside_render=runs_outside_render,
         params=params or {},
         total_count=total_count,
         estimated_seconds=estimated,
@@ -363,6 +367,9 @@ def reset_stale_jobs() -> int:
     Jobs run in-process, so a deploy or crash orphans anything still running.
     Called once at startup; without it those rows would report `processing`
     forever and the UI would poll a job that no longer exists.
+
+    A job marked `runs_outside_render` is left alone: its worker is in GitHub
+    Actions, and this server restarting did not stop it.
     """
     try:
         with Session(engine) as session:
@@ -370,7 +377,8 @@ def reset_stale_jobs() -> int:
                 select(BackgroundJob).where(
                     BackgroundJob.status.in_(  # type: ignore[attr-defined]
                         list(JobStatus.ACTIVE)
-                    )
+                    ),
+                    BackgroundJob.runs_outside_render == False,  # noqa: E712
                 )
             ).all()
 

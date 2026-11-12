@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import Boolean, Column, DateTime, String, Text, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -58,6 +58,11 @@ class JobStatus:
 
     TERMINAL = (COMPLETED, FAILED, CANCELLED)
     ALL = (QUEUED, PROCESSING, CANCELLING, COMPLETED, FAILED, CANCELLED)
+
+
+class JobStarter:
+    ADMIN = "admin"
+    SCHEDULE = "schedule"
 
 
 class JobType:
@@ -97,6 +102,10 @@ class JobType:
         APPLE_OPTIONS_FETCH,
     )
 
+    # One lock for scraping and processing: a scrape replaces the raw rows that
+    # processing reads, and two runs of either would write the same rows.
+    SCRAPE_AND_PROCESS = (BULK_SCRAPE, SCRAPE_TARGETS, PROCESS_PENDING)
+
     # One lock for both lists: each run holds a connection for about 12 minutes.
     PASSMARK = (PASSMARK_CPU, PASSMARK_GPU)
 
@@ -120,6 +129,18 @@ class BackgroundJob(SQLModel, table=True):
 
     # Who started it — so the UI can show "started by" and filter to my jobs.
     created_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id", index=True)
+
+    # "admin" (a button) or "schedule" (the weekly run, plan step 11).
+    started_by: str = Field(
+        default=JobStarter.ADMIN,
+        sa_column=Column(String, nullable=False, server_default=JobStarter.ADMIN),
+    )
+    # True for a job whose worker is not in this server's process (GitHub
+    # Actions). A Render restart does not stop it, so reset_stale_jobs() must
+    # not fail it.
+    runs_outside_render: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default=false())
+    )
 
     # What was requested (limit, brand_id, target_ids …) — echoed back so a
     # poller that arrives late still knows what this run was for.
@@ -177,6 +198,8 @@ class JobRead(SQLModel):
     job_type: str
     status: str
     created_by: Optional[uuid.UUID] = None
+    started_by: str = JobStarter.ADMIN
+    runs_outside_render: bool = False
     params: dict[str, Any] = {}
 
     total_count: int
@@ -220,6 +243,8 @@ class JobRead(SQLModel):
             job_type=job.job_type,
             status=job.status,
             created_by=job.created_by,
+            started_by=job.started_by,
+            runs_outside_render=job.runs_outside_render,
             params=job.params or {},
             total_count=job.total_count,
             processed_count=job.processed_count,
