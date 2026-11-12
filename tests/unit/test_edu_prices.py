@@ -91,3 +91,13 @@ def test_the_ring_at_the_edu_price_differs_only_in_its_price_factor():
         changed = {x["factor"] for x, y in zip(a["breakdown"], b["breakdown"]) if x["raw_score"] != y["raw_score"]}
         assert changed == {"price"}, a["use_case"]
         assert b["score"] > a["score"], "a lower price scores higher"
+
+
+def test_an_edu_pass_that_did_not_fully_succeed_says_so_in_one_sentence():
+    problem = apple_options_fetch.edu_problem
+    assert problem({"prices": 24, "chip_kits": 18, "prices_failed": [], "options_failed": [], "stopped": None}) is None
+    assert "RuntimeError: boom" in problem({"error": "RuntimeError: boom"})
+    assert "Apple stopped the options fetch" in problem({"skipped": "Apple stopped the options fetch"})
+    assert "HTTP 403" in problem({"stopped": {"url": "u", "reason": "HTTP 403 from u"}, "prices_failed": []})
+    assert problem({"prices_failed": [{"url": "u", "reason": "r"}], "options_failed": []}).startswith("1 education price(s) and 0")
+

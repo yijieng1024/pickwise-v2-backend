@@ -75,6 +75,21 @@ def test_fetch_now_runs_the_options_step_only_as_a_job(admin_client, session, ap
     assert admin_client.get("/api/v2/admin/apple-options").json()["latest_run"]["job_id"] == str(job.id)
 
 
+def test_an_edu_failure_is_a_failed_item_of_the_fetch_job_and_named_in_the_view(admin_client, session, apple, monkeypatch):
+    problem = "Apple stopped the education-store fetch: HTTP 403. Stored prices were kept"
+
+    async def step(work_session):
+        return {**SUMMARY, "edu": {"prices": 0, "stopped": {"reason": "HTTP 403"}, "problem": problem}}
+
+    monkeypatch.setattr(admin_options, "run_options_step", step)
+    resp = admin_client.post("/api/v2/admin/apple-options/fetch")
+    session.expire_all()
+    job = session.get(BackgroundJob, resp.json()["job_id"])
+    assert (job.total_count, job.succeeded_count, job.failed_count) == (2, 1, 1)
+    assert any(problem in str(e) for e in job.errors)
+    assert admin_client.get("/api/v2/admin/apple-options").json()["latest_run"]["edu"]["problem"] == problem
+
+
 def test_fetch_now_refuses_while_an_apple_scrape_runs(admin_client, session, apple):
     brand, _ = apple
     running = _job(session, JobType.BULK_SCRAPE, JobStatus.PROCESSING, params={"brand_name": "Apple"})

@@ -5,6 +5,11 @@ Admin view of the Apple build-to-order options (step 10c, step (h)).
                                       they were fetched, and the latest fetch's problems
     POST /admin/apple-options/fetch   202 + job: fetch the options only (no buy page scrape)
 
+The fetch is the only way the Apple options and education prices run: Apple scrapers are
+manual only (Jack, 2026-11-12), nothing schedules them. The job has two items, the options
+and the education-store pass, so an Edu failure is a failed item with its reason in
+`errors`, and `latest_run.edu.problem` says it in one sentence.
+
 Read-only otherwise: Apple's configurator API is the only source (plan decision 11).
 The fetch problems (`chip_not_offered`, `options_failed`, `stopped`) are not stored on
 the rows; they come from the latest job that ran the options step: a fetch-now job, or
@@ -34,8 +39,8 @@ router = APIRouter(prefix="/admin/apple-options", tags=["Admin - Apple options"]
                    dependencies=[Depends(get_current_admin)])
 
 # Measured 2026-11-05 (backfill dry run against Apple): 33 calls, 16 chip kits, 249 s.
-# Doubled 2026-11-10: the education-store pass (step 10d) adds about 60 calls.
-FETCH_SECONDS = 500
+# Per item; the education-store pass (step 10d, about 60 calls) is the job's second item.
+FETCH_SECONDS = 250
 _SCRAPES = (JobType.BULK_SCRAPE, JobType.SCRAPE_TARGETS)
 _RESULT_SCAN = 50
 
@@ -113,13 +118,15 @@ async def fetch_now(background_tasks: BackgroundTasks, session: Session = Depend
     (no buy page scrape first). The job's result is {"apple_options": <summary>}."""
     if active := active_apple_job(session):
         raise _conflict(active, "An Apple options fetch or Apple scrape is already running.")
-    job = create_job(session, job_type=JobType.APPLE_OPTIONS_FETCH, total_count=1,
+    job = create_job(session, job_type=JobType.APPLE_OPTIONS_FETCH, total_count=2,
                      created_by=current_admin.id, seconds_per_item=FETCH_SECONDS, overhead_seconds=0)
 
     async def worker(work_session: Session, progress: JobProgress) -> dict:
         result = {"apple_options": await run_options_step(work_session)}
         stopped = result["apple_options"].get("stopped")
         progress.advance(succeeded=not stopped, item="apple", error=str(stopped) if stopped else None)
+        problem = (result["apple_options"].get("edu") or {}).get("problem")
+        progress.advance(succeeded=not problem, item="apple education prices", error=problem)
         return result
 
     background_tasks.add_task(run_job, job.id, worker)

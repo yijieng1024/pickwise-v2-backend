@@ -269,6 +269,7 @@ async def run_options_step(session: Session, get: Get = http_get, pause_s: float
     result = summary(targets_failed, fetched)
     if fetched["stopped"]:
         result["edu"] = {"skipped": "Apple stopped the options fetch"}
+        result["edu"]["problem"] = edu_problem(result["edu"])
         return result
     try:
         edu = await asyncio.to_thread(fetch_edu, configs, targets, get, pause_s)
@@ -280,6 +281,7 @@ async def run_options_step(session: Session, get: Get = http_get, pause_s: float
     except Exception as exc:  # the Edu pass is extra: its failure is reported, never the step's
         session.rollback()
         result["edu"] = {"error": f"{type(exc).__name__}: {exc}"}
+    result["edu"]["problem"] = edu_problem(result["edu"])
     return result
 
 
@@ -287,6 +289,24 @@ async def run_options_step(session: Session, get: Get = http_get, pause_s: float
 
 EDU_SOURCE = "apple_my_edu"
 _EDU_FIELDS = ("edu_add_on_rm", "edu_kit_price_rm", "edu_fetched_at")
+
+
+def edu_problem(edu: Mapping) -> Optional[str]:
+    """One sentence when the Edu pass did not fully succeed, else None. Runs are manual
+    (Jack, 2026-11-12), and a stale Edu price stays on the page with its own date, so
+    this is what tells the admin to run it again: the job counts it as a failed item
+    and the admin page shows it in red."""
+    if edu.get("error"):
+        return f"Education prices were not fetched: {edu['error']}"
+    if edu.get("skipped"):
+        return f"Education prices were not fetched: {edu['skipped']}"
+    if edu.get("stopped"):
+        return f"Apple stopped the education-store fetch: {edu['stopped'].get('reason', '')}. Stored prices were kept"
+    prices, kits = len(edu.get("prices_failed") or []), len(edu.get("options_failed") or [])
+    if prices or kits:
+        return (f"{prices} education price(s) and {kits} chip kit(s) could not be fetched. "
+                "Stored ones were kept, with their older date")
+    return None
 
 
 def edu_url(url: str) -> str:

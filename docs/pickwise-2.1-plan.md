@@ -74,7 +74,7 @@ Different user groups (students, people who don't understand specs, people decid
 | Education price (step 10d, decided 2026-11-10, Jack) | Apple only for now (24 active laptops), in a brand-neutral table so other brands can be added. Fetched by the scraper from `https://www.apple.com/my-edu/`, the same paths as `/my/` (Jack accepts the same terms risk as the `/my/` scrape). Stored in a new table with its own checked-at date: not a `laptops` column, not in `laptop_price_history`. **Pick Score: on the details page only, when the Edu toggle is on, the Pick Score ring is calculated live from the Edu price; toggle off, the official price. Stored `laptop_pick_scores`, rankings, use-case cards, Pico and budget filtering always use the official price.** The configurator uses Edu prices too when the toggle is on. Toggle default: on for `user_type = student`, off when signed out, the user's own choice remembered. See "Education prices (step 10d)" in section 4 |
 | Migrations check in CI (decided 2026-11-01) | Compares the whole push (`github.event.before..HEAD`), with a fallback for a new branch, instead of `HEAD^..HEAD`. Push `3133099` added a migration and ended on a docs commit, so the job was skipped |
 | Scrapers | Replace every manufacturer laptop scraper with Scrapling. YouTube transcripts and SerpApi stay as they are |
-| Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs |
+| Scheduled scraping | Runs on GitHub Actions, once a week, after a block test confirms manufacturer sites don't block GitHub's IPs. **Apple is the exception (Jack, 2026-11-12, supersedes the 2026-10-21 "all scrapers weekly" decision for Apple only): its scrapers are manual only**, see "Apple scrapers are manual only" in section 4 |
 | Writing scraped data | Processed results are written straight into the catalog (no approval queue) |
 | New laptops | Go live automatically, but only if they pass every go-live condition (see section 4); otherwise they stay inactive |
 | After each scheduled run | Embeddings for new laptops and PickScore `generate-all` re-run automatically |
@@ -113,9 +113,9 @@ Different user groups (students, people who don't understand specs, people decid
 | 10c | Apple build-to-order options (added 2026-11-04) | The 10 build-to-order Mac rows are a standard configuration plus options; settle how options and their add-on prices are stored before step 11 schedules the Apple scrape. After 10b |
 | 10c+ | Onboarding (decided 2026-11-09) | After 10c (g), before 10d: the background questions ask whether the user is a student, which 10d's education prices use. See "Decisions 2026-11-09" in section 4 |
 | 10c++ | Guide preview warnings (placed 2026-11-10, Jack) | After onboarding, before 10d: more guides are coming and the preview must show by itself what took production queries to see. Built 2026-11-10, see "Guide preview warnings: proposed rules" in section 4 |
-| 10d | Education prices (decided and built 2026-11-10) | After onboarding, before step 11, so step 11 schedules the edu scrape together with the Apple buy page (it already runs inside the Apple options step). Scope is fixed: Apple only, Edu price and live Pick Score ring on the details page only; stored scores, rankings, use-case cards, Pico and budget filtering always use the official price |
+| 10d | Education prices (decided and built 2026-11-10) | After onboarding, before step 11, so it is settled before step 11. Since 2026-11-12 step 11 schedules no Apple scrape at all: the Edu pass runs inside the Apple options step, by hand. Scope is fixed: Apple only, Edu price and live Pick Score ring on the details page only; stored scores, rankings, use-case cards, Pico and budget filtering always use the official price |
 | 10d+ | Selected configuration in the URL (placed 2026-11-09) | Right after 10d. See "Decisions 2026-11-09" in section 4 |
-| 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status |
+| 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status. Apple is not scheduled (2026-11-12): ASUS and HP only |
 | 12 | Software compatibility | The centrepiece of the new positioning; the largest piece of work |
 | 13 | XAI B, C: comparative explanations, constraint relaxation | Needs stable recommendation results first |
 | 14 | Review D + E + scheduling | Automated matching, attaching the flagged comparison claims, raising coverage, and re-searching a family when a new laptop joins it or its last search is old (`last_review_search_at`, decided 2026-11-08) |
@@ -736,7 +736,7 @@ Data survey (2026-10-26, read-only): most items can be built from stored data wi
 - Job page shows `split_failures` separately, not mixed in with the other result lists
 - A deploy interrupts a running job: Render restarts the service and the job ends as failed. Problem recorded only; the fix is not decided yet
 - Repair scripts get a test that runs the `--apply` path on the test DB (decided 2026-11-04): the step (f) missing brand import would have been caught
-- Apple options fetch: fewer calls (about 260 per weekly run today), e.g. skip re-fetching rules that have not changed (decided 2026-11-04)
+- Apple options fetch: fewer calls (about 260 per run when this was written), e.g. skip re-fetching rules that have not changed (decided 2026-11-04)
 
 ### Benchmark name matching fix (step 6b)
 
@@ -804,7 +804,7 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 3. **Existing rows:** all 134 `laptop_customizations` rows are replaced (bad data, wrong categories)
 4. **Build-to-order rows:** the 10 build-to-order Mac rows become "standard config + options", not rows of their own. The Pick Score of a chosen configuration is calculated live with the same formula, but configured results are **not** added to the catalog ranking ranges (ranges stay standard configs only)
 5. **Source of options (decided 2026-11-04, after the trial):** add-on prices and combination rules come from Apple's `cto/update-config` and `cto/dependency-switcher` (plain GETs, the same calls the buy page makes). Trial on the MacBook Air 13 (4 calls, all 200, no blocking): one `update-config` call returns every option's add-on price relative to the configuration sent, and prices add up exactly; `dependency-switcher` returns the forced changes (24GB or 1TB on the 13-inch switches to the 10-core GPU chip at no extra cost). On failure the stored options are kept and the machine is listed in a result list `options_failed` for step 11's notifications
-6. **When it runs:** inside the weekly Apple buy page run (step 11), after the buy page scrape
+6. **When it runs:** inside the weekly Apple buy page run (step 11), after the buy page scrape (superseded 2026-11-12: Apple scrapers are manual only, so it runs when an admin runs an Apple scrape or presses Fetch now)
 
 *Decided 2026-11-04 (Jack, after the design survey):*
 7. **Storage:** new tables `laptop_options` (one row per option of a standard config: group, value, label, add-on price relative to that standard config, included, blocked, and the CPU/GPU strings for a chip option) and `laptop_option_rules` (a trigger option forces another option, e.g. 24GB or 1TB on the 13-inch forces the 10-core GPU chip). `laptop_customizations` and the Apple category rows (storage, memory, power_adapter, apple_care, display_type, processor) are dropped later, in step (g)
@@ -958,7 +958,7 @@ OPEN, for Jack:
 2. **Scraper:** one colour per configuration (+24 calls)
 3. **Toggle choice:** remembered in the browser only (`localStorage`), no account column
 4. **Personalized ring:** the budget comparison uses the Edu price
-5. **Still OPEN, not built.** The case: the weekly run updates a laptop's official price, but the Edu part of the same run fails (Apple blocks it, or a page does not parse), so the stored Edu price is last week's. The user would see last week's student price beside this week's official price, and a "Save RM …" worked out from the two, which can be wrong. The proposal was to hide the toggle until the Edu price is checked again; today it stays, with its own "Last checked" date. One part of it is already covered: an Edu price that is not below the official price is never shown
+5. **Still OPEN, not built.** The case: the weekly run updates a laptop's official price, but the Edu part of the same run fails (Apple blocks it, or a page does not parse), so the stored Edu price is last week's. The user would see last week's student price beside this week's official price, and a "Save RM …" worked out from the two, which can be wrong. The proposal was to hide the toggle until the Edu price is checked again; today it stays, with its own "Last checked" date. One part of it is already covered: an Edu price that is not below the official price is never shown. **Decided 2026-11-12 (Jack): keep it as built**, see below
 6. **Eligibility line:** "Education pricing for university students, educators and parents. Eligibility is checked by Apple." with a link to `https://www.apple.com/my-edu/store`
 7. **Compare page and saved list:** official price only (nothing there changed)
 
@@ -970,11 +970,26 @@ OPEN, for Jack:
 
 *First Edu fetch (Jack runs it; nothing was fetched into production by the build):* after the deploy has applied the migration, Admin → Catalog → Apple options → **Fetch now** (`POST /admin/apple-options/fetch`), about 8 minutes and about 95 Apple calls. The job result's `apple_options.edu` should show 24 prices and 18 chip kits, the same counts as the 2026-11-10 check. Until then no laptop has an Edu price and the toggle appears nowhere
 
+*Decided 2026-11-12 (Jack):*
+1. **Item 5 is closed: keep the behaviour as built.** After a failed Edu pass the toggle stays, with its own "Last checked" date. Apple runs are manual, so Jack sees an Edu failure in the run summary straight away and runs it again
+2. **So the run summary has to make an Edu failure plain** (built 2026-11-12). The fetch job has two items, the options and the education-store pass: an Edu failure is a failed item with its reason in the job's `errors`, so the job panel shows "1 failed". The run's `edu.problem` is one sentence for every way the pass can fall short (it raised, it was skipped because Apple stopped the options fetch, Apple stopped it, or some prices or chip kits failed), and the Apple options page shows it as a red alert that ends "Run Fetch now again"
+3. **The three differences from the proposal are confirmed as built:** Edu prices are fetched in the options step; an Edu price not below the official one is stored but never shown; a failed Edu pass keeps the last Edu prices
+
+### Apple scrapers are manual only (decided 2026-11-12)
+
+*Decided 2026-11-12 (Jack):* the Apple scrapers (the `/my/` buy and specs pages, the options, and the `/my-edu/` pass) are run by hand and never on a schedule, because Apple changes products and prices only a few times a year. This supersedes the 2026-10-21 "all scrapers weekly" decision for Apple only; the weekly schedule for ASUS and HP stays as planned.
+
+*Checked read-only 2026-11-12: what schedules Apple today? Nothing.* The repository has four workflows: `ci.yml` and `deploy.yml` run on push, `price-guide.yml` is `workflow_dispatch` only, and `nightly-eval.yml` has its cron commented out. There is no scrape workflow, no cron and no scheduler in the app (step 11 is not built), and no Render cron file. So nothing was removed; this decision changes what step 11 will build: its weekly run leaves Apple out.
+
+*How Apple is run:*
+- **Options and education prices:** Admin → Catalog → Apple options → **Fetch now**. It reads the stored buy pages, so it is enough when only option or Edu prices changed
+- **A new Mac, or a changed official price:** the Apple scrape on the admin scraper page (buy and specs pages) and then processing, as today. That run fetches the options and the education prices by itself afterwards, so Fetch now is not needed after it
+
 ### Scheduled scraping + notifications
 
-**Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked).
+**Where and how often:** GitHub Actions, weekly. First, a block test: a temporary `workflow_dispatch`-only workflow on a test branch fetches one page per manufacturer site with the planned Scrapling fetcher, with no database writes and no secrets, and checks the real laptop data is present (a 200 Cloudflare/captcha page counts as blocked). **Apple is left out of the scheduled run (2026-11-12): ASUS and HP only.**
 
-**Apple MY buy page:** its own weekly GitHub Actions run, separate from the general weekly scrape (Apple standard configs and RM prices come from the buy page). After the buy page scrape, the same run fetches each standard config's options, add-on prices and combination rules (step 10c); a failure keeps the stored options and lists the machine in `options_failed`.
+**Apple MY buy page:** not scheduled (Jack, 2026-11-12; before that the plan gave it its own weekly run). An admin runs the Apple scrape and Fetch now by hand, see "Apple scrapers are manual only" below. After a buy page scrape, the same run still fetches each standard config's options (step 10c) and education prices (step 10d); a failure keeps the stored options and lists the machine in `options_failed`.
 
 **Pipeline per run**
 1. Scrape → `raw_scrap_laptops`

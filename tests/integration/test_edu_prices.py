@@ -260,7 +260,7 @@ def test_the_options_step_then_fetches_the_education_store(session, air13):
     get = _BothStores()
     result = asyncio.run(fetch.run_options_step(session, get=get, pause_s=0))
     edu = result["edu"]
-    assert edu["prices"] == 1 and edu["chip_kits"] == 2 and edu["stopped"] is None
+    assert edu["prices"] == 1 and edu["chip_kits"] == 2 and edu["stopped"] is None and edu["problem"] is None
     assert len(edu["no_laptop"]) == 1 and AIR13_1010_SLUG in edu["no_laptop"][0], "no laptop row has that part number"
     assert edu["not_below_official"] == [] and edu["apple_calls"] == len(get.edu.calls)
     assert len(get.edu.calls) == 2 + (len(get.main.calls)), "one page per config, then the same kit calls"
@@ -284,6 +284,7 @@ def test_a_failed_edu_pass_keeps_the_stored_edu_numbers_and_every_official_one(s
 
     result = asyncio.run(fetch.run_options_step(session, get=_BothStores(edu_down=True), pause_s=0))
     assert "403" in result["edu"]["stopped"]["reason"] and result["edu"]["prices"] == 0
+    assert "Apple stopped the education-store fetch" in result["edu"]["problem"]
     assert result["chip_kits"] == 2 and result["stopped"] is None, "the main store's fetch is not the Edu pass's"
     again = {key: (o.add_on_rm, o.kit_price_rm, o.edu_add_on_rm, o.edu_kit_price_rm, o.edu_fetched_at)
              for key, o in _options(session).items()}
