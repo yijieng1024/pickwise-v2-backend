@@ -1,0 +1,29 @@
+name: Block test
+
+# Plan step 11, decision 1: can GitHub's runners read the manufacturer sites?
+# One product page each from www.asus.com, rog.asus.com and HP, through the
+# scrapers' own fetch and parse code. No secrets, no database, no writes.
+#
+# Runs on a push to the branch `block-test` only, and lives only on that
+# branch: a workflow_dispatch workflow would have to be on main to be started.
+
+on:
+  push:
+    branches: [block-test]
+
+permissions:
+  contents: read
+
+jobs:
+  block-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Fetch one product page per site
+        run: python -m app.scripts.block_test
