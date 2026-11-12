@@ -114,7 +114,7 @@ Different user groups (students, people who don't understand specs, people decid
 | 10c+ | Onboarding (decided 2026-11-09) | After 10c (g), before 10d: the background questions ask whether the user is a student, which 10d's education prices use. See "Decisions 2026-11-09" in section 4 |
 | 10c++ | Guide preview warnings (placed 2026-11-10, Jack) | After onboarding, before 10d: more guides are coming and the preview must show by itself what took production queries to see. Built 2026-11-10, see "Guide preview warnings: proposed rules" in section 4 |
 | 10d | Education prices (decided and built 2026-11-10) | After onboarding, before step 11, so it is settled before step 11. Since 2026-11-12 step 11 schedules no Apple scrape at all: the Edu pass runs inside the Apple options step, by hand. Scope is fixed: Apple only, Edu price and live Pick Score ring on the details page only; stored scores, rankings, use-case cards, Pico and budget filtering always use the official price |
-| 10d+ | Selected configuration in the URL (placed 2026-11-09) | Right after 10d. See "Decisions 2026-11-09" in section 4 |
+| 10d+ | Selected configuration in the URL (placed 2026-11-09) | Right after 10d. See "Decisions 2026-11-09" in section 4. Design decided 2026-11-12, not built yet: see "Configuration in the URL (step 10d+)" in section 4 |
 | 11 | Scheduled scraping + notifications + background jobs | Keeps the catalog current. After Scrapling, so the old scrapers aren't scheduled and then replaced. Background jobs belong here because the scheduled pipeline needs somewhere to record each stage's status. Apple is not scheduled (2026-11-12): ASUS and HP only |
 | 12 | Software compatibility | The centrepiece of the new positioning; the largest piece of work |
 | 13 | XAI B, C: comparative explanations, constraint relaxation | Needs stable recommendation results first |
@@ -862,7 +862,7 @@ Survey 2026-10-25 (read-only, production): 32 of 333 active laptops have an unre
 17. **Built 2026-11-09 (onboarding commit 1):** `user_background` (migration `b4d8f2a6c1e3`) with `GET` / `PUT /auth/me/background`; the PUT changes only the fields sent, `user_type` outside the four values is a 422, and `field_of_study` is cleared whenever `user_type` is not `student`
 18. **Built 2026-11-09 (onboarding commit 2):** `questionnaire_questions.admin_note` (migration `e6a2c9f4b8d1`), returned only by the admin-only `GET /questionnaire/admin` and the admin write routes; the public reads leave it out. `app/scripts/questionnaire_help_text.py` moves the six internal notes from `help_text` to `admin_note` and writes user-facing help text; `--apply` waits until the migration is live
 
-*Selected configuration in the URL (decided 2026-11-09, Jack): yes.* A configuration can be shared, survives refresh / back, can be bookmarked, and Pico can link to a configured machine. Options in the URL that no longer exist fall back to the defaults; set a canonical URL so Google does not treat each configuration as duplicate content. Place in the order (Jack, 2026-11-09): right after 10d (section 3, 10d+).
+*Selected configuration in the URL (decided 2026-11-09, Jack): yes.* A configuration can be shared, survives refresh / back, can be bookmarked, and Pico can link to a configured machine. Options in the URL that no longer exist fall back to the defaults; set a canonical URL so Google does not treat each configuration as duplicate content. Place in the order (Jack, 2026-11-09): right after 10d (section 3, 10d+). The 2026-11-12 design ("Configuration in the URL (step 10d+)") replaces "fall back to the defaults" with a per-option rule.
 
 *10c (g), removing `laptop_customizations` (decided 2026-11-09, Jack, after the survey):*
 1. **Data delete is a script** with a dry run and `--apply` (`app/scripts/retire_customizations_10c.py`), not part of the migration. It deletes all 134 customization rows and the 6 Apple category rows (`categories.name IN ('storage','memory','power_adapter','apple_care','display_type','processor')`, all active, 0 laptop links) in one transaction, refuses unless the target set is exactly those 6 names, and rolls back if the protected categories (Business, Creator, Gaming, Workstation), their links or the totals change
@@ -974,6 +974,73 @@ OPEN, for Jack:
 1. **Item 5 is closed: keep the behaviour as built.** After a failed Edu pass the toggle stays, with its own "Last checked" date. Apple runs are manual, so Jack sees an Edu failure in the run summary straight away and runs it again
 2. **So the run summary has to make an Edu failure plain** (built 2026-11-12). The fetch job has two items, the options and the education-store pass: an Edu failure is a failed item with its reason in the job's `errors`, so the job panel shows "1 failed". The run's `edu.problem` is one sentence for every way the pass can fall short (it raised, it was skipped because Apple stopped the options fetch, Apple stopped it, or some prices or chip kits failed), and the Apple options page shows it as a red alert that ends "Run Fetch now again"
 3. **The three differences from the proposal are confirmed as built:** Edu prices are fetched in the options step; an Edu price not below the official one is stored but never shown; a failed Edu pass keeps the last Edu prices
+
+### Configuration in the URL (step 10d+, decided 2026-11-12)
+
+Plan only: nothing here is built. The goal: the configuration chosen on a laptop's details page lives in the URL, so sharing works, a refresh keeps it, a bookmark works, Pico can link an exact configuration, an option that no longer exists falls back, and the page has a canonical URL.
+
+*What the survey found (read-only, 2026-11-12):*
+- The details page is `/laptops/[id]` (`src/app/laptops/[id]/page.tsx`), a server component with no caching. The chosen options live only in a client React context (`ConfiguratorProvider`); a refresh loses them
+- Only MacBook Air and Pro standard configs have options. The default is the laptop row itself. `laptop_options` row ids change on every fetch (rows are deleted and re-inserted); the `value` strings (`m5pro-18-20`, `48gb`, `2tb`, `nano_texture`) are Apple's own and `/configure` already takes them as query params
+- Links to a details page are all the plain `/laptops/{id}`: `laptop-card.tsx`, the chat shortlist card, the compare column header, the admin catalog menu. The share button copies `window.location.href`
+- `get_configuration_options` returns `laptop_id`, `chip`, each group's `value` and the total, and no URL. The chat renders markdown links, but only ones that start with `http://` or `https://`
+- No `generateMetadata`, canonical, `metadataBase`, sitemap or robots file exists; every laptop page has the site-wide title. The frontend has no test framework and no CI workflow
+
+*Decided 2026-11-12 (Jack):*
+1. **Query params with readable values**, the same names and values as `/configure`: `/laptops/{id}?chip=m5pro-18-20&memory=48gb&storage=2tb`. The param order is fixed, so one configuration has one URL. *Why:* it is what the API already speaks and what Pico's tool already returns, so nothing is translated; and row ids cannot be used because they change on every fetch
+2. **The canonical is always the plain `/laptops/{id}`.** Configurations are not indexed. *Why:* a configuration is not a catalog laptop, and hundreds of near-identical pages per Mac would be duplicate content
+3. **Edu stays out of the URL** (2026-11-10, unchanged). *Why:* a link must not show another person a student price as the price
+4. **An invalid option drops only that param:** the rest is kept, the URL is cleaned and a one-line notice is shown. **An invalid chip falls back to the whole default**, because memory and storage depend on the chip. This replaces the 2026-11-09 "fall back to the defaults"
+5. **A link with a configuration opens in the "Configured" view.** Switching to "Original" does not change the URL: the URL stores the picks, not the view
+6. **The URL changes only on "Done", with replace, not push.** *Why:* trying options in the editor should not fill the history, and Back should leave the page, not undo a pick
+7. **Pico:** `get_configuration_options` returns a ready path built by code. The prompt tells Pico to use that path as a markdown link and never to build a URL itself. *Why:* a URL assembled by the model is a URL that is sometimes wrong
+8. **Keyboard is not in the URL** for now
+9. **A configuration that equals another catalog laptop stays on the current page.** No redirect
+10. **SEO scope of this task:** `metadataBase`, the canonical, and a per-laptop title and description through `generateMetadata`. Sitemap and robots are a separate small commit after this
+11. **Compare and the saved list stay on the standard configuration**
+12. **The configured price is rendered on the server:** the page reads `searchParams` and calls `/configure`. The Edu price still swaps in the browser, as today. *Why:* no flash of the standard price, and the page a link opens is right before any script runs
+13. **Vitest in the frontend, only for the pure functions that parse and build the configuration URL.** Each new test must be shown to catch the bug: with the function's change reverted, the test is red
+
+*The URL rule (one function on each side, the same cases):* params in the order `chip`, `memory`, `storage`, `adapter`, `display`. Never `keyboard`, never `edu`. The standard config's own picks are the plain URL with no params. The two builders (`config_path` in the backend, `buildConfigQuery` in the frontend) are held to the same literal cases, on the Pro 14 Liquid Retina M6 standard config (16GB, 1TB):
+
+| Picks | Path |
+|---|---|
+| the standard config's own | `/laptops/{id}` |
+| 32GB, 4TB | `/laptops/{id}?chip=m6-12-12&memory=32gb&storage=4tb` |
+| M5 Pro 15c/16g, 48GB, 2TB, nano-texture | `/laptops/{id}?chip=m5pro-15-16&memory=48gb&storage=2tb&display=nano_texture` |
+| a non-default adapter | `adapter` between `storage` and `display` |
+
+*Where the decisions do not fit the code as surveyed (said, not worked around):*
+1. **Decision 7 and "backend first":** the chat only turns `http(s)://` text into a link, so a path such as `/laptops/…` would show as plain text. The frontend has to accept links to PickWise's own pages first. So the backend goes first with the tool's `path` (harmless alone), and the prompt line that makes Pico use it is the **last** commit, after the frontend renders such links
+2. **Decision 12 and the personalized ring:** the server has no sign-in token (it is in the browser's storage), so the server-rendered configuration is general-mode only. A signed-in user with wizard preferences gets their own score from a second `/configure` call in the browser, and the ring number changes once after load. The original view already behaves this way
+3. **Decision 4, "clean the URL":** a server component cannot change the address without a redirect, and a redirect would lose the notice. So the server renders the corrected configuration with the notice, and the browser then replaces the address. The first response is still served at the bad URL (its canonical is the plain one either way)
+4. **Decision 1, "one configuration has one URL", holds per laptop page only.** With decision 9, the same machine reached from two standard configs has two URLs (one per page). Both have the plain canonical of their own page
+5. **Decision 1, which params are written: OPEN.** Jack's example has three, and the Pro also has adapter and display options. Proposed: `chip`, `memory` and `storage` always; `adapter` and `display` only when they differ from what the chip's kit comes with. The cost: if Apple changes what a kit comes with, an old link without that param shows the new default
+6. **Decision 10, `metadataBase`:** the frontend has no setting for its own public address. It needs a new `NEXT_PUBLIC_SITE_URL` that Jack sets on Vercel; without it a canonical cannot be an absolute URL
+7. **Decision 10, `generateMetadata`:** the page fetches the laptop uncached on purpose, so metadata would fetch it a second time. One request-scoped `cache()` around that fetch keeps it at one call
+8. **Decision 13, no CI:** the frontend has no workflow, so the Vitest tests run only when someone runs `npm test`. **OPEN:** add a small GitHub Actions workflow for them, or keep them local
+9. **Decision 6, replace:** Next's router replace would re-run the server page (five backend calls) for a change the browser already has the result of. `window.history.replaceState` avoids that; AGENTS.md requires checking it against this Next version's own docs before writing it
+10. **Decision 3 with a remembered Edu toggle:** a configured link first shows the official configured price from the server, then swaps to the Edu price. This is decision 12 as written
+11. **A link with options on a laptop that has none** (not a Mac, or no longer active): the params are ignored and removed, with the notice
+12. **The configured page's title** is the standard laptop's, since configurations are not indexed
+
+*Commit order (small, each one shippable alone; nothing is pushed to production data, no scrape):*
+
+| # | Repo | Commit | What it changes | How it is tested | What Jack checks in the browser |
+|---|---|---|---|---|---|
+| 1 | backend | `feat: get_configuration_options returns the configuration's path` | A pure `config_path()` beside the configurator; the tool's configured answer gains `path` (the listing gains the plain path). No prompt change | Unit: the table's cases; fixed order; no `keyboard`, no `edu`; every path's params go back through `checked_choices` to the same total; the tool output still fits the eval truncation budget; the Edu source guard still passes | Nothing visible yet |
+| 2 | frontend | `feat: parse and build the configuration URL` | Adds Vitest and `npm test`. `lib/config-url.ts`: `parseConfigParams(params, options)` gives the picks and the list of dropped params (decision 4); `buildConfigQuery(options, picks)` gives the query. Used by nothing yet | Vitest: the table's cases, both directions; a bad memory drops only memory; a bad chip drops everything; unknown params ignored; repeated params. Shown red with each function's body reverted | Nothing visible yet |
+| 3 | frontend | `feat: a laptop link with a configuration opens that configuration` | The page reads `searchParams`, checks them with commit 2, calls `/configure` on the server and gives the result to `ConfiguratorProvider` as its first state, in the "Configured" view. Dropped params: the notice, then the address is replaced. A `/configure` failure shows the standard config with the notice | Vitest for the check; type check and lint. Browser steps on the right | Open a hand-typed configured link: the configured price is there on first paint, also with scripts off. Change `memory` to nonsense: memory falls back, the rest stays, one line says so, the address is cleaned. Change `chip` to nonsense: the standard config. Add params to an ASUS laptop: ignored and removed. Signed in with wizard answers: the ring becomes the personal score |
+| 4 | frontend | `feat: Done writes the configuration to the URL` | "Done" replaces the address with the picks' URL (the plain URL for the standard picks). "Original" / "Configured" and the Edu toggle never touch it | Vitest already covers the builder; type check and lint | Configure and press Done: the address changes with no reload. Refresh: the configuration is still there. Back: leaves the page. Share: the copied link opens the same configuration in another browser. Edu on: the address has no `edu` |
+| 5 | frontend | `feat: laptop pages have their own title, description and canonical` | `metadataBase` from `NEXT_PUBLIC_SITE_URL`; `generateMetadata` with the laptop's name and a one-line description; the canonical is the plain `/laptops/{id}` whatever the params | Type check and lint; a Vitest case for the description text if it has any logic | Jack sets `NEXT_PUBLIC_SITE_URL` on Vercel first. Then: the tab shows the laptop's name; in the page source of a configured link the `<link rel="canonical">` is the plain URL |
+| 6 | frontend | `feat: chat links to PickWise pages` | The chat's link rule also accepts a path that starts with `/laptops/`, opened in the same tab; nothing else relative | Vitest on the link rule (moved to a pure function): a `/laptops/…` path is a link, `//evil.example` and `javascript:` are not | Nothing visible until commit 7 |
+| 7 | backend | `feat: Pico links a configuration with the tool's path` | One prompt line: link a configured machine with the tool's `path` as a markdown link, never build a URL. An eval case | Unit: the prompt names `path`. Eval rule check: the reply contains the tool's path exactly and no other `/laptops/` URL | After commit 6 is live: ask Pico for a Pro 14 with M5 Pro, 48GB and 2TB; the reply has a link; it opens the details page on that configuration at the same total |
+| later | frontend | `feat: sitemap and robots` | Separate small commit, not part of this task (decision 10) | | |
+
+*OPEN (Jack):*
+1. Which params are written (item 5 above): the proposal, or every group always
+2. Frontend tests in CI (item 8 above): a small workflow, or local only
+3. `NEXT_PUBLIC_SITE_URL`: the value to set on Vercel (the production address), and whether preview deployments use the production address in their canonical too
 
 ### Apple scrapers are manual only (decided 2026-11-12)
 
