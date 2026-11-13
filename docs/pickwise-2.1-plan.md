@@ -1152,6 +1152,7 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 - Reason: each condition is something that makes a public page or a score wrong. A missing spec gives a wrong factor, and an unresolved benchmark gives a made-up neutral 50. This is stricter than the withheld rule, which needs both to be unresolved. A null family is a safe state (dedup lets it through untouched), so it is reported for Jack to group and does not hold the laptop back
 - Dropped from the earlier list: battery capacity not 0, family assigned, embedding generated (the run builds the embedding, decision 11)
 - Note: the processor already looks a laptop up by `model_code` before it inserts, so the `model_code` condition is a second check, not the main guard against duplicates
+- As built (2026-11-13): `model_code` is unique, so this condition only catches a code that differs in letter case. That is still useful, because the processor's extracted codes can differ in case. Duplicates with the same specs and different codes stay a manual check for now
 
 **5. Held-back laptops are re-checked every run and go live by themselves once they pass.**
 - Reason: a held-back laptop usually waits for something outside it (a guide price, a PassMark row, a benchmark map entry). When that arrives, nobody should have to remember the laptop
