@@ -828,3 +828,7 @@ def go_live_failed_conditions(laptop, same_code_others, cpu_benchmarks, gpu_benc
 
 # The first ROG and HP re-scrape, predicted - app/scripts/rescrape_dry_run.py
 from app.scripts.rescrape_dry_run import plan as rescrape_plan  # noqa: E402,F401
+
+
+# Several SKUs on one laptop (step 11, decision 15) - app/laptops/sku_match.py
+from app.laptops import sku_match  # noqa: E402,F401

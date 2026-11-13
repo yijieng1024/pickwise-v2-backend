@@ -198,6 +198,12 @@ class Laptop(LaptopBase, table=True):
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
+    # 3c. Every SKU this laptop is sold under (step 11, decision 15): derived
+    skus: List["LaptopSku"] = Relationship(
+        back_populates="laptop",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
     # 3b. Education price (step 10d): derived, at most one row
     edu_price: Optional["LaptopEduPrice"] = Relationship(
         back_populates="laptop",
@@ -399,6 +405,35 @@ class LaptopEduPrice(SQLModel, table=True):
     price_changed_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class LaptopSku(SQLModel, table=True):
+    """One SKU a laptop is sold under (plan step 11, decisions 15 and 16). One machine has
+    several: HP has a page and a part number per colour, and ROG renames a SKU and keeps
+    the specs. A table, not a column on `laptops`: a SKU belongs to one laptop only, which
+    the unique index holds, the processor looks a laptop up by it, and each SKU has its
+    own colour and its own last price (the laptop keeps the lowest). The processor writes
+    a row for every SKU it sees, the first one included; `laptops.manufacturer_sku` stays
+    the SKU the product guides match on. Declared here, like LaptopPickScore, so Laptop's
+    delete cascade can name it."""
+    __tablename__ = "laptop_skus"  # type: ignore
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
+    laptop: Optional["Laptop"] = Relationship(back_populates="skus")
+    sku: str = Field(sa_column=Column(String(64), nullable=False, unique=True))
+    # The colour name the page gives ("Starlit blue aluminum"), when it gives one.
+    colour: Optional[str] = None
+    # The price this SKU's page showed when it was last processed. Null: none was read.
+    price_rm: Optional[float] = None
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
 
 

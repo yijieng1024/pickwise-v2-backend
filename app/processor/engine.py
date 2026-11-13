@@ -18,7 +18,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.logger import get_logger
 from app.laptops.family_service import resolve_family_id
 from app.laptops.go_live import run_go_live_check
-from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, PriceSource
+from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopSku, LaptopStatus, PriceSource
+from app.laptops.sku_match import page_colour, page_specs, same_machine
 from app.laptops.price_guide import sku_key
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
@@ -257,7 +258,7 @@ def _variant_fields(variant, brand_id, image_urls, raw_specs_dump) -> dict:
 _RESULT_LISTS = (
     "identity_conflicts", "split_failures", "field_parse_failures", "fields_kept", "apple_configs_skipped",
     "not_on_buy_page", "matched_suspended", "relisted", "price_changes", "prices_not_overwritten", "unresolved_configs",
-    "writes",
+    "writes", "skus_attached", "sku_price_differences",
 )
 
 
@@ -447,7 +448,43 @@ def _laptop_by_sku(session: Session, sku: str) -> Optional[Laptop]:
     key = sku_key(sku)
     forms = [key, f"{key}P"] if key.endswith("W") else [key]
     holders = session.exec(select(Laptop).where(func.upper(Laptop.manufacturer_sku).in_(forms))).all()
-    return next((l for l in holders if l.manufacturer_sku.upper() == sku.upper()), holders[0] if holders else None)
+    found = next((l for l in holders if l.manufacturer_sku.upper() == sku.upper()), holders[0] if holders else None)
+    if found is not None:
+        return found
+    # A laptop carries several SKUs (decision 15): the others are in laptop_skus.
+    rows = session.exec(select(LaptopSku).where(func.upper(LaptopSku.sku).in_(forms))).all()
+    row = next((r for r in rows if r.sku.upper() == sku.upper()), rows[0] if rows else None)
+    return session.get(Laptop, row.laptop_id) if row is not None else None
+
+
+def _lowest_sku_price(session: Session, laptop: Laptop, sku: str, price: float) -> tuple[float, Optional[dict]]:
+    """
+    The price *laptop* keeps when its SKU *sku* shows *price* (decision 16): the lowest
+    its SKUs show, and the difference to report when they do not all show the same.
+    A SKU with no price read is left out.
+    """
+    others = {
+        row.sku: row.price_rm
+        for row in session.exec(select(LaptopSku).where(LaptopSku.laptop_id == laptop.id)).all()
+        if row.sku.upper() != sku.upper() and row.price_rm
+    }
+    lowest = min([price, *others.values()])
+    if all(other == price for other in others.values()):
+        return lowest, None
+    return lowest, {"laptop_id": str(laptop.id), "model_code": laptop.model_code, "sku": sku,
+                    "sku_price": price, "kept_price": lowest, "other_skus": others}
+
+
+def _store_sku(session: Session, laptop_id, sku: str, colour: Optional[str], price: float) -> None:
+    """This SKU's row: its laptop, its colour and the price its page shows now."""
+    row = session.exec(select(LaptopSku).where(func.upper(LaptopSku.sku) == sku.upper())).first()
+    if row is None:
+        row = LaptopSku(laptop_id=laptop_id, sku=sku)
+    row.colour = colour or row.colour
+    row.price_rm = price or row.price_rm  # no price read: the last one stands
+    row.updated_at = datetime.now(timezone.utc)
+    session.add(row)
+    session.commit()
 
 
 def process_raw_laptop_data(raw_laptop_id: str, session: Session) -> dict:
@@ -677,6 +714,12 @@ def _process_raw_laptop_data(
         model_codes_replaced: list[dict] = []
         # Stored values kept because the extraction came back empty for them.
         fields_kept: list[dict] = []
+        # SKUs attached to a laptop that already existed, and laptops whose SKUs show
+        # different prices (decisions 15 and 16).
+        skus_attached: list[dict] = []
+        sku_price_differences: list[dict] = []
+        _features = (raw_data.raw_specs_dump or {}).get("scraped_features")
+        _brand_id = raw_data.brand_id
 
         # 5. Map the AI output to your SQLModel (Laptop) and upsert to DB
         # With several variants, which one is the SKU would be a guess.
@@ -702,20 +745,45 @@ def _process_raw_laptop_data(
             laptop_data["product_name"] = checked_name
 
             existing = _laptop_by_sku(session, sku) if sku else None
+            # No laptop holds the SKU. One machine is sold under several (HP's colour
+            # pages, a renamed ROG SKU), so look for the laptop this page is another SKU
+            # of: same brand, product line and specs, read from the page's own spec
+            # table. None when the specs cannot be read: then the slug decides, as before.
+            specs = page_specs(_features) if sku and existing is None else None
+            if specs is not None:
+                existing = same_machine(
+                    _product_name, specs, session.exec(select(Laptop).where(Laptop.brand_id == _brand_id)).all()
+                )
+                if existing is not None:
+                    skus_attached.append({
+                        "raw_id": str(raw_laptop_id), "laptop_id": str(existing.id),
+                        "model_code": existing.model_code, "sku": sku, "colour": page_colour(_features),
+                    })
             if existing is None:
-                existing = session.exec(
+                by_slug = session.exec(
                     select(Laptop).where(Laptop.model_code == laptop_data["model_code"])
                 ).first()
-                # A slug spells out specs, so two SKUs of one spec can share it. The
-                # lookup above missed, so a SKU stored here is another machine's.
-                if existing and sku and existing.manufacturer_sku:
+                # A slug spells out specs, so two SKUs of one spec can share it. The page
+                # is another machine when the SKU lookup missed and either its specs were
+                # read and fit no laptop, or the slug's laptop holds a SKU of its own.
+                if by_slug and sku and (specs is not None or by_slug.manufacturer_sku):
                     laptop_data["model_code"] = f"{laptop_data['model_code']}-{sku.lower()}"
-                    existing = None
+                else:
+                    existing = by_slug
+
+            # The price the laptop takes from this page: the page's own, or the lowest of
+            # the laptop's SKUs when it has several (decision 16).
+            price = variant.price_rm
+            if existing and sku and price > 0:
+                price, difference = _lowest_sku_price(session, existing, sku, price)
+                if difference:
+                    sku_price_differences.append(difference)
+                laptop_data["price_rm"] = price
 
             if existing:
                 old_price = existing.price_rm
                 # Price history: only record if price actually changed and is non-zero
-                price_changed = variant.price_rm > 0 and variant.price_rm != existing.price_rm
+                price_changed = price > 0 and price != existing.price_rm
 
                 # 0.0 is the schema's "price unknown", not a price. Writing it over
                 # a real one turned a laptop that HAD a price into one that reads as
@@ -752,9 +820,11 @@ def _process_raw_laptop_data(
 
                 if price_changed:
                     session.add(LaptopPriceHistory(
-                        laptop_id=existing.id, price_rm=variant.price_rm, source=PriceSource.PAGE.value,
+                        laptop_id=existing.id, price_rm=price, source=PriceSource.PAGE.value,
                     ))
                     session.commit()
+                if sku:
+                    _store_sku(session, existing.id, sku, page_colour(_features), variant.price_rm)
 
                 categories_linked += _sync_laptop_categories(
                     session, existing.id, variant.categories, category_map
@@ -787,6 +857,8 @@ def _process_raw_laptop_data(
                         laptop_id=new_laptop.id, price_rm=new_laptop.price_rm, source=PriceSource.PAGE.value,
                     ))
                     session.commit()
+                if sku:
+                    _store_sku(session, new_laptop.id, sku, page_colour(_features), variant.price_rm)
 
                 categories_linked += _sync_laptop_categories(
                     session, new_laptop.id, variant.categories, category_map
@@ -809,6 +881,8 @@ def _process_raw_laptop_data(
             "model_codes_replaced": model_codes_replaced,
             "fields_kept": fields_kept,
             "writes": writes,
+            "skus_attached": skus_attached,
+            "sku_price_differences": sku_price_differences,
         }
 
     except Exception as e:
