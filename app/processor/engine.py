@@ -125,11 +125,21 @@ def _sync_laptop_categories(
     return added
 
 
+# Where a scraper leaves the maker's SKU in a raw row: ROG pages as "SKU", HP pages
+# as the part number in their own spec table.
+_SKU_KEYS = ("SKU", "Product Info / Sku")
+
+
 def raw_sku(raw_specs_dump: Optional[dict]) -> Optional[str]:
-    """The SKU a scraper put in a raw row (`specs["SKU"]`), if it did."""
+    """The maker's SKU in a raw row, if its scraper found one (see _SKU_KEYS)."""
     features = (raw_specs_dump or {}).get("scraped_features")
-    sku = features.get("SKU") if isinstance(features, dict) else None
-    return sku.strip() if isinstance(sku, str) and sku.strip() else None
+    if not isinstance(features, dict):
+        return None
+    for key in _SKU_KEYS:
+        sku = features.get(key)
+        if isinstance(sku, str) and sku.strip():
+            return sku.strip()
+    return None
 
 
 # An ASUS or Acer model code or SKU: S5406SAL, G615L-MS5068W, A715-59G-54Q6.
