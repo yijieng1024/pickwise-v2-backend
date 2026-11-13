@@ -824,3 +824,7 @@ def go_live_failed_conditions(laptop, same_code_others, cpu_benchmarks, gpu_benc
     """The go-live check (plan step 11, decision 4): the conditions a laptop fails."""
     from app.laptops.go_live import failed_conditions
     return failed_conditions(laptop, same_code_others, cpu_benchmarks, gpu_benchmarks)
+
+
+# The first ROG and HP re-scrape, predicted - app/scripts/rescrape_dry_run.py
+from app.scripts.rescrape_dry_run import plan as rescrape_plan  # noqa: E402,F401
