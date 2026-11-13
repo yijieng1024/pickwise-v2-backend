@@ -33,6 +33,7 @@ from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
 from app.processor.apple_name import SPECS_PAGES
+from app.processor.engine import raw_sku
 from app.scraper.apple_options_fetch import run_options_step
 from app.scraper.apple_scraper import crawl_apple_specs_links, scrape_apple_buy_page, scrape_official_website
 from app.scraper.asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
@@ -215,11 +216,58 @@ def _update_target(session: Session, target: ScrapeTarget, scrape_status: str) -
     session.commit()
 
 
+# Sites whose pages carry the maker's SKU (plan step 11, decision 6): the processor
+# finds the same laptop by it, so a re-scrape updates a row and makes no second one.
+# www.asus.com (TUF included) has no SKU and goes by the LLM's slug: new URLs only.
+RESCRAPED_HOSTS = frozenset({"rog.asus.com", "www.hp.com"})
+
+
+def rescraped_every_run(url: str) -> bool:
+    """A page a bulk run fetches again every time, not only when new or failed."""
+    return urlsplit(url).netloc.lower() in RESCRAPED_HOSTS
+
+
 def rescrapable(brand_name: str, url: str) -> bool:
-    """Apple specs pages are fetched again every run, and the new fetch replaces the
-    page's raw row (decided 2026-11-03): the buy page needs today's specs, and a stored
-    June page would otherwise be read forever. Other brands keep the skip rule until step 11."""
-    return brand_name.lower() == "apple" and url.rstrip("/").endswith("/specs")
+    """A page fetched again although it is stored, the new fetch replacing its raw row.
+    Apple specs pages (decided 2026-11-03): the buy page needs today's specs, and a stored
+    June page would otherwise be read forever. ROG and HP pages: see RESCRAPED_HOSTS.
+    Every other page keeps the skip rule."""
+    return (brand_name.lower() == "apple" and url.rstrip("/").endswith("/specs")) or rescraped_every_run(url)
+
+
+def bulk_targets(session: Session, brand_id: UUID) -> List[ScrapeTarget]:
+    """
+    What a bulk run of one brand scrapes: targets never scraped, failed, or with newly
+    uploaded HTML, and every page that is re-scraped each run. `html_uploaded` is named
+    because a target that failed for want of HTML already has last_scraped_at stamped,
+    so fresh HTML arriving afterwards would otherwise never be re-picked.
+    """
+    active = session.exec(
+        select(ScrapeTarget)
+        .where(ScrapeTarget.brand_id == brand_id, ScrapeTarget.is_active == True)  # noqa: E712
+        .order_by(ScrapeTarget.created_at, ScrapeTarget.id)  # type: ignore[arg-type]
+    ).all()
+    return [
+        t for t in active
+        if t.last_scraped_at is None
+        or t.scrape_status in (ScrapeStatus.FAILED, ScrapeStatus.HTML_UPLOADED)
+        or rescraped_every_run(t.url)
+    ]
+
+
+def unchanged(stored: RawScrapLaptop, fresh: RawScrapLaptop) -> bool:
+    """
+    Whether a re-scrape found what is stored (decision 7): the product name, the prices
+    and the specs are equal. Those are everything the processor reads from a raw row, so
+    an unchanged row would be extracted into the same laptop: it is not sent again, which
+    saves LLM quota and keeps hand fixes on a laptop whose page did not change. Photos
+    are left out: a new image URL alone is not a reason to process a laptop again.
+    """
+    return (
+        stored.raw_product_name == fresh.raw_product_name
+        and stored.raw_prices == fresh.raw_prices
+        and stored.raw_specs_dump == fresh.raw_specs_dump
+    )
 
 
 def stored_rows_of(url: str):
@@ -287,6 +335,7 @@ async def _process_target(
     # Process each variant result
     url_had_failure = False
     url_variants_saved = 0
+    url_variants_kept = 0  # re-scraped, stored row left as it is
 
     for variant in variant_results:
         if variant.get("status") == "failed":
@@ -301,13 +350,6 @@ async def _process_target(
         suffix = variant.get("source_url_suffix", "")
         source_url = f"{url}{suffix}"
 
-        # A re-scraped Apple specs page replaces its one raw row (source_url is unique).
-        stored = rescrapable(brand_name, url) and session.exec(
-            select(RawScrapLaptop).where(RawScrapLaptop.source_url == source_url)
-        ).first()
-        if stored:
-            session.delete(stored)
-            session.flush()
         raw_laptop = RawScrapLaptop(
             source_url=source_url,
             brand_id=brand_pk,
@@ -321,17 +363,35 @@ async def _process_target(
             },
             processing_status="pending",
         )
+        # A re-scraped page replaces its raw row (source_url is unique), as an Apple specs page does.
+        stored = rescrapable(brand_name, url) and session.exec(
+            select(RawScrapLaptop).where(RawScrapLaptop.source_url == source_url)
+        ).first()
+        # ROG and HP: the stored row stays when nothing changed, and when the page
+        # fetched now has no SKU, because processing it again would then go by the slug.
+        if stored and rescraped_every_run(url) and (
+            raw_sku(raw_laptop.raw_specs_dump) is None or unchanged(stored, raw_laptop)
+        ):
+            url_variants_kept += 1
+            continue
+        if stored:
+            session.delete(stored)
+            session.flush()
         session.add(raw_laptop)
         session.commit()
         url_variants_saved += 1
 
     # Stamp status based on outcome
     final_status = (
-        _success_status(brand_name) if url_variants_saved > 0 else ScrapeStatus.FAILED
+        _success_status(brand_name) if url_variants_saved + url_variants_kept > 0 else ScrapeStatus.FAILED
     )
     _update_target(session, target, final_status)
 
-    if not url_had_failure:
+    if not url_had_failure and url_variants_saved == 0 and url_variants_kept:
+        # Fetched, and nothing to process: the page is as stored.
+        report.skipped += 1
+        report.results.append(UrlResult(url=url, status="skipped", error="unchanged since the last scrape"))
+    elif not url_had_failure:
         report.succeeded += 1
         report.results.append(
             UrlResult(
@@ -427,23 +487,8 @@ async def run_bulk_scrape(
     if brand is None:
         raise ValueError(f"Brand with id={brand_id} not found.")
 
-    # 2. Query pending + previously-failed + newly-uploaded URLs for this brand.
-    #    `html_uploaded` must be here explicitly: a target that failed for want
-    #    of HTML already has last_scraped_at stamped, so fresh HTML arriving
-    #    afterwards would otherwise never be re-picked.
-    pending_targets: List[ScrapeTarget] = list(
-        session.exec(
-            select(ScrapeTarget).where(
-                ScrapeTarget.brand_id == brand_id,
-                ScrapeTarget.is_active == True,        # noqa: E712
-                or_(
-                    ScrapeTarget.last_scraped_at == None,  # noqa: E711
-                    ScrapeTarget.scrape_status == ScrapeStatus.FAILED,
-                    ScrapeTarget.scrape_status == ScrapeStatus.HTML_UPLOADED,
-                ),
-            )
-        ).all()
-    )
+    # 2. Pending, previously failed and newly uploaded URLs, and the pages re-scraped every run
+    pending_targets = bulk_targets(session, brand_id)
 
     report = BulkScrapeReport(
         brand_name=brand.name,

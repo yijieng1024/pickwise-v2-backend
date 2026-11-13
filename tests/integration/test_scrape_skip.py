@@ -53,4 +53,11 @@ def test_apple_specs_page_is_scraped_again(session, monkeypatch):
 
 
 def test_other_brands_keep_the_skip_rule(session, monkeypatch):
+    # www.asus.com: no SKU on its pages, so a stored page is never fetched again
+    assert _target_run(session, monkeypatch, "Asus", "https://www.asus.com/my/x/techspec/") == ["June"]
+
+
+def test_a_rescraped_page_with_no_sku_keeps_its_stored_row(session, monkeypatch):
+    # HP pages are fetched again (step 11), but a fetch that carries no SKU does not
+    # replace the stored row: the processor would match it by slug alone
     assert _target_run(session, monkeypatch, "HP", "https://www.hp.com/my-en/x/specs/") == ["June"]

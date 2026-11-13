@@ -46,6 +46,7 @@ from app.users.models import User
 from .bulk_scraper import (
     SCRAPERS,
     _success_status,
+    bulk_targets,
     run_bulk_scrape,
     run_feed_crawl,
     run_scrape_for_targets,
@@ -752,19 +753,7 @@ async def bulk_scrape(
         _refuse_while_options_fetch(session)
     refuse_if_running(session, JobType.SCRAPE_AND_PROCESS, "A scrape or processing job is already running.")
 
-    queued = len(
-        session.exec(
-            select(ScrapeTarget.id).where(
-                ScrapeTarget.brand_id == request.brand_id,
-                ScrapeTarget.is_active == True,  # noqa: E712
-                or_(
-                    ScrapeTarget.last_scraped_at == None,  # noqa: E711
-                    ScrapeTarget.scrape_status == ScrapeStatus.FAILED,
-                    ScrapeTarget.scrape_status == ScrapeStatus.HTML_UPLOADED,
-                ),
-            )
-        ).all()
-    )
+    queued = len(bulk_targets(session, request.brand_id))
 
     job = create_job(
         session,
