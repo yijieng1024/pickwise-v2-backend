@@ -246,7 +246,17 @@ def _variant_fields(variant, brand_id, image_urls, raw_specs_dump) -> dict:
 _RESULT_LISTS = (
     "identity_conflicts", "split_failures", "field_parse_failures", "fields_kept", "apple_configs_skipped",
     "not_on_buy_page", "matched_suspended", "relisted", "price_changes", "prices_not_overwritten", "unresolved_configs",
+    "writes",
 )
+
+
+def _write(raw_id, laptop_id, action: str, old_price=None, new_price=None) -> dict:
+    """One entry of a result's `writes`: what a raw row did to one laptop. The prices
+    are there only for an update that changed the price."""
+    entry = {"raw_id": str(raw_id), "laptop_id": str(laptop_id) if laptop_id else None, "action": action}
+    if action == "updated" and old_price != new_price:
+        entry.update(old_price=old_price, new_price=new_price)
+    return entry
 
 # Prepended to each specs-page size section on a buy-page run: the configurations are
 # the buy page's, so the LLM is asked only what each chip option of that size is like.
@@ -289,6 +299,7 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
     brand_id, image_urls, specs_dump = raw_data.brand_id, specs_raw.image_urls, specs_raw.raw_specs_dump
     session.commit()  # the LLM calls below hold no connection
 
+    writes: list[dict] = []  # outside the try: each laptop is committed as it is written
     try:
         templates: dict = {}
         for section in sections:
@@ -343,8 +354,10 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                         session.add(LaptopPriceHistory(laptop_id=laptop.id, price_rm=price,
                                                        source=PriceSource.APPLE_BUY_PAGE.value))
                     saved += 1
+                    write = _write(raw_id, laptop.id, "inserted")
                 else:
                     laptop = session.get(Laptop, entry["laptop_id"])
+                    old_price = laptop.price_rm
                     data.pop("model_code")  # the lookup key, never overwritten
                     kept = []
                     for key, value in data.items():
@@ -365,7 +378,9 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                         laptop.price_checked_at = now
                     session.add(laptop)
                     updated += 1
+                    write = _write(raw_id, laptop.id, "updated", old_price, laptop.price_rm)
                 session.commit()
+                writes.append(write)
                 categories_linked += _sync_laptop_categories(session, laptop.id, template.categories, category_map)
 
         raw_data.processing_status = "completed"
@@ -381,12 +396,13 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
             "field_parse_failures": parse_failures,
             "apple_configs_skipped": skipped,
             "unresolved_configs": [{**c, "raw_id": raw_id} for c in unresolved],
+            "writes": writes,
             **{key: planned[key] for key in ("not_on_buy_page", "matched_suspended", "relisted", "identity_conflicts",
                                               "price_changes", "prices_not_overwritten")},
         }
     except Exception as e:
         session.rollback()
-        return {**fail(str(e)), "status": "error"}
+        return {**fail(str(e), writes=writes), "status": "error"}
 
 
 def apple_buy_rows(session) -> tuple[list[dict], dict]:
@@ -423,7 +439,20 @@ def _laptop_by_sku(session: Session, sku: str) -> Optional[Laptop]:
     return next((l for l in holders if l.manufacturer_sku.upper() == sku.upper()), holders[0] if holders else None)
 
 
-def process_raw_laptop_data(
+def process_raw_laptop_data(raw_laptop_id: str, session: Session) -> dict:
+    """
+    Process one raw row. The result's `writes` has one entry per laptop the row wrote
+    (raw_id, laptop_id, inserted or updated, and the old and new price of an update that
+    changed it). A row that wrote no laptop has one entry: skipped, laptop_id null. The
+    go-live check and the summary email read it (plan step 11, commit 4).
+    """
+    result = _process_raw_laptop_data(raw_laptop_id, session)
+    if not result.get("writes"):
+        result["writes"] = [_write(raw_laptop_id, None, "skipped")]
+    return result
+
+
+def _process_raw_laptop_data(
     raw_laptop_id: str,
     session: Session,
 ) -> dict:
@@ -606,6 +635,7 @@ def process_raw_laptop_data(
     _spec_blobs = [_raw_specs_json]
     session.commit()
 
+    writes: list[dict] = []  # outside the try: each laptop is committed as it is written
     try:
         variants = []
         for spec_blob in _spec_blobs:
@@ -672,6 +702,7 @@ def process_raw_laptop_data(
                     existing = None
 
             if existing:
+                old_price = existing.price_rm
                 # Price history: only record if price actually changed and is non-zero
                 price_changed = variant.price_rm > 0 and variant.price_rm != existing.price_rm
 
@@ -718,6 +749,7 @@ def process_raw_laptop_data(
                     session, existing.id, variant.categories, category_map
                 )
                 updated_count += 1
+                writes.append(_write(raw_laptop_id, existing.id, "updated", old_price, existing.price_rm))
             else:
                 new_laptop = Laptop(**laptop_data)
                 if new_laptop.price_rm > 0:
@@ -747,6 +779,7 @@ def process_raw_laptop_data(
                     session, new_laptop.id, variant.categories, category_map
                 )
                 saved_count += 1
+                writes.append(_write(raw_laptop_id, new_laptop.id, "inserted"))
 
         raw_data.processing_status = "completed"
 
@@ -762,6 +795,7 @@ def process_raw_laptop_data(
             "prices_not_extracted": prices_not_extracted,
             "model_codes_replaced": model_codes_replaced,
             "fields_kept": fields_kept,
+            "writes": writes,
         }
 
     except Exception as e:
@@ -773,6 +807,7 @@ def process_raw_laptop_data(
         return {
             "status": "error",
             "message": str(e),
+            "writes": writes,
         }
 
 
