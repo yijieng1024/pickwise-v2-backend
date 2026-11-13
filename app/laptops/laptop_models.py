@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pydantic import field_validator
 from sqlmodel import Relationship, SQLModel, Field
-from sqlalchemy import Column, DateTime, Index, JSON, String, UniqueConstraint, event, func, text
+from sqlalchemy import Boolean, Column, DateTime, Index, JSON, String, UniqueConstraint, event, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
@@ -161,6 +161,17 @@ class Laptop(LaptopBase, table=True):
     price_checked_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
+    # Step 11: the go-live check is holding this laptop. Set by the processor on every
+    # laptop it inserts (always `inactive`); cleared when the check passes it, or when
+    # an admin changes its status. The check (app/laptops/go_live.py) reads only rows
+    # with this set, so a laptop set inactive by hand is never activated by it.
+    # Not on LaptopBase, so no request body can set it.
+    go_live_held: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default=text("false"))
+    )
+    # The conditions the last go-live check found failing, for the admin catalog.
+    # Null when not held, or held and not checked yet.
+    go_live_failures: Optional[list] = Field(default=None, sa_column=Column(JSONB, nullable=True))
     # The Dashboard's "latest catalog change", which PickScore staleness is
     # judged against. Set by _deactivate_unpriced on every ORM insert/update;
     # Core UPDATEs bypass it.
@@ -239,6 +250,8 @@ class LaptopRead(LaptopBase):
     id: uuid.UUID
     created_at: datetime
     price_checked_at: Optional[datetime] = None
+    go_live_held: bool = False
+    go_live_failures: Optional[list] = None
 
 
 class LaptopLastPriceRead(LaptopRead):

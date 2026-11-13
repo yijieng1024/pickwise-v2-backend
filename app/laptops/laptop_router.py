@@ -283,6 +283,11 @@ def update_laptop(
     update_data = laptop_update.model_dump(exclude_unset=True)
     price_confirmed = update_data.pop("price_confirmed", False)
     price_changed = "price_rm" in update_data and update_data["price_rm"] != db_laptop.price_rm
+    # An admin who changes the status has decided: the go-live check lets go. Only a
+    # change counts, because the admin form sends every field on every save.
+    if "status" in update_data and update_data["status"] != db_laptop.status:
+        db_laptop.go_live_held = False
+        db_laptop.go_live_failures = None
 
     for key, value in update_data.items():
         setattr(db_laptop, key, value)

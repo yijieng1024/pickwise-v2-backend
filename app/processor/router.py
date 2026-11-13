@@ -14,6 +14,7 @@ from app.processor.engine import (
     _CATEGORIZE_TOKENS_PER_CALL,
     _EXTRACTION_TOKENS_PER_CALL,
     categorize_untagged_laptops,
+    go_live_report,
     process_pending_laptops,
     process_raw_laptop_data,
     PROCESSABLE_STATUSES,
@@ -57,6 +58,8 @@ def process_single_laptop(
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("message"))
 
+    # Not a job, but the same rule: a laptop this inserted is held until the check passes it.
+    result["go_live"] = go_live_report(session)
     return result
 
 

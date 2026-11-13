@@ -17,6 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.logger import get_logger
 from app.laptops.family_service import resolve_family_id
+from app.laptops.go_live import run_go_live_check
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, PriceSource
 from app.laptops.price_guide import sku_key
 from app.laptops.laptop_category_model import LaptopCategory
@@ -272,7 +273,7 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
     """
     One Apple buy page: its configurations, matched and priced by apple_buy.plan before
     any LLM call, then written with the shared specs the LLM extracted from the specs
-    page, one call per size section. New rows are inactive (going live is step 11).
+    page, one call per size section. New rows are inactive and held for the go-live check.
     """
     def fail(message: str, **lists) -> dict:
         raw_data.processing_status = "failed"
@@ -344,7 +345,7 @@ def _process_apple_buy_page(session, raw_data, raw_id, buy, product, line, extra
                 price = config.get("price_rm") or 0.0
                 data.pop("price_rm", None)
                 if kind == "insert":
-                    laptop = Laptop(**data, price_rm=price, status="inactive")
+                    laptop = Laptop(**data, price_rm=price, status="inactive", go_live_held=True)
                     laptop.part_numbers = config.get("part_numbers")
                     laptop.price_checked_at = now if price else None
                     laptop.family_id = resolve_family_id(session, laptop.product_name)
@@ -751,7 +752,9 @@ def _process_raw_laptop_data(
                 updated_count += 1
                 writes.append(_write(raw_laptop_id, existing.id, "updated", old_price, existing.price_rm))
             else:
-                new_laptop = Laptop(**laptop_data)
+                # Inactive and held: a new laptop goes live only through the go-live
+                # check (app/laptops/go_live.py), whatever started the scrape.
+                new_laptop = Laptop(**laptop_data, status=LaptopStatus.INACTIVE.value, go_live_held=True)
                 if new_laptop.price_rm > 0:
                     new_laptop.price_checked_at = datetime.now(timezone.utc)
                 new_laptop.manufacturer_sku = sku
@@ -941,6 +944,20 @@ def _bounded_json(payload, limit: int = _MAX_SPEC_CHARS) -> str:
     return blob[:limit] + _TRUNCATION_NOTE
 
 
+def go_live_report(session: Session) -> dict:
+    """
+    The go-live check, run at the end of every processing job: this run's new laptops
+    and every one held back before. A check that raises does not fail the job, whose
+    laptops are written already; they stay held, and the next run checks them again.
+    """
+    try:
+        return run_go_live_check(session)
+    except Exception as e:
+        session.rollback()
+        logger.exception("go-live check failed")
+        return {"error": str(e)}
+
+
 def process_pending_laptops(
     session: Session,
     limit: int = 100,
@@ -979,6 +996,7 @@ def process_pending_laptops(
             "total_variants_updated": 0,
             "pending_remaining": 0,
             "details": [],
+            "go_live": go_live_report(session),
         }
 
     results_summary: list[dict] = []
@@ -1068,6 +1086,7 @@ def process_pending_laptops(
         **collected,
         "pending_remaining": pending_remaining,
         "details": results_summary,
+        "go_live": go_live_report(session),
     }
 
 

@@ -108,6 +108,7 @@ def test_new_config_is_built_by_code_and_inactive(session, apple, monkeypatch):
     assert (row.processor_model, row.display_brightness_nits) == ("Apple M5 Pro (15-core)", 1000)
     assert (row.ram_gb, row.ssd_gb, row.price_rm) == (24, 1024, 10299.0), "the LLM's memory, storage or price was stored"
     assert row.status == "inactive", "a new buy-page row went live by itself"
+    assert row.go_live_held is True, "a new buy-page row is not held for the go-live check"
     assert row.part_numbers == ["MGDN4ZP/A", "MGDR4ZP/A"]
     [history] = session.exec(processor.select(LaptopPriceHistory).where(LaptopPriceHistory.laptop_id == row.id)).all()
     assert (history.price_rm, history.source) == (10299.0, "apple-buy-page")

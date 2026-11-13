@@ -818,3 +818,9 @@ def pico_profile_text(pref_fields, background_fields):
     pref = LaptopUserPreference(user_id=uid, **pref_fields) if pref_fields is not None else None
     bg = UserBackground(user_id=uid, **background_fields) if background_fields is not None else None
     return _profile_text(pref, bg)
+
+
+def go_live_failed_conditions(laptop, same_code_others, cpu_benchmarks, gpu_benchmarks):
+    """The go-live check (plan step 11, decision 4): the conditions a laptop fails."""
+    from app.laptops.go_live import failed_conditions
+    return failed_conditions(laptop, same_code_others, cpu_benchmarks, gpu_benchmarks)
