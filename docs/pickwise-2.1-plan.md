@@ -1174,7 +1174,10 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 **9. ROG: the page price wins over the guide (decision of 2026-10-27).**
 - Reason: the ROG spec page carries a price per SKU. A guide apply already never overwrites a price whose source is `page`, and lists it as differing. No change in code
 
-**10. ASUS website price.** `www.asus.com` does show a price on some pages, not on all. Find out first which pages show one and why the scraper does not capture it.
+**10. ASUS website price.** *(Cancelled, Jack, 2026-11-13; see below. Kept for the record.)* `www.asus.com` does show a price on some pages, not on all. Find out first which pages show one and why the scraper does not capture it.
+- **Cancelled (Jack, 2026-11-13): ASUS no longer publishes website prices.** A laptop with no guide price is filled by hand or by the next guide
+  - Reason: the investigation ran on 2026-11-13. Of the 110 stored `www.asus.com` pages, 45 had a price in June (27 with one configuration, 18 with several, always one shared price). Five of the 27 were fetched again: the page's `PDPriceList`, `modelPrice` and `modelSkuPrice` are empty, and `odinapi.asus.com/recent-data/apiv2/GetModelPrice`, the endpoint the page names, returned every price field empty for all five (`Price`, `Regular_Price`, `SpecialPrice`, `Mapping_Price`, `HistoricLowPrice`)
+  - So no `website` price source is built, and commit 7 below is dropped. 31 ASUS laptops outside ROG were inactive with no price that day
 - Known already: the scraper returns `"N/A"` for every `www.asus.com` page on purpose. The `PDPriceList` / `modelPrice` / `modelSkuPrice` lookup was deleted after the 2026-10-27 decision, because `GetPrice` returns a shared "starting at" price. So the investigation is: which pages show a price, which field holds it, whether it is the price of one configuration, and how a single-configuration page is told apart
 - Rule: a page with one configuration and no guide row uses the website price, with source `website`. When a guide later covers that laptop, the guide price replaces it
 - Reason: a single-configuration page's price is that laptop's price, and without it the laptop waits inactive for a guide that may never list it. The guide is the better source when it exists
@@ -1194,6 +1197,19 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 - Reason: the quietest hour of the week. Two runs writing the same laptops would collide, so the run does not start beside another scrape or processing job. A skipped run that said nothing would look like a week with no changes
 - The run does not detect deploys (Jack, 2026-11-12; supersedes "if a deploy ... is active")
   - Reason: it writes to the database directly from Actions (decision 2), so a deploy does not touch it. The real problem was `reset_stale_jobs()` failing every active job on a Render start, the run's own job included. The marker for jobs that run outside Render (commit 2) solves that: `reset_stale_jobs()` leaves those jobs alone
+
+**15. One laptop can carry several SKUs (Jack, 2026-11-13).** When a scraped variant's SKU matches no laptop, the processor looks for an existing laptop of the same brand, the same product line, and the same CPU, GPU, RAM, storage and screen size. Found: the SKU is attached to that laptop, with the colour name when the page gives one, and that laptop is updated. Nothing is inserted. Not found: a new laptop is inserted as before, held by the go-live check.
+- Reason: one machine is sold under several SKUs. HP has one page per colour, each with its own part number: 150 pages for 120 laptops on 2026-11-13, and 7 of the 18 groups of sibling pages differ only in colour and part number. ROG renames a SKU and keeps the specs (`G614P-WRV068W` became `G614P-WTS178W`). Before this rule a second SKU of a laptop always made a second laptop, because a laptop held one SKU
+- The product line is required, not only the specs: grouped by specs alone, an OmniBook X 14 page landed with two OmniBook 5 Flip pages
+- The product line is read from the name on both sides, the page's and the laptop's: the words before the first bracket, screen size (`14 inch`), or one of `Laptop`, `Notebook`, `Mobile Workstation`, `Gaming`, `PC`. `HP OmniBook 5 Flip 2-in-1 14 inch Laptop ...` gives `hp omnibook 5 flip 2-in-1`; `ROG Strix G16 (2025) G614 (...)` gives `rog strix g16`
+- The specs are read from the page's own spec table, not from the LLM's output, so the dry run (`python -m app.scripts.rescrape_dry_run`), which calls no LLM, decides exactly as a real run does. A page whose specs cannot be read is matched by slug as before
+- A page whose specs were read and matched no laptop is a new laptop even when its slug is taken: the slug gets the SKU appended
+- Stored in a new table, `laptop_skus` (one row per SKU: laptop, SKU, colour, last price). `laptops.manufacturer_sku` stays the SKU the product guides match on
+
+**16. Several SKUs with different prices: the laptop keeps the lowest, and the run reports the difference (Jack, 2026-11-13).**
+- Reason: a laptop has one price, and the lowest is the one a buyer can get. A price that silently followed whichever page was processed last would move with the processing order. 4 of the 18 HP sibling groups showed different prices on 2026-11-13
+- Each SKU's last price is kept in `laptop_skus`, so a SKU whose price rises does not leave the laptop on a price no page shows any more
+- The job result lists each difference as `sku_price_differences`, and each attached SKU as `skus_attached`
 
 **Pipeline per run (replaces the list above)**
 1. Crawl, then scrape: new URLs for all three sites, and a re-scrape of ROG and HP pages with a SKU
@@ -1215,7 +1231,7 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 4. The processor records raw → `laptop_id` in the job result, the single-record route included (decided 2026-11-03)
 5. New laptops inserted `inactive`, and the go-live check as one function with tests, returning the condition that failed and reporting a null family. It runs at the end of every processing job, and sets the held-back marker the weekly re-check reads (decisions 3, 4, 5)
 6. Re-scrape for ROG and HP pages with a SKU: HP's SKU read first, then the skip lifted, the raw row replaced, and unchanged content kept from the processor (decisions 6, 7)
-7. ASUS website price: the investigation in decision 10 first, then the source `website`, the single-configuration rule, and the guide replacing it
+7. ~~ASUS website price~~: cancelled 2026-11-13 (decision 10). In its place: several SKUs on one laptop and the lowest-price rule (decisions 15 and 16), with the dry run of the first ROG and HP re-scrape
 8. One pipeline script in the order above, run by hand first
 9. The summary email through Brevo, email only (decisions 8, 13)
 10. The weekly cron, skipped only while another scrape or processing job is active (decision 14), last
