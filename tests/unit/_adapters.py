@@ -832,3 +832,7 @@ from app.scripts.rescrape_dry_run import plan as rescrape_plan  # noqa: E402,F40
 
 # Several SKUs on one laptop (step 11, decision 15) - app/laptops/sku_match.py
 from app.laptops import sku_match  # noqa: E402,F401
+
+
+# The weekly pipeline's settings (step 11, item 8) - app/pipeline/settings.py
+from app.pipeline import settings as pipeline_settings  # noqa: E402,F401

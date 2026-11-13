@@ -1211,6 +1211,12 @@ Decided after a read-only survey of the code the same day. Where a decision diff
 - Each SKU's last price is kept in `laptop_skus`, so a SKU whose price rises does not leave the laptop on a price no page shows any more
 - The job result lists each difference as `sku_price_differences`, and each attached SKU as `skus_attached`
 
+**17. The pipeline's settings live in the database and are edited in admin; its secrets do not (Jack, 2026-11-13).** One row in `pipeline_settings`: on/off (default off), the weekday (default Sunday, Malaysia time), the report email (default empty, which sends none), the price jump threshold in percent (default 30, 1 to 100) and a switch per site, ASUS, ROG and HP (default all on). Apple and Acer are never in the pipeline and have no switch. Admin-only `GET` and `PUT /admin/settings/pipeline`.
+- Reason: these are choices Jack makes while reading a run's email, and they should not need a deploy. The database URL and the API keys stay GitHub secrets, which the workflow reads: a secret in a table any admin page can read is a secret one bug away from the browser
+- ASUS and ROG are one brand row (`asus`) on two sites, so the switches are per site: the ASUS crawl still covers both sites, and only the pages of the sites switched on are queued and scraped
+- **The workflow wakes up every day at 03:00 Malaysia time (19:00 UTC) and the script decides whether today is the day.** Reason: the cron is in the workflow file and cannot be changed from admin, so a weekday chosen in admin needs a daily wake-up. A day that is not the chosen one, or a pipeline switched off, exits before it writes anything, so it leaves no job record. Supersedes decision 14's cron `0 19 * * 6`; the hour is unchanged
+- **No "run now" button in admin.** Reason: the button would need a GitHub token on Render that can start workflows. A manual run is started from the Actions tab (`workflow_dispatch`), which ignores on/off and the weekday
+
 **Pipeline per run (replaces the list above)**
 1. Crawl, then scrape: new URLs for all three sites, and a re-scrape of ROG and HP pages with a SKU
 2. Process the raw rows that are new or changed

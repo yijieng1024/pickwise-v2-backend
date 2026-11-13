@@ -17,6 +17,9 @@ from app.common.app_settings import REVIEW_PAUSE_REASON_KEY, delete_setting, set
 from app.common.llm_config import MODEL_OPTIONS
 from app.database import get_session
 from app.logger import get_logger
+from app.pipeline.settings import (
+    PipelineSettings, PipelineSettingsRead, PipelineSettingsUpdate, read_settings, update_settings,
+)
 from app.processor.engine import DEFAULT_EXTRACTION_MODEL
 from app.users.auth import get_current_admin
 
@@ -362,6 +365,32 @@ def update_processor_model(
         session, llm_config.PROCESSOR, LLMUseUpdate(primary=payload.model), check_model_list=False,
     )
     return _processor_read()
+
+
+# --------------------------------------------------------------------------
+# /pipeline -- the weekly pipeline's settings (plan step 11, item 8)
+# --------------------------------------------------------------------------
+def _pipeline_read(row: PipelineSettings) -> PipelineSettingsRead:
+    return PipelineSettingsRead(**row.model_dump(exclude={"id"}))
+
+
+@router.get("/pipeline", response_model=PipelineSettingsRead)
+def read_pipeline_settings(session: Session = Depends(get_session)) -> PipelineSettingsRead:
+    """The weekly pipeline's settings. Secrets are not here: they are GitHub secrets."""
+    return _pipeline_read(read_settings(session))
+
+
+@router.put("/pipeline", response_model=PipelineSettingsRead)
+def update_pipeline_settings(
+    payload: PipelineSettingsUpdate,
+    session: Session = Depends(get_session),
+) -> PipelineSettingsRead:
+    """
+    Change any of the settings; an omitted field is left as it is. 422 for a weekday
+    that is not a day name, an email that is not an address (empty turns the email
+    off), or a price jump threshold outside 1 to 100. Read by the next run.
+    """
+    return _pipeline_read(update_settings(session, payload))
 
 
 # --------------------------------------------------------------------------
