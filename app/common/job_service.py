@@ -189,11 +189,14 @@ class JobProgress:
 
         self._update(_apply)
 
-    def mark_failed(self, message: str) -> None:
+    def mark_failed(self, message: str, result: Optional[dict[str, Any]] = None) -> None:
+        """*result* keeps what a run that stopped part-way did (the weekly pipeline)."""
         def _apply(job: BackgroundJob) -> None:
             job.status = JobStatus.FAILED
             job.finished_at = _utcnow()
             job.error_message = message[:2000]
+            if result is not None:
+                job.result = result
 
         self._update(_apply)
 

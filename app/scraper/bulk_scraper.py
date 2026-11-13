@@ -24,7 +24,7 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, List, Optional
+from typing import Awaitable, Callable, Iterable, List, Optional
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -433,11 +433,21 @@ def _finalise(report: BulkScrapeReport, run_ts: datetime) -> BulkScrapeReport:
     return report
 
 
-async def run_feed_crawl(brand_id: UUID, session: Session) -> dict:
+def _on_hosts(url: str, hosts: Optional[Iterable[str]]) -> bool:
+    return hosts is None or urlsplit(url).netloc.lower() in hosts
+
+
+async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Iterable[str]] = None) -> dict:
     """
     Crawl one brand's site from its own `base_scrape_url` and queue every URL
     not yet in laptop_scrape_urls. Returns the counts, in total and per site
     (one ASUS crawl covers www.asus.com and rog.asus.com).
+
+    *hosts* limits what is queued to those sites (the weekly pipeline's switches):
+    the crawl itself is the brand's, so one ASUS crawl still walks both sites.
+    `missing_pages` lists the brand's active targets on those sites that the crawl did
+    not find (plan step 11, decision 8: reported, never a status change); empty when
+    the crawl found nothing, which is a failed crawl and not a catalog with no pages.
     """
     brand: Optional[LaptopBrand] = session.get(LaptopBrand, brand_id)
     if brand is None:
@@ -451,7 +461,7 @@ async def run_feed_crawl(brand_id: UUID, session: Session) -> dict:
     session.commit()
 
     crawl, _ = scrapers
-    found_urls = await crawl(start_url, session, brand_id)
+    found_urls = [url for url in await crawl(start_url, session, brand_id) if _on_hosts(url, hosts)]
 
     sites: dict[str, dict[str, int]] = {}
     added = 0
@@ -464,7 +474,17 @@ async def run_feed_crawl(brand_id: UUID, session: Session) -> dict:
             added += 1
     session.commit()
 
-    return {"brand": brand_name, "total_found": len(found_urls), "added_to_queue": added, "sites": sites}
+    found = set(found_urls)
+    missing = [] if not found else [
+        t.url for t in session.exec(
+            select(ScrapeTarget).where(ScrapeTarget.brand_id == brand_id, ScrapeTarget.is_active == True)  # noqa: E712
+            .order_by(ScrapeTarget.url)
+        ).all()
+        if t.url not in found and _on_hosts(t.url, hosts)
+    ]
+    session.commit()
+    return {"brand": brand_name, "total_found": len(found_urls), "added_to_queue": added, "sites": sites,
+            "missing_pages": missing}
 
 
 # ---------------------------------------------------------------------------
@@ -472,11 +492,12 @@ async def run_feed_crawl(brand_id: UUID, session: Session) -> dict:
 # ---------------------------------------------------------------------------
 
 async def run_bulk_scrape(
-    brand_id: UUID, session: Session, progress=None
+    brand_id: UUID, session: Session, progress=None, hosts: Optional[Iterable[str]] = None
 ) -> BulkScrapeReport:
     """
     Perform a full bulk scrape for all pending (last_scraped_at IS NULL)
-    ScrapeTarget rows that belong to *brand_id*.
+    ScrapeTarget rows that belong to *brand_id*. *hosts* limits it to those sites
+    (the weekly pipeline's switches); None is every site of the brand.
 
     Returns a BulkScrapeReport describing the outcome of every URL processed.
     """
@@ -488,7 +509,7 @@ async def run_bulk_scrape(
         raise ValueError(f"Brand with id={brand_id} not found.")
 
     # 2. Pending, previously failed and newly uploaded URLs, and the pages re-scraped every run
-    pending_targets = bulk_targets(session, brand_id)
+    pending_targets = [t for t in bulk_targets(session, brand_id) if _on_hosts(t.url, hosts)]
 
     report = BulkScrapeReport(
         brand_name=brand.name,

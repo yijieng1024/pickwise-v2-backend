@@ -84,6 +84,8 @@ class JobType:
     PASSMARK_GPU = "benchmarks.refresh_gpu"
     PRICE_GUIDE_APPLY = "price_guide.apply"
     APPLE_OPTIONS_FETCH = "apple.options_fetch"
+    # The weekly pipeline (plan step 11), run in GitHub Actions: one job for the whole run.
+    WEEKLY_PIPELINE = "pipeline.weekly"
 
     ALL = (
         PROCESS_PENDING,
@@ -102,12 +104,14 @@ class JobType:
         PASSMARK_GPU,
         PRICE_GUIDE_APPLY,
         APPLE_OPTIONS_FETCH,
+        WEEKLY_PIPELINE,
     )
 
     # One lock for scraping and processing: a scrape replaces the raw rows that
     # processing reads, and two runs of either would write the same rows. The
-    # feed crawler is in it because it adds the targets a bulk scrape reads.
-    SCRAPE_AND_PROCESS = (BULK_SCRAPE, SCRAPE_TARGETS, FEED_CRAWLER, PROCESS_PENDING)
+    # feed crawler is in it because it adds the targets a bulk scrape reads, and the
+    # weekly pipeline because it crawls, scrapes and processes.
+    SCRAPE_AND_PROCESS = (BULK_SCRAPE, SCRAPE_TARGETS, FEED_CRAWLER, PROCESS_PENDING, WEEKLY_PIPELINE)
 
     # One lock for both lists: each run holds a connection for about 12 minutes.
     PASSMARK = (PASSMARK_CPU, PASSMARK_GPU)

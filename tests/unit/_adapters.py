@@ -836,3 +836,8 @@ from app.laptops import sku_match  # noqa: E402,F401
 
 # The weekly pipeline's settings (step 11, item 8) - app/pipeline/settings.py
 from app.pipeline import settings as pipeline_settings  # noqa: E402,F401
+
+
+# The weekly pipeline (step 11, items 8 to 10) - app/scripts/weekly_pipeline.py
+from app.scripts import weekly_pipeline  # noqa: E402,F401
+from app.scraper import bulk_scraper  # noqa: E402,F401
