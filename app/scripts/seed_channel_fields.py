@@ -37,6 +37,7 @@ Usage:
 
 On Windows set PYTHONUTF8=1 or the CJK channel names print as mojibake.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import re
 from collections import Counter, defaultdict

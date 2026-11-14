@@ -15,6 +15,7 @@ not exactly the 6 (one missing or duplicated), or any of them is linked to a lap
 Rolled back, exit 1: after the deletes, anything other than those rows changed (the
 protected categories, their links, or the totals).
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import json
 import sys

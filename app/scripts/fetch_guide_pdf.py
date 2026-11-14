@@ -7,6 +7,7 @@ The key file's path comes from GOOGLE_SERVICE_ACCOUNT_KEY_FILE. Prints the saved
 path as the last line, and the file's name, size and time before it. A download that
 does not match Drive's own size and MD5 is deleted and fails.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import hashlib
 import os

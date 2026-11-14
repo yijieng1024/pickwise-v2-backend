@@ -28,6 +28,7 @@ Usage:
     python -m app.scripts.reprocess_reviews run --apply [--max-reviews N] [--max-windows 400]
     python -m app.scripts.reprocess_reviews swap [--apply]
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import time
 

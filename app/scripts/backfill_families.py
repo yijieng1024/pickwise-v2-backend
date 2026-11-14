@@ -52,6 +52,7 @@ Usage:
     python -m app.scripts.backfill_families --all-statuses
     python -m app.scripts.backfill_families --apply
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import re
 import sys

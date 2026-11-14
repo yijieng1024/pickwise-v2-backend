@@ -9,6 +9,7 @@ Reads and writes TEST_DATABASE_URL unless APPLE_REPAIR_TARGET=production is set
 not found or matches more than one row, or a row's status is not the expected one.
 Written through the ORM, so the mapper event stamps updated_at.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import json
 import sys

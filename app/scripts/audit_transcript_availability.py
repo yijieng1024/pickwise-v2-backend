@@ -31,6 +31,7 @@ Usage:
     python -m app.scripts.audit_transcript_availability --sample 40
     python -m app.scripts.audit_transcript_availability --status pending --sample 10
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import time
 from collections import Counter

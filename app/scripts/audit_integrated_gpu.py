@@ -14,6 +14,7 @@ Usage:
     python -m app.scripts.audit_integrated_gpu --validate-only
     python -m app.scripts.audit_integrated_gpu --all-statuses
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import sys
 from collections import Counter, defaultdict

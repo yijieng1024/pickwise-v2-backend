@@ -22,6 +22,7 @@ Usage:
     python -m app.scripts.dedup_review_chunks            # dry run
     python -m app.scripts.dedup_review_chunks --apply
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 from collections import Counter, defaultdict
 

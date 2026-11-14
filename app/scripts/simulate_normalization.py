@@ -25,6 +25,7 @@ Usage:
     python -m app.scripts.simulate_normalization --model-code <code>
     python -m app.scripts.simulate_normalization --curves minmax percentile
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import bisect
 import math

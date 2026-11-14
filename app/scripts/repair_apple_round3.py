@@ -25,6 +25,7 @@ one refuses the whole plan, as does a model_code collision. family_id, embedding
 Pick Scores are not touched. Written through the ORM, so the mapper event stamps
 updated_at: these are real data changes, and the Dashboard should call scores stale.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import json
 import sys

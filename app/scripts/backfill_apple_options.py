@@ -13,6 +13,7 @@ a few seconds per call, and a 403, 429 or captcha stops the fetch.
 else: a failed kit keeps whatever it had. The snapshots hold the whole table (a few
 hundred rows) before and after. Safe to run again.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import json
 import sys

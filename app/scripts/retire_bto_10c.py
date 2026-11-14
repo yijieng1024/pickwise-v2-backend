@@ -15,6 +15,7 @@ than one row, a status is not the expected one, the re-point target is not exact
 active standard config with the same chip (or not the surveyed f3ebcce1), or a link
 would collide with one the target already has.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import json
 import sys

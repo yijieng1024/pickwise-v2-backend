@@ -16,6 +16,7 @@ Usage:
     python -m app.scripts.decode_review_titles            # dry run
     python -m app.scripts.decode_review_titles --apply
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import html
 

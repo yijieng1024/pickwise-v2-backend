@@ -13,6 +13,7 @@ Reads and writes TEST_DATABASE_URL unless DATA_FIX_TARGET=production is set
 (app/common/db_target.py). Rolled back, exit 1: the update touched a different
 number of rows than planned, or any value is still set afterwards.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import json
 import sys

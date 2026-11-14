@@ -15,6 +15,7 @@ laptop, because a scrape of that SKU should update the row people can see.
 A Core UPDATE, so the mapper event doesn't stamp `updated_at`: a SKU changes no score,
 and the Dashboard would call every Pick Score stale.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import collections
 import re

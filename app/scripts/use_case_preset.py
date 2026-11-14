@@ -20,6 +20,7 @@ Usage (Windows PowerShell, from the repo root):
     python scripts\\find_use_case_presets.py
     python scripts\\find_use_case_presets.py --root app --also frontend/src
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import importlib
 import pkgutil

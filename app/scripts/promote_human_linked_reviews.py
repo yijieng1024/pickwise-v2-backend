@@ -17,6 +17,7 @@ Usage:
     python -m app.scripts.promote_human_linked_reviews            # dry run
     python -m app.scripts.promote_human_linked_reviews --apply
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 
 from sqlalchemy import text

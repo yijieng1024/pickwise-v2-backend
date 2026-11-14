@@ -16,6 +16,7 @@ not exactly the six target fields below, or a row is in neither state: not yet m
 (admin_note set, help_text exactly NEW_HELP). The second state is a row this script
 already applied; it gets no help-text change, so a re-run only applies what is new.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import json
 import sys

@@ -23,6 +23,7 @@ Which line a row is: there is no link from a laptop to its raw page, so
 Only model_code and product_name. A Core UPDATE, so the mapper event doesn't stamp
 `updated_at` and the Dashboard does not call every Pick Score stale.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import sys
 from datetime import datetime, timezone

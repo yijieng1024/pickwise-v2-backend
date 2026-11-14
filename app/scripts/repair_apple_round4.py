@@ -23,6 +23,7 @@ Refused, nothing written: a named row is missing, a source line is not on the pa
 the parser does not give 5c87abdd max RAM 36 and a 96W charger (the plan's check).
 Written through the ORM, so the mapper event stamps updated_at.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import json
 import sys

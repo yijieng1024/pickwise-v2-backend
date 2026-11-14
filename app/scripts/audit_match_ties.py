@@ -46,6 +46,7 @@ Usage:
     python -m app.scripts.audit_match_ties --status pending
     python -m app.scripts.audit_match_ties --show 25
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import re
 from collections import Counter, defaultdict

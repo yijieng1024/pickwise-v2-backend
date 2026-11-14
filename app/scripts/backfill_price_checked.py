@@ -21,6 +21,7 @@ Usage:
     python -m app.scripts.backfill_price_checked
     python -m app.scripts.backfill_price_checked --apply
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import sys
 

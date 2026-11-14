@@ -12,6 +12,7 @@ Usage:
     python -m app.scripts.audit_benchmark_matches
     python -m app.scripts.audit_benchmark_matches --all-statuses
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 from collections import defaultdict
 

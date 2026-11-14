@@ -28,6 +28,7 @@ Usage:
     python -m app.scripts.link_review_c_families            # dry run
     python -m app.scripts.link_review_c_families --apply
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 
 from sqlalchemy import text

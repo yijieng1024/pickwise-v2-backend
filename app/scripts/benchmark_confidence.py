@@ -16,6 +16,7 @@ Usage (Windows PowerShell, from the repo root):
     python app\\scripts\\benchmark_confidence.py
     python app\\scripts\\benchmark_confidence.py --show-below 0.9 --limit 40
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import sys
 from collections import Counter

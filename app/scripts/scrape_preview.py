@@ -12,6 +12,7 @@ Usage:
 
 Exits 1 if any URL (or any variant) failed.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import asyncio
 import contextlib

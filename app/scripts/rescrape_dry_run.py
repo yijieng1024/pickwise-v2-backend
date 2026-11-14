@@ -26,6 +26,7 @@ For each variant on each page, one of:
 own spec table, so they are what a real run does. One thing is assumed: that the LLM
 extracts one variant from each page. A page it splits into several is matched by slug.
 """
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 import argparse
 import asyncio
 import collections
