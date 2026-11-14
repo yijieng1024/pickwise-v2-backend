@@ -6,46 +6,9 @@ from sqlalchemy import pool
 from alembic import context
 
 from sqlmodel import SQLModel
-from app.laptops.laptop_models import Laptop, LaptopEmbedding, LaptopPriceHistory
-from app.scraper.models import RawScrapLaptop
-from app.laptops.brand_model import LaptopBrand
-from app.laptops.family_model import LaptopFamily
-from app.laptops.laptop_category_model import LaptopCategory
-from app.taxonomy.product_type_model import ProductType
-from app.taxonomy.category_model import Category
-from app.users.models import User
-from app.users.questionnaire_model import QuestionnaireQuestion
-from app.scraper.models import ScrapeTarget
-from app.scraper.raw_html_model import RawProductHtml
-from app.benchmark.model import CPUBenchmark, GPUBenchmark
-from app.rag.models import (
-    Conversation,
-    Message,
-    ConversationLaptop,
-    PipelineEvalLog,
-)
-from app.reviews.models import (
-    YoutubeChannel,
-    RawYoutubeReview,
-    LaptopReviewChunk,
-    LaptopReviewSummary,
-)
-from app.reviews.link_model import ReviewLaptopLink
-from app.agent.monitoring_models import AgentRunLog
-# Every table model must be imported here, or it is absent from
-# SQLModel.metadata and `alembic revision --autogenerate` emits a DROP TABLE
-# for the live table it cannot see. Importing any name from a module registers
-# all of that module's tables, so one import per module is enough.
-from app.saved.models import SavedLaptop
-from app.common.job_model import BackgroundJob
-from app.common.app_settings import AppSetting
-from app.common.llm_usage import LLMUsageLog
-from app.laptops.pickscore_general import LaptopPickScore
-from app.laptops.price_guide_model import PriceGuide
-from app.laptops.option_model import LaptopOption
-from app.users.avatar_model import UserAvatar
-from app.users.background_model import UserBackground
-from app.pipeline.settings import PipelineSettings
+# Every table model, or autogenerate emits a DROP TABLE for the live table it
+# cannot see. The list lives in app/all_models.py, shared with the scripts.
+import app.all_models  # noqa: E402,F401
 
 load_dotenv()
 

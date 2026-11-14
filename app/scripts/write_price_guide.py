@@ -22,6 +22,7 @@ from typing import Optional
 from sqlalchemy import create_engine, insert, select, update
 from sqlalchemy.engine import Connection
 
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 from app.common.db_target import host_of, write_target
 from app.laptops.price_guide_model import PriceGuide, PriceGuideKind, PriceGuideRow
 

@@ -50,6 +50,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
+import app.all_models  # noqa: F401  every table, so a flush can resolve every foreign key
 from app.common.db_target import host_of, write_target
 from app.common.job_model import BackgroundJob, JobStarter, JobStatus, JobType
 from app.pipeline.settings import WEEKDAYS, PipelineSettings, read_settings
