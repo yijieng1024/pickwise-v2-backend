@@ -358,13 +358,19 @@ def dry_run(session: Session, settings: PipelineSettings, limit: Optional[int]) 
             by_site[t.url.split("/")[2].lower()].append(t)
         targets = [t for site in by_site.values() for t in site[:limit]]
     stored, laptops = rescrape.read_stored(connection), rescrape.read_laptops(connection)
+    # The fetch takes minutes: give the connection back for it, or Supabase drops it
+    # idle, then read on in a new read-only transaction.
+    session.rollback()
     variants, failures = asyncio.run(rescrape.fetch(targets, stored))
+    session.execute(text("SET TRANSACTION READ ONLY"))
     rows = rescrape.plan(variants, laptops)
     counts = collections.Counter(r["outcome"] for r in rows)
     print(f"            re-scrape of {len(targets)} ROG/HP pages: {len(rows)} variants, {len(failures)} failed fetches | "
           + ", ".join(f"{k} {counts[k]}" for k in ("unchanged", "no SKU", "SKU", "attach", "insert", "slug")))
-    out["steps"]["scrape"] = {"queued": queued, "rescrape": dict(counts),
-                              "failed_pages": [{"url": u, "error": e} for u, e in failures]}
+    # Per brand, the shape the real run's scrape step has, which the email reads.
+    out["steps"]["scrape"] = {brand: {"pages": queued[brand], "failed_pages": [
+        {"url": u, "error": e} for u, e in failures if u.split("/")[2].lower() in sites[brand]]} for brand in sites}
+    out["rescrape"] = dict(counts)
 
     pending = session.exec(
         select(func.count()).select_from(RawScrapLaptop).where(RawScrapLaptop.processing_status.in_(("pending", "failed")))
@@ -391,7 +397,7 @@ def dry_run(session: Session, settings: PipelineSettings, limit: Optional[int]) 
         fills += [{"laptop_id": m["id"], "model_code": m["model_code"], "product_name": m["product_name"],
                    "old_price": m["price_rm"], "new_price": m["guide_price_rm"], "source": "guide"}
                   for m in fill if m["price_rm"]]
-        guides[kind.value] = {"guide": guide.filename, "fill": len(fill), **p["counts"]}
+        guides[kind.value] = {"guide": guide.filename, "filled": len(fill), **p["counts"]}
         print(f"guides      {kind.value}: {guide.filename} ({guide.uploaded_at:%Y-%m-%d}) would fill {len(fill)},"
               f" {p['counts']['differs_from_guide']} differ, {p['counts']['ambiguous'] + p['counts']['conflict']} unclear")
     out["steps"]["guides"] = guides
@@ -403,7 +409,7 @@ def dry_run(session: Session, settings: PipelineSettings, limit: Optional[int]) 
                         .where(Laptop.status == LaptopStatus.INACTIVE.value)).all()
     cpu = [(r.cpu_name, r.cpu_mark) for r in session.exec(select(CPUBenchmark)).all()]
     gpu = [(r.gpu_name, r.gpu_mark) for r in session.exec(select(GPUBenchmark)).all()]
-    go = {"activated": [], "held": [], "no_family": []}
+    go = {"checked": len(held), "activated": [], "held": [], "no_family": []}
     for laptop in held:
         entry = {"laptop_id": str(laptop.id), "model_code": laptop.model_code, "product_name": laptop.product_name}
         failed = failed_conditions(laptop, 0, cpu, gpu)
