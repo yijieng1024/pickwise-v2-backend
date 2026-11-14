@@ -153,3 +153,12 @@ def test_a_word_no_name_contains_changes_nothing():
     result = lt.rank("MacBook Pro M9", M6_ROWS)
     assert result["match"] == "candidates"
     assert _families(result) == [("pro14", 5), ("pro14p", 1), ("pro16", 1), ("pro16p", 1)]
+
+
+def test_a_candidate_shows_its_best_matching_row():
+    # No row says "nano", so this stays candidates; in the 14-inch family the M6 rows
+    # name more of the query than the M5 Max that sorts first.
+    result = lt.rank("Apple MacBook Pro M6 nano", M6_ROWS)
+    assert result["match"] == "candidates"
+    examples = {c["family"]: c["example"] for c in result["candidates"]}
+    assert "(M6," in examples["pro14"]

@@ -17,7 +17,8 @@ untouched. What differs is what happens after scoring:
   the close ones: the score cannot tell "M6" from "M5", because "(M6," is one token.
 - Close = within 10 points of the top score. The close rows are grouped by family. One
   family is a single answer with its configurations; several are candidates, one per
-  family, and the tool never picks one by itself.
+  family, each with its best-matching row as the example, and the tool never picks one
+  by itself.
 """
 import re
 from typing import Iterable, Mapping, Optional
@@ -86,6 +87,7 @@ def rank(query: str, rows: Iterable[Mapping]) -> dict:
     if not scored:
         return {"match": "none"}
     top = max(s for s, _ in scored)
+    score = {r["id"]: s for s, r in scored}
     close = [r for s, r in sorted(scored, key=lambda t: (-t[0], t[1]["product_name"] or "")) if s >= top - CLOSE]
     # token_set_ratio splits on spaces, so "m6" never meets "(m6," and every MacBook Pro
     # scores alike: a row naming every word of the query wins the tie.
@@ -105,8 +107,14 @@ def rank(query: str, rows: Iterable[Mapping]) -> dict:
         return {"match": "single", "family": members[0]["family_name"] or members[0]["product_name"],
                 "configurations": [_config(r) for r in members[:_MAX_CONFIGS]],
                 "more_configurations": max(0, len(members) - _MAX_CONFIGS)}
+
+    def best(members: list[dict]) -> dict:
+        """The member that matches the query best, not the one that sorts first: the
+        highest score, then the most words of the query named, then the name."""
+        return min(members, key=lambda r: (-score[r["id"]], -len(words & _words(r)), r["product_name"] or ""))
+
     return {"match": "candidates", "candidates": [
-        {"family": m[0]["family_name"] or m[0]["product_name"], "example": m[0]["product_name"],
+        {"family": m[0]["family_name"] or m[0]["product_name"], "example": best(m)["product_name"],
          "configurations": len(m), "statuses": sorted({r["status"] for r in m})}
         for m in families.values()
     ]}
