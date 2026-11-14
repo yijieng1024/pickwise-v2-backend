@@ -290,7 +290,13 @@ def apply(engine, settings: PipelineSettings, scheduled: bool) -> dict:
             params={"scheduled": scheduled, "sites": settings.sites()},
             started_by=JobStarter.SCHEDULE if scheduled else JobStarter.ADMIN, runs_outside_render=True,
         )
-        progress = JobProgress(job.id)
+        job_id = job.id
+        # End this session's transaction before JobProgress writes the job in its own
+        # sessions: a skipped run never uses this one again, and a transaction left
+        # open here is rolled back on close, over those writes when they share a
+        # connection (the integration tier).
+        session.commit()
+        progress = JobProgress(job_id)
         progress.mark_processing()
         try:
             if busy:
@@ -308,7 +314,7 @@ def apply(engine, settings: PipelineSettings, scheduled: bool) -> dict:
             progress.mark_failed(f"stopped at {result['stopped_at']}: {result['error']}", result)
         else:
             progress.mark_completed(result)
-        return {"job_id": str(job.id), **result}
+        return {"job_id": str(job_id), **result}
 
 
 # ---------------------------------------------------------------------------
