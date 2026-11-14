@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 def pipeline(session, admin_client, monkeypatch):
     """admin_client points every module's engine at the test's connection, which is
     what JobProgress's own short sessions use."""
-    monkeypatch.setattr(wp, "send_summary", lambda *a, **k: {"sent": False, "reason": "stubbed"}, raising=False)
+    monkeypatch.setattr(wp, "send_summary", lambda *a, **k: {"sent": False, "reason": "stubbed"})
     return lambda steps, scheduled=True: (
         monkeypatch.setattr(wp, "STEPS", steps),
         wp.apply(session.connection(), PipelineSettings(report_email=""), scheduled),
@@ -52,6 +52,7 @@ def test_a_busy_lock_skips_the_run_and_still_leaves_a_job(session, pipeline):
     [job] = _jobs(session)
     assert job.status == JobStatus.COMPLETED
     assert job.result["skipped"] == result["skipped"] == f"another scrape or processing job is active (job {busy.id})"
+    assert job.result["email"] == {"sent": False, "reason": "stubbed"}
 
 
 def test_a_stopped_run_is_a_failed_job_that_keeps_what_ran(session, pipeline):
@@ -64,3 +65,4 @@ def test_a_stopped_run_is_a_failed_job_that_keeps_what_ran(session, pipeline):
     assert job.status == JobStatus.FAILED
     assert job.error_message == "stopped at scrape: RuntimeError: no database"
     assert (job.result["steps"], job.result["not_run"]) == ({"crawl": {"asus": {}}}, ["process"])
+    assert job.result["email"] == {"sent": False, "reason": "stubbed"}

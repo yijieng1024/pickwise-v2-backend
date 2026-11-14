@@ -21,6 +21,9 @@ Steps, in order, each one the service function the admin's buttons call:
   embeddings  laptops the processor wrote, and laptops with no embedding
   pick_scores generate-all, only if a laptop went live or a price changed
 
+Every run that starts (a skipped or stopped one too) ends with the summary email
+(app/pipeline/summary.py) to the report email set in admin; the result says if it went.
+
 One job record (`pipeline.weekly`) holds the whole run: started_by, runs_outside_render
 and every step's result. An item that fails (one brand's crawl, one guide, one list) is
 recorded and the run goes on; a step that fails as a whole stops the run, and the
@@ -50,6 +53,7 @@ from sqlmodel import Session, select
 from app.common.db_target import host_of, write_target
 from app.common.job_model import BackgroundJob, JobStarter, JobStatus, JobType
 from app.pipeline.settings import WEEKDAYS, PipelineSettings, read_settings
+from app.pipeline.summary import build_summary, send_summary
 
 MALAYSIA = ZoneInfo("Asia/Kuala_Lumpur")
 # The processor's own ceiling per run; a week's pages are far below it.
@@ -299,6 +303,7 @@ def apply(engine, settings: PipelineSettings, scheduled: bool) -> dict:
         except Exception as e:
             progress.mark_failed(f"{type(e).__name__}: {e}")
             raise
+        result["email"] = send_summary(result, settings.report_email, settings.price_jump_percent)
         if result.get("stopped_at"):
             progress.mark_failed(f"stopped at {result['stopped_at']}: {result['error']}", result)
         else:
@@ -415,6 +420,10 @@ def dry_run(session: Session, settings: PipelineSettings, limit: Optional[int]) 
         print(f"pick_scores would run: {len(go['activated'])} laptops go live, {len(fills)} guide prices change")
     else:
         print("pick_scores runs only if the processing changes a price or a new laptop goes live")
+
+    subject, body, _ = build_summary(out, settings.price_jump_percent)
+    to = settings.report_email or "nobody: no report email is set in admin, so none is sent"
+    print(f"\nemail to {to}\nSubject: {subject}\n\n{body}")
     return out
 
 
