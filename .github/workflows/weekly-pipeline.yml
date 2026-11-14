@@ -1,0 +1,54 @@
+name: Weekly pipeline
+
+# The weekly pipeline (plan step 11, items 8 to 10): crawl, scrape and process the sites
+# switched on in admin, apply the latest guides, refresh PassMark, re-check held
+# laptops, embed, recalculate Pick Score, and email the summary.
+#
+# Wakes every day at 19:00 UTC (03:00 in Malaysia). The cron cannot be changed from
+# admin, so the script reads the admin settings (on/off, weekday) and exits at once,
+# with no job record, on every other day. Started by hand from the Actions tab, it runs
+# whatever the settings say about on/off and the weekday (the site switches still apply).
+#
+# Never pull_request: this workflow holds the production DATABASE_URL.
+
+on:
+  schedule:
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    concurrency:
+      group: weekly-pipeline
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Run the pipeline
+        env:
+          WEEKLY_PIPELINE_TARGET: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PRODUCTION_DB_REF: ${{ secrets.PRODUCTION_DB_REF }}
+          # The processor and embeddings call Gemini; the summary goes out over Brevo.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          # Required by app/config.py to start; the pipeline signs nothing with it.
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "schedule" ]; then
+            python -m app.scripts.weekly_pipeline --apply --scheduled
+          else
+            python -m app.scripts.weekly_pipeline --apply
+          fi
