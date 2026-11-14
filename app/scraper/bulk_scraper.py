@@ -445,8 +445,8 @@ async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Itera
 
     *hosts* limits what is queued to those sites (the weekly pipeline's switches):
     the crawl itself is the brand's, so one ASUS crawl still walks both sites.
-    `missing_pages` lists the brand's active targets on those sites that the crawl did
-    not find (plan step 11, decision 8: reported, never a status change); empty when
+    `missing_pages` lists the brand's active targets on the sites the crawl found pages
+    on (and switched on) that it did not find (plan step 11, decision 8: reported, never a status change); empty when
     the crawl found nothing, which is a failed crawl and not a catalog with no pages.
     """
     brand: Optional[LaptopBrand] = session.get(LaptopBrand, brand_id)
@@ -480,7 +480,9 @@ async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Itera
             select(ScrapeTarget).where(ScrapeTarget.brand_id == brand_id, ScrapeTarget.is_active == True)  # noqa: E712
             .order_by(ScrapeTarget.url)
         ).all()
-        if t.url not in found and _on_hosts(t.url, hosts)
+        # Only the sites this crawl covered: a target on another host is not one it
+        # could have found, so it has not disappeared.
+        if t.url not in found and _on_hosts(t.url, {h.lower() for h in sites})
     ]
     session.commit()
     return {"brand": brand_name, "total_found": len(found_urls), "added_to_queue": added, "sites": sites,

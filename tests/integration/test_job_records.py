@@ -200,6 +200,9 @@ def test_a_crawl_is_a_job_whose_result_counts_pages_and_new_targets_per_site(sta
             "www.asus.com": {"pages_found": 2, "targets_added": 1},
             "rog.asus.com": {"pages_found": 1, "targets_added": 1},
         },
+        # The brand's https://example.test/laptop target is on a site this crawl did
+        # not cover, so it has not disappeared.
+        "missing_pages": [],
     }
     queued = set(session.exec(select(ScrapeTarget.url).where(ScrapeTarget.brand_id == brand.id)).all())
     assert set(CRAWLED) <= queued
