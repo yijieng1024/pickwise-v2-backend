@@ -117,3 +117,39 @@ def test_market_price_catalog_layer_is_unchanged():
     assert market_price._catalog_lookup("TUF A16 2023", None, session) == {"found": False}
     found = market_price._catalog_lookup("TUF F16", None, session)
     assert found["found"] is True and "candidates" not in found
+
+
+# The MacBook Pro M6 (2026-11-14): every MacBook Pro row scored the same, the four
+# families tied, and each showed its alphabetically first row (M5 Max), so Pico said
+# there was no M6. The production family has three M6 rows and an M5 Max.
+M6_ROWS = ROWS + [
+    _row("14-inch MacBook Pro Liquid Retina XDR (M6, 12-core CPU, 12-core GPU, 24GB RAM, 1TB SSD)", "pro14", 14.2),
+    _row("14-inch MacBook Pro Liquid Retina XDR (M6, 12-core CPU, 12-core GPU, 32GB RAM, 1TB SSD)", "pro14", 14.2),
+    _row("14-inch MacBook Pro Liquid Retina XDR (M5 Max, 18-core CPU, 32-core GPU, 36GB RAM, 2TB SSD)", "pro14", 14.2),
+]
+M6_NAMES = sorted(r["product_name"] for r in M6_ROWS if "(M6," in r["product_name"])
+
+
+def _families(result):
+    return sorted((c["family"], c["configurations"]) for c in result["candidates"])
+
+
+def test_a_chip_in_the_query_finds_that_chip_as_one_answer():
+    result = lt.rank("MacBook Pro M6", M6_ROWS)
+    assert result["match"] == "single"
+    assert result["family"] == "pro14"
+    assert sorted(c["product_name"] for c in result["configurations"]) == M6_NAMES
+
+
+def test_no_chip_still_gives_the_candidates():
+    result = lt.rank("MacBook Pro", M6_ROWS)
+    assert result["match"] == "candidates"
+    assert _families(result) == [("pro14", 5), ("pro14p", 1), ("pro16", 1), ("pro16p", 1)]
+
+
+def test_a_word_no_name_contains_changes_nothing():
+    # No row says "M9": no row contains every word, so the families are the ones
+    # "MacBook Pro" alone gives, as before.
+    result = lt.rank("MacBook Pro M9", M6_ROWS)
+    assert result["match"] == "candidates"
+    assert _families(result) == [("pro14", 5), ("pro14p", 1), ("pro16", 1), ("pro16p", 1)]

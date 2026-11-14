@@ -13,6 +13,8 @@ untouched. What differs is what happens after scoring:
   that year among the close ones. Left in, it pushed "TUF A16 2023" below the floor.
 - A standalone screen size (13, 14, 15, 16, 18) prefers rows of that size among the
   close ones: token_set_ratio does not tell "MacBook Pro 14" from a 16-inch Pro.
+- A row whose name holds every word of the query ("MacBook Pro M6") is preferred among
+  the close ones: the score cannot tell "M6" from "M5", because "(M6," is one token.
 - Close = within 10 points of the top score. The close rows are grouped by family. One
   family is a single answer with its configurations; several are candidates, one per
   family, and the tool never picks one by itself.
@@ -34,6 +36,7 @@ FLOOR = 75  # the catalog layer's _CATALOG_THRESHOLD
 CLOSE = 10
 _YEAR = re.compile(r"\b(20\d{2})\b")
 _SIZE = re.compile(r"(?<![\d.])(13|14|15|16|18)(?![\d.])")
+_WORD = re.compile(r"\w+")
 _FOUND = (LaptopStatus.ACTIVE.value, LaptopStatus.DISCONTINUED.value)
 _MAX_CONFIGS = 15
 
@@ -44,6 +47,11 @@ def _score(query: str, row: Mapping) -> float:
     if row.get("brand"):
         score = max(score, fuzz.token_set_ratio(query, f"{row['brand'].lower()} {name}"))
     return score
+
+
+def _words(row: Mapping) -> set[str]:
+    """The words of "brand name", lowercased, punctuation dropped: "(M6," is "m6"."""
+    return set(_WORD.findall(f"{row.get('brand') or ''} {row['product_name'] or ''}".lower()))
 
 
 def _prefer(rows: list[dict], keep) -> list[dict]:
@@ -79,6 +87,10 @@ def rank(query: str, rows: Iterable[Mapping]) -> dict:
         return {"match": "none"}
     top = max(s for s, _ in scored)
     close = [r for s, r in sorted(scored, key=lambda t: (-t[0], t[1]["product_name"] or "")) if s >= top - CLOSE]
+    # token_set_ratio splits on spaces, so "m6" never meets "(m6," and every MacBook Pro
+    # scores alike: a row naming every word of the query wins the tie.
+    words = set(_WORD.findall(q))
+    close = _prefer(close, lambda r: words <= _words(r))
     if size:
         close = _prefer(close, lambda r: int(r["display_size_inch"] or 0) == int(size.group(1)))
     if year:
