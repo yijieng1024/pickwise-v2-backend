@@ -282,11 +282,12 @@ def apply(engine, settings: PipelineSettings, scheduled: bool) -> dict:
     """An --apply run under one job record. Returns the job's result."""
     from app.common.job_service import JobProgress, create_job
 
+    steps = STEPS  # read once: the job's total and the steps run must be the same list
     with Session(engine) as session:
         started_at = datetime.now(timezone.utc)
         busy = busy_job(session)
         job = create_job(
-            session, job_type=JobType.WEEKLY_PIPELINE, total_count=0 if busy else len(STEPS),
+            session, job_type=JobType.WEEKLY_PIPELINE, total_count=0 if busy else len(steps),
             params={"scheduled": scheduled, "sites": settings.sites()},
             started_by=JobStarter.SCHEDULE if scheduled else JobStarter.ADMIN, runs_outside_render=True,
         )
@@ -302,7 +303,7 @@ def apply(engine, settings: PipelineSettings, scheduled: bool) -> dict:
             if busy:
                 result = {"skipped": f"another scrape or processing job is active (job {busy})"}
             else:
-                result = run_steps(Run(session, settings, started_at), on_step=lambda name: progress.advance(item=name))
+                result = run_steps(Run(session, settings, started_at), steps, on_step=lambda name: progress.advance(item=name))
                 result["went_live"] = went_live(result["steps"])
                 result["price_changes"] = price_changes(session, started_at)
                 session.commit()
