@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Iterable, List, Optional
@@ -449,36 +450,43 @@ def missing_urls(target_urls: Iterable[str], found_urls: Iterable[str]) -> list[
     return [url for key, url in first.items() if key not in found]
 
 
-def page_laptops(session: Session, urls: list[str]) -> dict[str, list[dict]]:
-    """The catalog laptops that came from each page: its stored raw rows' SKUs, held by
-    `laptops.manufacturer_sku` or `laptop_skus`. A page with no SKU (www.asus.com) traces
-    to none."""
-    from sqlalchemy import func
+def _name(text: str) -> str:
+    return " ".join(text.replace(",", " ").lower().split())
+
+
+def page_laptops(session: Session, brand_id: UUID, urls: list[str]) -> dict[str, list[dict]]:
+    """The brand's catalog laptops that came from each page, read from its stored raw rows:
+    the row's SKU or the longest model code in its name, held as a SKU or named in a
+    product name or model code, or a product name the same as the row's. Nothing links a laptop to its
+    page, and laptops from before the SKU table carry none, hence the fallbacks."""
     from app.laptops.laptop_models import Laptop, LaptopSku
+    from app.processor.engine import _MODEL_CODE_RE
     keys = {page_key(u): u for u in urls}
     if not keys:
         return {}
-    skus: dict[str, str] = {}  # SKU -> page url
-    raws = session.exec(select(RawScrapLaptop.source_url, RawScrapLaptop.raw_specs_dump).where(
-        or_(*[RawScrapLaptop.source_url.startswith(k.rstrip("/")) for k in keys]))).all()
-    for source_url, dump in raws:
-        sku, url = raw_sku(dump), keys.get(page_key(source_url))
-        if sku and url:
-            skus[sku.upper()] = url
+    raws = session.exec(select(RawScrapLaptop.source_url, RawScrapLaptop.raw_product_name, RawScrapLaptop.raw_specs_dump)
+                        .where(or_(*[RawScrapLaptop.source_url.startswith(k.rstrip("/")) for k in keys]))).all()
+    laptops = session.exec(select(Laptop).where(Laptop.brand_id == brand_id).order_by(Laptop.model_code)).all()
+    skus: dict = {}
+    for laptop_id, sku in session.exec(select(LaptopSku.laptop_id, LaptopSku.sku)).all():
+        skus.setdefault(laptop_id, set()).add(sku.upper())
+
     out: dict[str, list[dict]] = {}
-    if skus:
-        rows = session.exec(
-            select(Laptop.id, Laptop.model_code, Laptop.product_name, Laptop.status, Laptop.manufacturer_sku, LaptopSku.sku)
-            .join(LaptopSku, LaptopSku.laptop_id == Laptop.id, isouter=True)
-            .where(or_(func.upper(Laptop.manufacturer_sku).in_(skus), func.upper(LaptopSku.sku).in_(skus)))
-            .order_by(Laptop.model_code)).all()
-        seen = set()
-        for laptop_id, model_code, name, status, msku, sku in rows:
-            url = skus.get((sku or "").upper()) or skus.get((msku or "").upper())
-            if url and (url, laptop_id) not in seen:
-                seen.add((url, laptop_id))
-                out.setdefault(url, []).append({"laptop_id": str(laptop_id), "model_code": model_code,
-                                                "product_name": name, "status": status})
+    for source_url, raw_name, dump in raws:
+        url = keys.get(page_key(source_url))
+        if url is None:
+            continue
+        codes = {c.upper() for c in (raw_sku(dump), max(_MODEL_CODE_RE.findall((raw_name or "").upper()), key=len, default=""))
+                 if c}
+        named = [re.compile(rf"(?<![A-Z0-9]){re.escape(c)}(?![A-Z0-9])") for c in codes]
+        for l in laptops:
+            held = {(l.manufacturer_sku or "").upper(), *skus.get(l.id, ())}
+            text = f"{l.product_name} {l.model_code}".upper()
+            if codes & held or any(n.search(text) for n in named) or _name(l.product_name) == _name(raw_name or ""):
+                entry = {"laptop_id": str(l.id), "model_code": l.model_code, "product_name": l.product_name,
+                         "status": l.status}
+                if entry not in out.setdefault(url, []):
+                    out[url].append(entry)
     return out
 
 
@@ -529,7 +537,7 @@ async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Itera
     # Only the sites this crawl covered: a target on another host is not one it
     # could have found, so it has not disappeared.
     urls = missing_urls([u for u in targets if _on_hosts(u, covered)], found_urls)
-    laptops = page_laptops(session, urls)
+    laptops = page_laptops(session, brand_id, urls)
     missing = [{"url": u, "laptops": laptops.get(u, [])} for u in urls]
     session.commit()
     return {"brand": brand_name, "total_found": len(found_urls), "added_to_queue": added, "sites": sites,

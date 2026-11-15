@@ -60,6 +60,16 @@ def test_a_missing_page_names_the_laptops_that_came_from_it(session, asus):
         "product_name": laptop.product_name, "status": laptop.status}]}]
 
 
+def test_a_laptop_from_before_the_sku_table_is_traced_by_the_code_in_its_name(session, asus):
+    session.add(RawScrapLaptop(source_url=GONE, brand_id=asus.id, raw_product_name="ROG Strix G18 (2025) G815 (G815L-MS9063W)"))
+    laptop = make_laptop(asus.id, product_name="ROG Strix G18 (2025) G815 (G815L-MS9063W) - Ultra 9")
+    other = make_laptop(asus.id, product_name="ROG Strix G18 (2025) G815 (G815L-XYZ)")
+    session.add_all([laptop, other])
+    session.commit()
+    result = asyncio.run(bulk_scraper.run_feed_crawl(asus.id, session, hosts=["rog.asus.com"]))
+    assert [l["laptop_id"] for l in result["missing_pages"][0]["laptops"]] == [str(laptop.id)]
+
+
 def test_a_crawl_that_finds_nothing_reports_no_missing_pages(session, asus, monkeypatch):
     async def nothing(start_url, session, brand_id):
         return []
