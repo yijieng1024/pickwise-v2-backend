@@ -36,7 +36,7 @@ from app.processor.apple_name import SPECS_PAGES
 from app.processor.engine import raw_sku
 from app.scraper.apple_options_fetch import run_options_step
 from app.scraper.apple_scraper import crawl_apple_specs_links, scrape_apple_buy_page, scrape_official_website
-from app.scraper.asus_scraper import crawl_asus_specs_links, scrape_asus_laptop_specs
+from app.scraper.asus_scraper import _normalise_product_url as page_key, crawl_asus_specs_links, scrape_asus_laptop_specs
 from app.scraper.acer_scraper import crawl_acer_specs_links, scrape_acer_laptop_specs
 from app.scraper.hp_scraper import crawl_hp_specs_links, scrape_hp_laptop_specs
 from app.scraper.models import RawScrapLaptop, ScrapeStatus, ScrapeTarget
@@ -437,6 +437,51 @@ def _on_hosts(url: str, hosts: Optional[Iterable[str]]) -> bool:
     return hosts is None or urlsplit(url).netloc.lower() in hosts
 
 
+def missing_urls(target_urls: Iterable[str], found_urls: Iterable[str]) -> list[str]:
+    """The targets the crawl did not find, one per page: /spec, /techspec, a trailing
+    slash or a query reach the same page, so both sides are compared through the
+    crawler's own normalisation. Chromebooks are left out (decision of 2026-10-27)."""
+    found = {page_key(u) for u in found_urls}
+    first: dict[str, str] = {}
+    for url in target_urls:
+        if "chromebook" not in url.lower():
+            first.setdefault(page_key(url), url)
+    return [url for key, url in first.items() if key not in found]
+
+
+def page_laptops(session: Session, urls: list[str]) -> dict[str, list[dict]]:
+    """The catalog laptops that came from each page: its stored raw rows' SKUs, held by
+    `laptops.manufacturer_sku` or `laptop_skus`. A page with no SKU (www.asus.com) traces
+    to none."""
+    from sqlalchemy import func
+    from app.laptops.laptop_models import Laptop, LaptopSku
+    keys = {page_key(u): u for u in urls}
+    if not keys:
+        return {}
+    skus: dict[str, str] = {}  # SKU -> page url
+    raws = session.exec(select(RawScrapLaptop.source_url, RawScrapLaptop.raw_specs_dump).where(
+        or_(*[RawScrapLaptop.source_url.startswith(k.rstrip("/")) for k in keys]))).all()
+    for source_url, dump in raws:
+        sku, url = raw_sku(dump), keys.get(page_key(source_url))
+        if sku and url:
+            skus[sku.upper()] = url
+    out: dict[str, list[dict]] = {}
+    if skus:
+        rows = session.exec(
+            select(Laptop.id, Laptop.model_code, Laptop.product_name, Laptop.status, Laptop.manufacturer_sku, LaptopSku.sku)
+            .join(LaptopSku, LaptopSku.laptop_id == Laptop.id, isouter=True)
+            .where(or_(func.upper(Laptop.manufacturer_sku).in_(skus), func.upper(LaptopSku.sku).in_(skus)))
+            .order_by(Laptop.model_code)).all()
+        seen = set()
+        for laptop_id, model_code, name, status, msku, sku in rows:
+            url = skus.get((sku or "").upper()) or skus.get((msku or "").upper())
+            if url and (url, laptop_id) not in seen:
+                seen.add((url, laptop_id))
+                out.setdefault(url, []).append({"laptop_id": str(laptop_id), "model_code": model_code,
+                                                "product_name": name, "status": status})
+    return out
+
+
 async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Iterable[str]] = None) -> dict:
     """
     Crawl one brand's site from its own `base_scrape_url` and queue every URL
@@ -446,7 +491,9 @@ async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Itera
     *hosts* limits what is queued to those sites (the weekly pipeline's switches):
     the crawl itself is the brand's, so one ASUS crawl still walks both sites.
     `missing_pages` lists the brand's active targets on the sites the crawl found pages
-    on (and switched on) that it did not find (plan step 11, decision 8: reported, never a status change); empty when
+    on (and switched on) that it did not find, one per page and no Chromebooks, each with
+    the catalog laptops that came from it (plan step 11, decision 8: reported, never a
+    status change); empty when
     the crawl found nothing, which is a failed crawl and not a catalog with no pages.
     """
     brand: Optional[LaptopBrand] = session.get(LaptopBrand, brand_id)
@@ -474,16 +521,16 @@ async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Itera
             added += 1
     session.commit()
 
-    found = set(found_urls)
-    missing = [] if not found else [
-        t.url for t in session.exec(
-            select(ScrapeTarget).where(ScrapeTarget.brand_id == brand_id, ScrapeTarget.is_active == True)  # noqa: E712
-            .order_by(ScrapeTarget.url)
-        ).all()
-        # Only the sites this crawl covered: a target on another host is not one it
-        # could have found, so it has not disappeared.
-        if t.url not in found and _on_hosts(t.url, {h.lower() for h in sites})
-    ]
+    covered = {h.lower() for h in sites}
+    targets = session.exec(
+        select(ScrapeTarget.url).where(ScrapeTarget.brand_id == brand_id, ScrapeTarget.is_active == True)  # noqa: E712
+        .order_by(ScrapeTarget.url)
+    ).all() if found_urls else []
+    # Only the sites this crawl covered: a target on another host is not one it
+    # could have found, so it has not disappeared.
+    urls = missing_urls([u for u in targets if _on_hosts(u, covered)], found_urls)
+    laptops = page_laptops(session, urls)
+    missing = [{"url": u, "laptops": laptops.get(u, [])} for u in urls]
     session.commit()
     return {"brand": brand_name, "total_found": len(found_urls), "added_to_queue": added, "sites": sites,
             "missing_pages": missing}

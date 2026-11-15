@@ -7,7 +7,8 @@ from sqlmodel import select
 
 from app.laptops.brand_model import LaptopBrand
 from app.scraper import bulk_scraper
-from app.scraper.models import ScrapeTarget
+from app.scraper.models import RawScrapLaptop, ScrapeTarget
+from tests.integration.conftest import make_laptop
 
 pytestmark = pytest.mark.integration
 
@@ -38,13 +39,25 @@ def test_only_the_sites_switched_on_are_queued_and_a_missing_page_is_reported(se
     urls = set(session.exec(select(ScrapeTarget.url).where(ScrapeTarget.brand_id == asus.id)).all())
     assert urls == {ROG, GONE, OTHER_SITE_GONE}, "a www.asus.com page was queued with only ROG switched on"
     assert (result["total_found"], result["added_to_queue"]) == (1, 1)
-    assert result["missing_pages"] == [GONE], "only the switched-on site's pages can be missing"
+    assert result["missing_pages"] == [{"url": GONE, "laptops": []}], "only the switched-on site's pages can be missing"
 
 
 def test_without_hosts_every_site_is_queued_as_before(session, asus):
     result = asyncio.run(bulk_scraper.run_feed_crawl(asus.id, session))
     assert (result["total_found"], result["added_to_queue"]) == (2, 2)
-    assert result["missing_pages"] == [GONE, OTHER_SITE_GONE]
+    assert [p["url"] for p in result["missing_pages"]] == [GONE, OTHER_SITE_GONE]
+
+
+def test_a_missing_page_names_the_laptops_that_came_from_it(session, asus):
+    session.add(RawScrapLaptop(source_url=GONE + "?v=1", brand_id=asus.id, raw_product_name="Old",
+                               raw_specs_dump={"scraped_features": {"SKU": "GX650-OLD"}}))
+    laptop = make_laptop(asus.id, manufacturer_sku="GX650-OLD", status="inactive")
+    session.add(laptop)
+    session.commit()
+    result = asyncio.run(bulk_scraper.run_feed_crawl(asus.id, session, hosts=["rog.asus.com"]))
+    assert result["missing_pages"] == [{"url": GONE, "laptops": [{
+        "laptop_id": str(laptop.id), "model_code": laptop.model_code,
+        "product_name": laptop.product_name, "status": laptop.status}]}]
 
 
 def test_a_crawl_that_finds_nothing_reports_no_missing_pages(session, asus, monkeypatch):
