@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import LaptopSku
 from app.scripts import weekly_pipeline as wp
 from tests.integration.conftest import make_laptop
@@ -14,10 +13,8 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2026, 11, 22, tzinfo=timezone.utc)
 
 
-def test_seen_skus_are_stamped_and_a_gone_one_is_listed(session):
-    asus = LaptopBrand(name="Asus")
-    session.add(asus)
-    session.commit()
+def test_seen_skus_are_stamped_and_a_gone_one_is_listed(session, brand):
+    asus = brand
     seen = make_laptop(asus.id, product_name="ROG Strix G16 (G614P-MTS088WP)")
     gone = make_laptop(asus.id, product_name="ROG Strix G16 (G614P-WRV068W)")
     tuf = make_laptop(asus.id, product_name="ASUS TUF Gaming A16", manufacturer_sku="FA608UH-RV001W")
