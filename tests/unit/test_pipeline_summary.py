@@ -36,7 +36,7 @@ def _completed() -> dict:
                                   "failed": ["price", "gpu_benchmark"]}],
                         "no_family": [{"laptop_id": "L2", "model_code": "FX608JM", "product_name": "TUF A16"},
                                       {"laptop_id": "L7", "model_code": "OLD1", "product_name": "Old one"}]},
-            "pick_scores": {"skipped": "no laptop went live and no price changed"},
+            "pick_scores": {"laptops": 370, "written": True},
         },
         "went_live": [LAPTOP],
         "price_changes": [
@@ -64,7 +64,7 @@ def test_each_section_of_a_completed_run():
     assert "- Crawl hp: failed, TimeoutError: crawl" in s["Steps"]
     assert "- Process: 3 raw rows, 2 new laptops, 1 updated, 0 SKUs attached" in s["Steps"]
     assert "- Go-live check: 3 held laptops checked, 1 went live" in s["Steps"]
-    assert "- Pick Score: skipped, no laptop went live and no price changed" in s["Steps"]
+    assert "- Pick Score: 370 laptops scored" in s["Steps"]
     assert s["Went live"] == ["- G614JV ROG Strix G16"]
     assert s["Held back"] == ["- FX608JM TUF A16: failed price, gpu_benchmark"]
     assert s["SKUs of one laptop at different prices"] == ["- G614JV ROG Strix G16: keeps RM5,999; G614JV-N3 RM6,299"]

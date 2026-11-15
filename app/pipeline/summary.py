@@ -63,8 +63,7 @@ def _step_lines(steps: dict) -> list[str]:
         lines.append(f"Embeddings: {embeddings.get('embedded', 0)} built, {len(embeddings.get('failed') or [])} failed")
     scores = steps.get("pick_scores")
     if scores is not None:
-        lines.append("Pick Score: " + (f"skipped, {scores['skipped']}" if "skipped" in scores else
-                     f"{scores.get('laptops', 0)} laptops recalculated"))
+        lines.append(f"Pick Score: {scores.get('laptops', 0)} laptops scored")
     return lines
 
 

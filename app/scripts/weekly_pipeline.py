@@ -19,7 +19,7 @@ Steps, in order, each one the service function the admin's buttons call:
   passmark    PassMark CPU and GPU refresh
   go_live     go-live re-check of the held laptops, with this run's benchmarks
   embeddings  laptops the processor wrote, and laptops with no embedding
-  pick_scores generate-all, only if a laptop went live or a price changed
+  pick_scores generate-all, every run
 
 Every run that starts (a skipped or stopped one too) ends with the summary email
 (app/pipeline/summary.py) to the report email set in admin; the result says if it went.
@@ -231,10 +231,8 @@ def price_changes(session: Session, since: datetime) -> list[dict]:
 
 
 def step_pick_scores(run: Run, generate: Optional[Callable[[Session], dict]] = None) -> dict:
-    live, changed = went_live(run.results), price_changes(run.session, run.started_at)
-    run.session.commit()
-    if not live and not changed:
-        return {"skipped": "no laptop went live and no price changed"}
+    """Generate-all on every run (Jack, 2026-11-15): processing can change a scored spec
+    with no price change and nothing going live (job 96e4fef1), and one run a week is cheap."""
     if generate is None:
         from app.laptops.pickscore_general import generate_all_pick_scores as generate
     return generate(run.session)
@@ -432,10 +430,7 @@ def dry_run(session: Session, settings: PipelineSettings, limit: Optional[int]) 
     missing = len(embedding_ids(session, None))
     print(f"embeddings  {missing} laptops have no embedding, plus every laptop the processor writes")
 
-    if go["activated"] or fills:
-        print(f"pick_scores would run: {len(go['activated'])} laptops go live, {len(fills)} guide prices change")
-    else:
-        print("pick_scores runs only if the processing changes a price or a new laptop goes live")
+    print("pick_scores generate-all, every run")
 
     from app.config import settings as app_settings
     subject, body, _ = build_summary(out, settings.price_jump_percent, app_settings.frontend_url)

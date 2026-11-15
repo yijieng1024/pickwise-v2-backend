@@ -124,27 +124,22 @@ def test_every_step_runs_when_none_fails_and_each_is_reported():
     assert seen == ["a", "b", "c"]
 
 
-def _pick_scores(monkeypatch, results, changes):
+def _pick_scores(results):
     generated = []
-    monkeypatch.setattr(wp, "price_changes", lambda session, since: changes)
     run = wp.Run(_Session(), ps.PipelineSettings(), SUNDAY_IN_MALAYSIA, results=results)
-    out = wp.step_pick_scores(run, generate=lambda session: generated.append(1) or {"written": True})
+    out = wp.step_pick_scores(run, generate=lambda session: generated.append(1) or {"written": True, "laptops": 370})
     return out, generated
 
 
-def test_pick_score_is_skipped_when_no_laptop_went_live_and_no_price_changed(monkeypatch):
-    held_only = {"process": {"go_live": {"activated": [], "held": [{"laptop_id": "x"}]}},
+def test_pick_score_runs_with_no_go_live_and_no_price_change():
+    # Job 96e4fef1: processing changed G614P-MTS088WP's RAM, nothing went live and no
+    # price changed, and the old condition skipped the step (Jack, 2026-11-15: always run).
+    held_only = {"process": {"go_live": {"activated": [], "held": [{"laptop_id": "x"}]}, "price_changes": []},
                  "go_live": {"activated": []}}
-    out, generated = _pick_scores(monkeypatch, held_only, [])
-    assert out == {"skipped": "no laptop went live and no price changed"}
-    assert generated == []
+    out, generated = _pick_scores(held_only)
+    assert out == {"written": True, "laptops": 370} and generated == [1]
 
 
-@pytest.mark.parametrize("results, changes", [
-    ({"go_live": {"activated": [{"laptop_id": "x"}]}}, []),
-    ({"process": {"go_live": {"activated": [{"laptop_id": "x"}]}}}, []),
-    ({}, [{"laptop_id": "y", "old_price": 5000.0, "new_price": 4800.0}]),
-])
-def test_pick_score_runs_when_a_laptop_went_live_or_a_price_changed(monkeypatch, results, changes):
-    out, generated = _pick_scores(monkeypatch, results, changes)
-    assert out == {"written": True} and generated == [1]
+def test_pick_score_runs_when_a_laptop_went_live():
+    out, generated = _pick_scores({"go_live": {"activated": [{"laptop_id": "x"}]}})
+    assert generated == [1]
