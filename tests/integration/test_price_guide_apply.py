@@ -455,7 +455,7 @@ def test_the_preview_reads_only(admin_client, session, brand):
     assert body["counts"] == {
         "matched": 1, "differs_from_guide": 0, "matched_by_suffix_rule": 0, "matched_by_base_code": 0,
         "ambiguous": 0, "conflict": 0,
-        "unmatched_guide": 1, "unpriced": 1, "uncovered": 0,
+        "unmatched_guide": 1, "unpriced": 1, "uncovered": 0, "reviewed": 0,
     }
     assert body["matched"][0]["action"] == "fill"
     assert body["unmatched_guide"][0]["sku"] == "G835L-NOTINCATALOG"
