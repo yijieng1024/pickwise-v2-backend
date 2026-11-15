@@ -1,12 +1,11 @@
 import statistics
 from collections import Counter
-from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.agent.monitoring_models import (
     AgentModelCall,
@@ -16,6 +15,7 @@ from app.agent.monitoring_models import (
     AgentRunLogSummary,
 )
 from app.common.filter_service import apply_filters, filter_query
+from app.common.local_time import local_day_utc_naive
 from app.common.pagination_service import Page, PaginationParams, count_total, paginate
 from app.common.search_service import apply_search, search_query
 from app.common.sorting_service import SortDirection, apply_sort, sort_dir_query
@@ -161,8 +161,19 @@ def get_agent_monitoring_stats(session: Session = Depends(get_session)):
             avg_tokens_per_run=0.0, tool_usage=[],
         )
 
-    today = datetime.now(timezone.utc).date()
-    runs_today = sum(1 for r in recent if r.created_at.date() == today)
+    # "Today" is the Malaysian day, counted in SQL rather than from `recent`,
+    # so a busy day is not capped at the stats window. `created_at` is naive
+    # UTC, so the bounds are too.
+    day_start, day_end = local_day_utc_naive()
+    runs_today, tokens_today = session.exec(
+        select(
+            func.count(AgentRunLog.id),
+            func.coalesce(
+                func.sum(func.coalesce(AgentRunLog.input_tokens, 0) + func.coalesce(AgentRunLog.output_tokens, 0)),
+                0,
+            ),
+        ).where(AgentRunLog.created_at >= day_start, AgentRunLog.created_at < day_end)
+    ).one()
     error_count = sum(1 for r in recent if r.status == "error")
 
     def tokens(r: AgentRunLog) -> int:
@@ -183,7 +194,7 @@ def get_agent_monitoring_stats(session: Session = Depends(get_session)):
         avg_latency_ms=round(statistics.mean(r.latency_ms for r in recent), 1),
         total_input_tokens=sum(r.input_tokens or 0 for r in recent),
         total_output_tokens=sum(r.output_tokens or 0 for r in recent),
-        tokens_today=sum(tokens(r) for r in recent if r.created_at.date() == today),
+        tokens_today=int(tokens_today),
         avg_tokens_per_run=round(statistics.mean(metered), 1) if metered else 0.0,
         fallback_count=sum(1 for r in recent if r.fallback_triggered),
         tool_usage=[ToolUsage(name=name, count=count) for name, count in tool_counter.most_common()],
