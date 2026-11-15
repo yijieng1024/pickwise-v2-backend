@@ -10,7 +10,7 @@ Attached when the five specs the processor's SKU matching reads are equal
 (app/laptops/sku_match.py) AND either the HP model number in both names is the same
 (15-fd2115TU; colour words and "(CPU, RAM, SSD)" or "- 14-inch (SKU)" suffixes ignored,
 Jack 2026-11-15) or, for a name with no model number, the names are equal (case, commas
-and spacing aside). A SKU another laptop already holds is skipped, and so is a
+and spacing aside) or the laptop's name states the page's SKU in brackets. A SKU another laptop already holds is skipped, and so is a
 laptop with two exact pages or a page that fits two laptops. Same product line and specs
 under another name is printed as LOOSE for an admin to decide, never attached.
 
@@ -56,12 +56,14 @@ def model_number(name: str):
     return found[0] if len(set(found)) == 1 else None
 
 
-def same_laptop_name(page_name: str, laptop_name: str) -> bool:
-    """Same HP model number when both name one, else the same name."""
+def same_laptop_name(page_name: str, laptop_name: str, page_sku: str = "") -> bool:
+    """Same HP model number when both name one; else the same name, or the laptop's name
+    states the page's own SKU in brackets ("... - 14-inch (DV9N6AT)", Jack 2026-11-15)."""
     page, laptop = model_number(page_name), model_number(laptop_name)
     if page or laptop:
         return page == laptop
-    return _name(page_name) == _name(laptop_name)
+    stated = f"({page_sku.upper()})" in (laptop_name or "").upper() if page_sku else False
+    return stated or _name(page_name) == _name(laptop_name)
 
 
 def read(connection: Connection) -> tuple[list[Any], list[Any], set[str]]:
@@ -95,7 +97,7 @@ def plan(laptops: list[Any], raws: list[Any], held: set[str]) -> tuple[list, lis
     for l in todo:
         specs = laptop_specs(l)
         for r, sku, page, colour in pages:
-            same_name = same_laptop_name(r.raw_product_name, l.product_name)
+            same_name = same_laptop_name(r.raw_product_name, l.product_name, sku)
             same_specs = page is not None and page == specs
             if same_name and same_specs:
                 exact[l.id].append((sku, colour, r.raw_product_name))
