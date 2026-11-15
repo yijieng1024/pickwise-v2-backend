@@ -147,6 +147,7 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
     "core ultra 5 226v": "Intel Arc 130V GPU",
     "core ultra 7 165h": "Intel Arc",        # Meteor Lake, 8 Xe-cores; must sit
     "core ultra 5 125h": "Intel Arc",        # below Arc 130T (6122, Arrow Lake H)
+    "core ultra 7 155h": "Intel Arc",        # Meteor Lake, 8 Xe-cores like the 165H; Intel ARK: "Intel® Arc™ graphics"
 
     # --- Intel, Panther Lake (Core Ultra series 3) -----------------------
     "core ultra x9 388h": "Intel Arc B390 GPU",
@@ -172,6 +173,15 @@ _INTEGRATED_GPU_BY_CPU: dict[str, str] = {
     "core i5-1335u": "Intel Iris Xe",
     "core i7-1370p": "Intel Iris Xe",
     "core 3 100u": "Intel Graphics",         # ARK 236776: GPU Name "Intel® Graphics", 64 EU
+
+    # --- Intel, Wildcat Lake (Core 5/7 300 series) -----------------------
+    # DERIVED, like the A18 Pro entry above: PassMark has no row for Intel
+    # Graphics 2 Xe3. Notebookcheck rates it slower than Iris Xe 96EUs; in its
+    # comparison Intel UHD 64EUs (i3-1215U) scored 3940 against the Xe3 average
+    # of 3786 (4% apart) and Iris Xe G7 96EUs 1666 against 1385 (Iris Xe 20%
+    # faster), so it sits between UHD and Iris Xe, nearer UHD. Small sample
+    # (n=2 to 4). Replace this once PassMark has a real row.
+    "core 5 320": "Intel UHD Graphics",
 
     # --- Intel, Raptor Lake-H and Alder Lake-N ---------------------------
     "core i7-13620h": "Intel UHD Graphics",
