@@ -9,13 +9,23 @@ def _completed() -> dict:
     return {
         "stopped_at": None,
         "steps": {
-            "crawl": {"asus": {"total_found": 40, "added_to_queue": 2,
-                               "missing_pages": ["https://www.asus.com/gone/"]},
+            "crawl": {"asus": {"total_found": 40, "added_to_queue": 2, "missing_pages": [
+                {"url": "https://rog.asus.com/x/", "laptops": [
+                    {"laptop_id": "L5", "model_code": "G814", "product_name": "ROG Strix G18", "status": "active"}]},
+                {"url": "https://www.asus.com/gone/", "laptops": []},
+                {"url": "https://www.asus.com/still/", "laptops": []}]},
                       "hp": {"error": "TimeoutError: crawl"}},
             "scrape": {"rog": {"pages": 5, "succeeded": 4, "failed": 1, "skipped": 0,
-                               "failed_pages": [{"url": "https://rog.asus.com/x/", "error": "404"}]}},
+                               "failed_pages": [
+                                   # Reached as /spec: still the same page as the crawl's.
+                                   {"url": "https://rog.asus.com/x/spec/", "error": "HTTP 404 from x"},
+                                   {"url": "https://www.asus.com/gone", "error": "No spec rows found on the page"},
+                                   {"url": "https://rog.asus.com/y/", "error": "TimeoutError"}]}},
+            "guides": {"rog": {"filled": 4, "confirmed": 7, "differs_from_guide": 11, "awaiting_confirmation": 5},
+                       "business": {"error": "ValueError: no rows"}},
             "process": {"requests_made": 3, "total_new_variants_saved": 2, "total_variants_updated": 1,
                         "skus_attached": [],
+                        "prices_not_extracted": ["G834-A", "G834-A", "GU605-B"],
                         "writes": [{"laptop_id": "L1", "action": "inserted"},
                                    {"laptop_id": "L2", "action": "inserted"},
                                    {"laptop_id": "L9", "action": "updated"}],
@@ -58,13 +68,28 @@ def test_each_section_of_a_completed_run():
     assert s["Went live"] == ["- G614JV ROG Strix G16"]
     assert s["Held back"] == ["- FX608JM TUF A16: failed price, gpu_benchmark"]
     assert s["SKUs of one laptop at different prices"] == ["- G614JV ROG Strix G16: keeps RM5,999; G614JV-N3 RM6,299"]
-    assert s["Pages that failed or disappeared"] == [
-        "- Failed (rog): https://rog.asus.com/x/: 404",
-        "- Not found by the crawl (asus): https://www.asus.com/gone/"]
+    assert s["Pages likely gone: not found by the crawl, and the fetch failed"] == [
+        "- https://rog.asus.com/x/ (HTTP 404 from x). From it: G814 ROG Strix G18, active",
+        "- https://www.asus.com/gone/ (No spec rows found on the page). From it: no catalog laptop traced to this page"]
+    assert s["Not seen by the crawl, but the page still works"] == ["- 1 page", "- https://www.asus.com/still/"]
+    assert s["Other pages that failed"] == ["- rog: https://rog.asus.com/y/: TimeoutError"]
+    assert s["Pages that gave no price (the old price was kept)"] == ["- G834-A", "- GU605-B"]
     # Only laptops this run inserted: L7 has no family too, but is not new.
     assert s["New laptops with no family"] == ["- FX608JM TUF A16"]
     assert len(s["Price changes"]) == 2
     assert "<h3>Went live</h3>" in html and "G614JV ROG Strix G16" in html
+
+
+def test_the_guide_section_shows_what_needs_a_person():
+    _, text, html = summary.build_summary(_completed(), 30, admin_url="https://pw.test")
+    assert _sections(text)["Product guides: these need a person"] == [
+        "- rog: 5 prices awaiting your confirmation, 11 differ from the guide. https://pw.test/admin/price-guides"]
+    assert '<a href="https://pw.test/admin/price-guides">' in html
+
+
+def test_the_still_working_pages_are_folded_in_html():
+    _, _, html = summary.build_summary(_completed(), 30)
+    assert '<details><summary>1 page</summary><ul><li><a href="https://www.asus.com/still/">https://www.asus.com/still/</a></li></ul></details>' in html
 
 
 def test_price_changes_at_or_above_the_threshold_are_flagged_at_the_top():

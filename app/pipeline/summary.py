@@ -7,7 +7,13 @@ emails use, from the configured sender (noreply@ngyijie.com), to the admin's rep
 email. An empty setting sends nothing, and the run's result says so.
 """
 import html as html_lib
+import re
 from typing import Optional
+
+from app.scraper.bulk_scraper import page_key
+
+# A fetch that says the page is gone, not that the site was slow (decision 8).
+_GONE_ERRORS = ("HTTP 404", "No spec rows found")
 
 
 def _money(value) -> str:
@@ -67,12 +73,34 @@ def _last_go_live(steps: dict) -> dict:
     return steps.get("go_live") or (steps.get("process") or {}).get("go_live") or {}
 
 
-def build_summary(result: dict, threshold_percent: int) -> tuple[str, str, str]:
+def _pages(steps: dict) -> tuple[list[str], list[str], list[str]]:
+    """(likely gone, not seen but still working, other failed fetches). A missing page is
+    likely gone when its fetch failed this run with a 404 or no spec rows; both sides
+    are compared as the crawler normalises a page."""
+    failed = {page_key(p["url"]): (brand, p) for brand, scrape in (steps.get("scrape") or {}).items()
+              for p in scrape.get("failed_pages") or []}
+    gone, working = [], []
+    for crawl in (steps.get("crawl") or {}).values():
+        for page in crawl.get("missing_pages") or []:
+            _, fetch = failed.get(page_key(page["url"]), (None, {}))
+            if any(e in (fetch.get("error") or "") for e in _GONE_ERRORS):
+                failed.pop(page_key(page["url"]))
+                laptops = ", ".join(f"{_laptop(l)}, {l.get('status')}" for l in page.get("laptops") or [])
+                gone.append(f"{page['url']} ({fetch['error']}). From it: "
+                            + (laptops or "no catalog laptop traced to this page"))
+            else:
+                working.append(page["url"])
+    other = [f"{brand}: {p['url']}: {p.get('error') or 'no reason given'}" for brand, p in failed.values()]
+    return gone, working, other
+
+
+def build_summary(result: dict, threshold_percent: int, admin_url: str = "") -> tuple[str, str, str]:
     """(subject, text, html) for one run. *result* is the run's job result: `steps`,
     `stopped_at`/`error`/`not_run` for a stopped run, `skipped` for a skipped one,
-    `went_live` and `price_changes`."""
+    `went_live` and `price_changes`. *admin_url* is the frontend's base URL, for links."""
     steps = result.get("steps") or {}
     sections: list[tuple[str, list[str]]] = []
+    folded: set[str] = set()  # titles shown folded in HTML
 
     if result.get("skipped"):
         outcome = f"Skipped: {result['skipped']}."
@@ -99,6 +127,11 @@ def build_summary(result: dict, threshold_percent: int) -> tuple[str, str, str]:
     held = go_live.get("held") or []
     sections.append(("Held back", [f"{_laptop(l)}: failed {', '.join(l['failed'])}" for l in held] or ["None."]))
 
+    guides = [f"{kind}: {g.get('awaiting_confirmation', 0)} prices awaiting your confirmation, "
+              f"{g.get('differs_from_guide', 0)} differ from the guide. {admin_url}/admin/price-guides"
+              for kind, g in (steps.get("guides") or {}).items() if "error" not in g]
+    sections.append(("Product guides: these need a person", guides or ["None."]))
+
     sections.append(("Price changes", [
         f"{'[!] ' if c in jumps else ''}{_laptop(c)}: {_money(c['old_price'])} to {_money(c['new_price'])}"
         f" ({c.get('source') or 'no source'})" for c in changes] or ["None."]))
@@ -109,13 +142,16 @@ def build_summary(result: dict, threshold_percent: int) -> tuple[str, str, str]:
         + ", ".join(f"{sku} {_money(p)}" for sku, p in (d.get("other_skus") or {}).items())
         for d in differences] or ["None."]))
 
-    pages = []
-    for brand, scrape in (steps.get("scrape") or {}).items():
-        pages += [f"Failed ({brand}): {p['url']}: {p.get('error') or 'no reason given'}"
-                  for p in scrape.get("failed_pages") or []]
-    for brand, crawl in (steps.get("crawl") or {}).items():
-        pages += [f"Not found by the crawl ({brand}): {url}" for url in crawl.get("missing_pages") or []]
-    sections.append(("Pages that failed or disappeared", pages or ["None."]))
+    gone, working, other = _pages(steps)
+    sections.append(("Pages likely gone: not found by the crawl, and the fetch failed", gone or ["None."]))
+    if working:
+        title = "Not seen by the crawl, but the page still works"
+        sections.append((title, [f"{len(working)} page{'s' if len(working) != 1 else ''}"] + working))
+        folded.add(title)
+
+    no_price = list(dict.fromkeys((steps.get("process") or {}).get("prices_not_extracted") or []))
+    sections.append(("Pages that gave no price (the old price was kept)", no_price or ["None."]))
+    sections.append(("Other pages that failed", other or ["None."]))
 
     inserted = {w["laptop_id"] for w in (steps.get("process") or {}).get("writes") or [] if w.get("action") == "inserted"}
     no_family = [l for l in go_live.get("no_family") or [] if l["laptop_id"] in inserted]
@@ -126,18 +162,26 @@ def build_summary(result: dict, threshold_percent: int) -> tuple[str, str, str]:
     subject = f"PickWise weekly run {status}{flag}"
 
     text = "\n\n".join(f"{title}\n" + "\n".join(f"- {line}" for line in lines) for title, lines in sections)
+    def li(lines: list[str]) -> str:
+        return "<ul>" + "".join(f"<li>{_linked(line)}</li>" for line in lines) + "</ul>"
+
     body = "".join(
-        f"<h3>{html_lib.escape(title)}</h3><ul>" + "".join(f"<li>{html_lib.escape(line)}</li>" for line in lines) + "</ul>"
+        f"<h3>{html_lib.escape(title)}</h3>"
+        + (f"<details><summary>{html_lib.escape(lines[0])}</summary>{li(lines[1:])}</details>" if title in folded else li(lines))
         for title, lines in sections)
     return subject, text, f"<html><body>{body}</body></html>"
 
 
-def send_summary(result: dict, report_email: str, threshold_percent: int) -> dict:
+def _linked(line: str) -> str:
+    return re.sub(r"https?://[^\s<)]+", lambda m: f'<a href="{m[0]}">{m[0]}</a>', html_lib.escape(line))
+
+
+def send_summary(result: dict, report_email: str, threshold_percent: int, admin_url: str = "") -> dict:
     """Send the run's email; what happened goes into the run's result."""
     if not report_email:
         return {"sent": False, "reason": "no report email is set in admin"}
     from app.users.email import _send
-    subject, text, html = build_summary(result, threshold_percent)
+    subject, text, html = build_summary(result, threshold_percent, admin_url)
     sent = _send(report_email, subject, html, text)
     return {"sent": sent, "to": report_email} if sent else {"sent": False, "to": report_email,
                                                             "reason": "Brevo refused it or could not be reached; see the log"}

@@ -311,7 +311,9 @@ def apply(engine, settings: PipelineSettings, scheduled: bool) -> dict:
         except Exception as e:
             progress.mark_failed(f"{type(e).__name__}: {e}")
             raise
-        result["email"] = send_summary(result, settings.report_email, settings.price_jump_percent)
+        from app.config import settings as app_settings
+        result["email"] = send_summary(result, settings.report_email, settings.price_jump_percent,
+                                       app_settings.frontend_url)
         if result.get("stopped_at"):
             progress.mark_failed(f"stopped at {result['stopped_at']}: {result['error']}", result)
         else:
@@ -435,7 +437,8 @@ def dry_run(session: Session, settings: PipelineSettings, limit: Optional[int]) 
     else:
         print("pick_scores runs only if the processing changes a price or a new laptop goes live")
 
-    subject, body, _ = build_summary(out, settings.price_jump_percent)
+    from app.config import settings as app_settings
+    subject, body, _ = build_summary(out, settings.price_jump_percent, app_settings.frontend_url)
     to = settings.report_email or "nobody: no report email is set in admin, so none is sent"
     print(f"\nemail to {to}\nSubject: {subject}\n\n{body}")
     return out
