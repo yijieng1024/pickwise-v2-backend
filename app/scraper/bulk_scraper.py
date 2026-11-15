@@ -143,6 +143,9 @@ class BulkScrapeReport:
     #: Step 10c: Apple build-to-order options, fetched after a run that scraped an Apple
     #: buy page. None when no buy page was scraped.
     apple_options: Optional[dict] = None
+    #: The SKU of every variant fetched, stored or kept unchanged (the weekly email's
+    #: "SKUs no longer on their page").
+    skus_seen: List[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +367,9 @@ async def _process_target(
             },
             processing_status="pending",
         )
+        fetched_sku = raw_sku(raw_laptop.raw_specs_dump)
+        if fetched_sku:
+            report.skus_seen.append(fetched_sku)
         # A re-scraped page replaces its raw row (source_url is unique), as an Apple specs page does.
         stored = rescrapable(brand_name, url) and session.exec(
             select(RawScrapLaptop).where(RawScrapLaptop.source_url == source_url)

@@ -177,3 +177,12 @@ def test_a_multi_variant_rog_page_updates_each_variant_by_its_own_sku(session, b
     for sku, (_was, now) in skus.items():
         session.refresh(laptops[sku])
         assert (laptops[sku].manufacturer_sku, laptops[sku].price_rm) == (sku, now)
+
+
+def test_an_unchanged_variant_still_counts_its_sku_as_seen(session, monkeypatch):
+    brand = _hp(session)
+    page = _variant("Product Info / Sku", "D93CDPA", "RM2,999.00")
+    _stored(session, brand, HP_URL, page)
+    _target(session, brand, HP_URL)
+    report, _ = _scrape(session, monkeypatch, brand, {HP_URL: [page]})
+    assert report.skipped == 1 and report.skus_seen == ["D93CDPA"]

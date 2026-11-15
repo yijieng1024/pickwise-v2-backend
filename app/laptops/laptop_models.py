@@ -435,6 +435,12 @@ class LaptopSku(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
+    # When a weekly run's scrape last saw this SKU on its page (-W and -WP read as one).
+    # Null: not seen since tracking started (2026-11-15). Read by the weekly email's
+    # "SKUs no longer on their page"; never changes a status.
+    last_seen_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
 
 
 class LaptopUpdate(SQLModel):

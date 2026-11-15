@@ -135,7 +135,8 @@ def step_scrape(run: Run) -> dict:
         report = asyncio.run(run_bulk_scrape(item[0], run.session, hosts=item[1]))
         return {"pages": report.total_pending, "succeeded": report.succeeded, "failed": report.failed,
                 "skipped": report.skipped,
-                "failed_pages": [{"url": r.url, "error": r.error} for r in report.results if r.status == "failed"]}
+                "failed_pages": [{"url": r.url, "error": r.error} for r in report.results if r.status == "failed"],
+                "skus_seen": sorted(set(report.skus_seen))}
 
     sites = run.settings.sites()
     return _each(run, [(brand, (_brand_id(run.session, brand), hosts)) for brand, hosts in sites.items()], scrape)
@@ -230,6 +231,72 @@ def price_changes(session: Session, since: datetime) -> list[dict]:
     return changes
 
 
+def _sku_host(brand: str, product_name: str) -> Optional[str]:
+    """The re-scraped site a laptop's SKUs are read from, or None when its pages are not
+    fetched every run. ponytail: ROG by name, since nothing links a laptop to its page;
+    a ROG model sold on www.asus.com would be checked against rog.asus.com."""
+    if brand == "hp":
+        return "www.hp.com"
+    if brand == "asus" and product_name.strip().lower().startswith("rog"):
+        return "rog.asus.com"
+    return None
+
+
+def gone_laptops(laptops: list[dict], seen: set[str], excluded: set[str], hosts: set[str]) -> list[dict]:
+    """Laptops on a site this run scraped, with a SKU, none of it in *seen* (sku_key form),
+    and not on a page that failed this run, which "likely gone" covers. Pure."""
+    from app.laptops.price_guide import sku_key
+    out = []
+    for l in laptops:
+        if l["host"] not in hosts or not l["skus"] or l["laptop_id"] in excluded:
+            continue
+        if any(sku_key(s) in seen for s in l["skus"]):
+            continue
+        last = l.get("last_seen")
+        out.append({**{k: l[k] for k in ("laptop_id", "model_code", "product_name", "skus")},
+                    "last_seen": last.isoformat() if last else None})
+    return out
+
+
+def skus_gone(session: Session, steps: dict, sites: dict, now: datetime) -> list[dict]:
+    """Stamp laptop_skus.last_seen_at for every SKU this run's scrape saw, then list the
+    active laptops whose SKUs it did not (Jack, 2026-11-15). Notify only: no status moves."""
+    from app.laptops.brand_model import LaptopBrand
+    from app.laptops.laptop_models import Laptop, LaptopSku, LaptopStatus
+    from app.laptops.price_guide import sku_key
+    from app.scraper.bulk_scraper import RESCRAPED_HOSTS, page_laptops
+    scrapes = {b: r for b, r in (steps.get("scrape") or {}).items() if "error" not in r}
+    seen = {sku_key(s) for r in scrapes.values() for s in r.get("skus_seen") or []}
+    hosts = {h for b in scrapes for h in sites.get(b, [])} & RESCRAPED_HOSTS
+    if not seen or not hosts:
+        return []
+    rows = session.exec(select(LaptopSku)).all()
+    for row in rows:
+        if sku_key(row.sku) in seen:
+            row.last_seen_at = now
+            session.add(row)
+    excluded = {l["laptop_id"] for b, r in scrapes.items()
+                for found in page_laptops(session, _brand_id(session, b),
+                                          [p["url"] for p in r.get("failed_pages") or []]).values()
+                for l in found}
+    by_laptop: dict = collections.defaultdict(list)
+    for row in rows:
+        by_laptop[row.laptop_id].append(row)
+    laptops = []
+    for l, brand in session.exec(
+        select(Laptop, LaptopBrand.name).join(LaptopBrand, LaptopBrand.id == Laptop.brand_id)
+        .where(Laptop.status == LaptopStatus.ACTIVE.value).order_by(Laptop.model_code)
+    ).all():
+        own = by_laptop.get(l.id, [])
+        stamps = [r.last_seen_at for r in own if r.last_seen_at]
+        laptops.append({"laptop_id": str(l.id), "model_code": l.model_code, "product_name": l.product_name,
+                        "skus": sorted({*(r.sku for r in own), *([l.manufacturer_sku] if l.manufacturer_sku else [])}),
+                        "last_seen": max(stamps) if stamps else None,
+                        "host": _sku_host(brand.lower(), l.product_name)})
+    session.commit()
+    return gone_laptops(laptops, seen, excluded, hosts)
+
+
 def step_pick_scores(run: Run, generate: Optional[Callable[[Session], dict]] = None) -> dict:
     """Generate-all on every run (Jack, 2026-11-15): processing can change a scored spec
     with no price change and nothing going live (job 96e4fef1), and one run a week is cheap."""
@@ -305,6 +372,7 @@ def apply(engine, settings: PipelineSettings, scheduled: bool) -> dict:
                 result = run_steps(Run(session, settings, started_at), steps, on_step=lambda name: progress.advance(item=name))
                 result["went_live"] = went_live(result["steps"])
                 result["price_changes"] = price_changes(session, started_at)
+                result["skus_gone"] = skus_gone(session, result["steps"], settings.sites(), datetime.now(timezone.utc))
                 session.commit()
         except Exception as e:
             progress.mark_failed(f"{type(e).__name__}: {e}")

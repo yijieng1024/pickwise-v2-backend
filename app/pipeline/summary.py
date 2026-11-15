@@ -148,6 +148,11 @@ def build_summary(result: dict, threshold_percent: int, admin_url: str = "") -> 
         sections.append((title, [f"{len(working)} page{'s' if len(working) != 1 else ''}"] + working))
         folded.add(title)
 
+    sections.append(("SKUs no longer on their page", [
+        f"{_laptop(g)} ({', '.join(g['skus'])}): "
+        + (f"last seen {g['last_seen'][:10]}" if g.get("last_seen") else "not seen since tracking started")
+        for g in result.get("skus_gone") or []] or ["None."]))
+
     to_check = (steps.get("process") or {}).get("spec_text_to_check") or []
     sections.append(("Spec text to check", [f"{c['product_name']}: {c['field']} {c['value']!r}" for c in to_check]
                      or ["None."]))
