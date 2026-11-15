@@ -143,6 +143,24 @@ def raw_sku(raw_specs_dump: Optional[dict]) -> Optional[str]:
     return None
 
 
+# The model wrote "Ryzen™ 5" back as "Ryzen⁵" and "Ryzen™ 9" as "Ryzen⁴ 9", so the marks
+# are taken out of what it reads. A space stays where there was none ("Ryzen™5"), so a
+# digit after the mark is still its own word.
+_MARKS = re.compile(r"[™®℠]+(\s*)")
+_SUPERSCRIPT_DIGIT = re.compile("[\u00b9\u00b2\u00b3\u2070-\u2079]")
+
+
+def strip_marks(text: str) -> str:
+    return _MARKS.sub(lambda m: m.group(1) or " ", text)
+
+
+def superscript_fields(fields: dict) -> dict:
+    """The CPU and GPU values that still hold a superscript digit. Reported, never converted:
+    in "Ryzen⁴ 9" the digit is not part of the model, so there is no safe rule."""
+    return {k: fields[k] for k in ("processor_model", "gpu_model")
+            if isinstance(fields.get(k), str) and _SUPERSCRIPT_DIGIT.search(fields[k])}
+
+
 # An ASUS or Acer model code or SKU: S5406SAL, G615L-MS5068W, A715-59G-54Q6.
 # Three digits at least, so a line name such as "S14" is not read as a code.
 _MODEL_CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{3,5}[A-Z]{0,4}(?:-[A-Z0-9]{2,})*\b")
@@ -258,7 +276,7 @@ def _variant_fields(variant, brand_id, image_urls, raw_specs_dump) -> dict:
 _RESULT_LISTS = (
     "identity_conflicts", "split_failures", "field_parse_failures", "fields_kept", "apple_configs_skipped",
     "not_on_buy_page", "matched_suspended", "relisted", "price_changes", "prices_not_overwritten", "unresolved_configs",
-    "writes", "skus_attached", "sku_price_differences",
+    "writes", "skus_attached", "sku_price_differences", "spec_text_to_check",
 )
 
 
@@ -692,10 +710,12 @@ def _process_raw_laptop_data(
                 chain.invoke(
                     {
                         "brand_name": brand_name,
-                        "product_name": _product_name,
+                        # Marks out of the prompt only: the raw row keeps the page as it
+                        # was, so a re-scrape still compares like with like (decision 7).
+                        "product_name": strip_marks(_product_name),
                         "current_year": datetime.now().year,
-                        "raw_prices": _raw_prices_json,
-                        "raw_specs": spec_blob,
+                        "raw_prices": strip_marks(_raw_prices_json),
+                        "raw_specs": strip_marks(spec_blob),
                         "available_categories": available_categories,
                     }
                 ),
@@ -718,6 +738,8 @@ def _process_raw_laptop_data(
         # different prices (decisions 15 and 16).
         skus_attached: list[dict] = []
         sku_price_differences: list[dict] = []
+        # CPU or GPU text that still holds a superscript digit after extraction.
+        spec_text_to_check: list[dict] = []
         _features = (raw_data.raw_specs_dump or {}).get("scraped_features")
         _brand_id = raw_data.brand_id
 
@@ -743,6 +765,8 @@ def _process_raw_laptop_data(
 
             laptop_data = _variant_fields(variant, raw_data.brand_id, raw_data.image_urls, raw_data.raw_specs_dump)
             laptop_data["product_name"] = checked_name
+            spec_text_to_check += [{"raw_id": str(raw_laptop_id), "product_name": checked_name, "field": field,
+                                    "value": value} for field, value in superscript_fields(laptop_data).items()]
 
             existing = _laptop_by_sku(session, sku) if sku else None
             # No laptop holds the SKU. One machine is sold under several (HP's colour
@@ -883,6 +907,7 @@ def _process_raw_laptop_data(
             "writes": writes,
             "skus_attached": skus_attached,
             "sku_price_differences": sku_price_differences,
+            "spec_text_to_check": spec_text_to_check,
         }
 
     except Exception as e:

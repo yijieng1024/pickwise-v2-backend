@@ -148,6 +148,10 @@ def build_summary(result: dict, threshold_percent: int, admin_url: str = "") -> 
         sections.append((title, [f"{len(working)} page{'s' if len(working) != 1 else ''}"] + working))
         folded.add(title)
 
+    to_check = (steps.get("process") or {}).get("spec_text_to_check") or []
+    sections.append(("Spec text to check", [f"{c['product_name']}: {c['field']} {c['value']!r}" for c in to_check]
+                     or ["None."]))
+
     no_price = list(dict.fromkeys((steps.get("process") or {}).get("prices_not_extracted") or []))
     sections.append(("Pages that gave no price (the old price was kept)", no_price or ["None."]))
     sections.append(("Other pages that failed", other or ["None."]))
