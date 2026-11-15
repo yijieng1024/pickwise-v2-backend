@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from app.common.local_time import local_day_utc_naive
+from ._adapters import local_day_utc_naive
 
 
 def test_before_8am_malaysia_is_already_the_new_day():
