@@ -14,6 +14,7 @@ from app.agent.monitoring_models import AgentModelCall, AgentRunLog
 from app.common.job_model import BackgroundJob
 from app.common.llm_usage import LLMUsageLog
 from app.laptops.price_guide_model import PriceGuide
+from app.laptops.laptop_models import PriceGuideReview
 from app.rag.models import Conversation, ConversationLaptop, Message, PipelineEvalLog
 from app.saved.models import SavedLaptop
 from app.users.admin_router import assert_not_last_admin
@@ -590,7 +591,7 @@ def delete_account(session: Session, user_id: UUID) -> None:
 
     Every FK to users is NO ACTION, so the order is children first. Rows with
     the user's text are deleted; rows that are someone else's record of work
-    (usage counts, jobs, price guides) stay and lose the user id.
+    (usage counts, jobs, price guides, guide reviews) stay and lose the user id.
     """
     conv_ids = select(Conversation.id).where(Conversation.user_id == user_id)
     theirs = lambda model: or_(  # noqa: E731 - a row by this user or in their conversation
@@ -606,7 +607,8 @@ def delete_account(session: Session, user_id: UUID) -> None:
     for model in (Conversation, LaptopUserPreference, UserBackground, SavedLaptop, UserAvatar):
         session.exec(delete(model).where(model.user_id == user_id))
 
-    for column in (LLMUsageLog.user_id, BackgroundJob.created_by, PriceGuide.uploaded_by):
+    for column in (LLMUsageLog.user_id, BackgroundJob.created_by, PriceGuide.uploaded_by,
+                   PriceGuideReview.reviewed_by):
         session.exec(update(column.class_).where(column == user_id).values({column.key: None}))
 
     session.exec(delete(User).where(User.id == user_id))

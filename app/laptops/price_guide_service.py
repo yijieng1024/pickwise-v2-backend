@@ -21,9 +21,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, delete, select
 
 from app.laptops.brand_model import LaptopBrand
-from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, PriceSource
+from app.laptops.laptop_models import (
+    Laptop, LaptopPriceHistory, LaptopStatus, PriceGuideDecision, PriceGuideReview, PriceSource,
+)
 from app.laptops.price_guide import (
-    CatalogRow, GuideRow, MatchResult, PricePoint, match, panels_differ, row_warnings,
+    CatalogRow, GuideRow, MatchResult, PricePoint, is_reviewed, match, panels_differ, review_key, row_warnings,
+    sku_key,
 )
 from app.laptops.price_guide_model import PriceGuide, PriceGuideRow
 
@@ -107,6 +110,19 @@ def _histories(session: Session) -> dict[uuid.UUID, list[PricePoint]]:
     return histories
 
 
+def _reviews(session: Session) -> dict[tuple, PriceGuideReview]:
+    """Every review, by review_key. A later review of the same key wins."""
+    out: dict[tuple, PriceGuideReview] = {}
+    for r in session.exec(select(PriceGuideReview).order_by(PriceGuideReview.reviewed_at)).all():  # type: ignore[arg-type]
+        out[review_key(r.laptop_id, r.guide_sku, r.guide_price_rm)] = r
+    return out
+
+
+def _review(r: PriceGuideReview) -> dict:
+    return {"decision": r.decision, "reviewed_at": r.reviewed_at.isoformat(),
+            "reviewed_by": str(r.reviewed_by) if r.reviewed_by else None}
+
+
 def _guide_row(row: GuideRow) -> dict:
     return {"sku": row.sku, "price_rm": row.price_rm, "page": row.page, "panel": row.panel}
 
@@ -141,6 +157,19 @@ def preview(session: Session, guide: PriceGuide) -> dict:
     def warn(row: CatalogRow, rows: list[GuideRow]) -> list[dict]:
         return row_warnings(row, rows, catalog_rows, histories.get(row.id, []), claims)
 
+    reviews = _reviews(session)
+    reviewed_out: list[dict] = []
+
+    def keep(entry: dict, rows: list[GuideRow], listed_on: str) -> bool:
+        """False when an admin has reviewed this laptop at this guide price: the entry goes
+        to `reviewed` instead. Display and counts only; _match is untouched."""
+        review = reviews.get(review_key(entry["id"], rows[0].sku, rows[0].price_rm))
+        if review is None:
+            return True
+        reviewed_out.append({**entry, "listed_on": listed_on, "guide_sku": rows[0].sku,
+                             "guide_price_rm": rows[0].price_rm, **_review(review)})
+        return False
+
     matched, differs = [], []
     for catalog_row, rows in result.matched:
         laptop = by_id[catalog_row.id]
@@ -154,15 +183,41 @@ def preview(session: Session, guide: PriceGuide) -> dict:
             "rows": [_guide_row(r) for r in rows],
             "warnings": warn(catalog_row, rows),
         }
-        (differs if action == Action.DIFFERS else matched).append(entry)
+        if action != Action.DIFFERS:
+            matched.append(entry)
+        elif keep(entry, rows, "differs_from_guide"):
+            differs.append(entry)
+
+    suffix_rule = [
+        e for c, rows in result.suffix_rule
+        for e in [{
+            **_laptop(by_id[c.id]),
+            "catalog_sku": c.manufacturer_sku,
+            "guide_sku": rows[0].sku,
+            "guide_price_rm": rows[0].price_rm,
+            "rows": [_guide_row(r) for r in rows],
+            "warnings": warn(c, rows),
+        }] if keep(e, rows, "matched_by_suffix_rule")
+    ]
+    base_code = [
+        e for c, rows in result.base_code
+        for e in [{
+            **_laptop(by_id[c.id]),
+            "guide_sku": rows[0].sku,
+            "guide_price_rm": rows[0].price_rm,
+            "rows": [_guide_row(r) for r in rows],
+            "warnings": warn(c, rows),
+        }] if keep(e, rows, "matched_by_base_code")
+    ]
 
     return {
         "guide_id": str(guide.id),
         "counts": {
             "matched": len(matched),
             "differs_from_guide": len(differs),
-            "matched_by_suffix_rule": len(result.suffix_rule),
-            "matched_by_base_code": len(result.base_code),
+            "matched_by_suffix_rule": len(suffix_rule),
+            "matched_by_base_code": len(base_code),
+            "reviewed": len(reviewed_out),
             "ambiguous": len(result.ambiguous),
             "conflict": len(result.conflict),
             "unmatched_guide": len(result.unmatched_guide),
@@ -172,28 +227,11 @@ def preview(session: Session, guide: PriceGuide) -> dict:
         "matched": matched,
         "differs_from_guide": differs,
         # -W read as -WP: an apply skips these, "Use guide price" writes them.
-        "matched_by_suffix_rule": [
-            {
-                **_laptop(by_id[catalog_row.id]),
-                "catalog_sku": catalog_row.manufacturer_sku,
-                "guide_sku": rows[0].sku,
-                "guide_price_rm": rows[0].price_rm,
-                "rows": [_guide_row(r) for r in rows],
-                "warnings": warn(catalog_row, rows),
-            }
-            for catalog_row, rows in result.suffix_rule
-        ],
+        "matched_by_suffix_rule": suffix_rule,
         # Found through the base code only: an apply skips these too.
-        "matched_by_base_code": [
-            {
-                **_laptop(by_id[catalog_row.id]),
-                "guide_sku": rows[0].sku,
-                "guide_price_rm": rows[0].price_rm,
-                "rows": [_guide_row(r) for r in rows],
-                "warnings": warn(catalog_row, rows),
-            }
-            for catalog_row, rows in result.base_code
-        ],
+        "matched_by_base_code": base_code,
+        # Decided by an admin at this guide price; back on its list if the price changes.
+        "reviewed": reviewed_out,
         # Priced here but not on sale: making them active is an admin's call.
         "priced_but_inactive": [m for m in matched if m["status"] == LaptopStatus.INACTIVE.value],
         "ambiguous": [
@@ -227,35 +265,88 @@ def _write_guide_price(session: Session, laptop: Laptop, price: float, guide_id:
     ))
 
 
-def use_guide_price(session: Session, guide: PriceGuide, laptop_ids: set[uuid.UUID]) -> dict:
+def _selectable(session: Session, guide: PriceGuide) -> dict[uuid.UUID, tuple[Laptop, float, str]]:
+    """laptop id -> (laptop, guide price, guide SKU) for every laptop on the differs,
+    suffix-rule or base-code list, reviewed or not."""
+    laptops = _catalog(session)
+    by_id = {l.id: l for l in laptops}
+    sources = _latest_sources(session)
+    result = _match(session, guide, laptops)
+    selectable = {c.id: (by_id[c.id], rows[0].price_rm, rows[0].sku) for c, rows in result.suffix_rule + result.base_code}
+    for catalog_row, rows in result.matched:
+        laptop = by_id[catalog_row.id]
+        if decide(laptop.price_rm, sources.get(laptop.id), rows[0].price_rm) == Action.DIFFERS:
+            selectable[laptop.id] = (laptop, rows[0].price_rm, rows[0].sku)
+    return selectable
+
+
+def _write_review(session: Session, guide: PriceGuide, laptop_id: uuid.UUID, sku: str, price: float,
+                  decision: PriceGuideDecision, reviewed_by: Optional[uuid.UUID], now: datetime) -> None:
+    """One review per laptop and guide: a second decision replaces the first."""
+    row = session.exec(select(PriceGuideReview).where(
+        PriceGuideReview.laptop_id == laptop_id, PriceGuideReview.guide_id == guide.id)).first()
+    row = row or PriceGuideReview(laptop_id=laptop_id, guide_id=guide.id, guide_sku="", guide_price_rm=0, decision="")
+    row.guide_sku, row.guide_price_rm, row.decision = sku_key(sku), price, decision.value
+    row.reviewed_by, row.reviewed_at = reviewed_by, now
+    session.add(row)
+
+
+def mark_reviewed(session: Session, guide: PriceGuide, laptop_ids: set[uuid.UUID],
+                  reviewed_by: Optional[uuid.UUID] = None,
+                  decision: PriceGuideDecision = PriceGuideDecision.KEPT) -> dict:
+    """"Mark reviewed" on the differs, suffix-rule or base-code list: the stored price stays
+    and the row leaves the list and the email count until the guide price changes. All
+    or nothing, like "Use guide price"."""
+    selectable = _selectable(session, guide)
+    not_listed = sorted(laptop_ids - selectable.keys(), key=str)
+    if not_listed:
+        raise NotSelectable(not_listed)
+    now = datetime.now(timezone.utc)
+    for laptop_id in laptop_ids:
+        _, price, sku = selectable[laptop_id]
+        _write_review(session, guide, laptop_id, sku, price, decision, reviewed_by, now)
+    session.commit()
+    return {"guide_id": str(guide.id), "reviewed": len(laptop_ids)}
+
+
+def undo_reviewed(session: Session, guide: PriceGuide, laptop_ids: set[uuid.UUID]) -> dict:
+    """Put the selected laptops back on their list: removes every review that hides them at
+    this guide's price, an earlier guide's included (a review is carried across guides)."""
+    selectable = _selectable(session, guide)
+    removed = 0
+    for review in session.exec(select(PriceGuideReview).where(PriceGuideReview.laptop_id.in_(laptop_ids))).all():  # type: ignore[attr-defined]
+        found = selectable.get(review.laptop_id)
+        if found and is_reviewed({review_key(review.laptop_id, review.guide_sku, review.guide_price_rm)},
+                                 review.laptop_id, found[2], found[1]):
+            session.delete(review)
+            removed += 1
+    session.commit()
+    return {"guide_id": str(guide.id), "removed": removed}
+
+
+def use_guide_price(session: Session, guide: PriceGuide, laptop_ids: set[uuid.UUID],
+                    reviewed_by: Optional[uuid.UUID] = None) -> dict:
     """Replace the selected laptops' prices with this guide's, in one transaction.
 
     Only laptops on the differs, suffix-rule or base-code lists, worked out again here
     rather than trusted from the page: one that left since the preview refuses the
     whole selection. A confirmed price that is already right moves Last Checked only.
     """
-    laptops = _catalog(session)
-    by_id = {l.id: l for l in laptops}
-    sources = _latest_sources(session)
-    result = _match(session, guide, laptops)
-    selectable = {c.id: (by_id[c.id], rows[0].price_rm) for c, rows in result.suffix_rule + result.base_code}
-    for catalog_row, rows in result.matched:
-        laptop = by_id[catalog_row.id]
-        if decide(laptop.price_rm, sources.get(laptop.id), rows[0].price_rm) == Action.DIFFERS:
-            selectable[laptop.id] = (laptop, rows[0].price_rm)
-
+    selectable = _selectable(session, guide)
     not_listed = sorted(laptop_ids - selectable.keys(), key=str)
     if not_listed:
         raise NotSelectable(not_listed)
 
     now = datetime.now(timezone.utc)
     for laptop_id in laptop_ids:
-        laptop, price = selectable[laptop_id]
+        laptop, price, sku = selectable[laptop_id]
         if laptop.price_rm == price:
             laptop.price_checked_at = now
             session.add(laptop)
         else:
             _write_guide_price(session, laptop, price, guide.id, now)
+        # Decided: off the list until the guide price changes (Jack, 2026-11-15, option 3a).
+        _write_review(session, guide, laptop_id, sku, price, PriceGuideDecision.USED_GUIDE, reviewed_by, now)
     session.commit()
     return {"guide_id": str(guide.id), "updated": len(laptop_ids)}
 
@@ -275,6 +366,7 @@ def delete_guide(session: Session, guide: PriceGuide) -> None:
     if count:
         noun = "price" if count == 1 else "prices"
         raise GuideInUse(f"{count} {noun} came from this guide, so it cannot be deleted.")
+    session.exec(delete(PriceGuideReview).where(PriceGuideReview.guide_id == guide.id))
     session.exec(delete(PriceGuideRow).where(PriceGuideRow.guide_id == guide.id))
     session.delete(guide)
     try:
@@ -302,6 +394,11 @@ def apply_guide(session: Session, guide_id: uuid.UUID, progress=None) -> dict:
     result = _match(session, guide, laptops)
     sources = _latest_sources(session)
     now = datetime.now(timezone.utc)
+    # Rows an admin decided on stay out of the counts the weekly email reports.
+    reviewed = set(_reviews(session))
+
+    def open_decision(catalog_row, rows) -> bool:
+        return not is_reviewed(reviewed, catalog_row.id, rows[0].sku, rows[0].price_rm)
 
     filled = confirmed = differs = 0
     for catalog_row, rows in result.matched:
@@ -312,7 +409,7 @@ def apply_guide(session: Session, guide_id: uuid.UUID, progress=None) -> dict:
             _write_guide_price(session, laptop, price, guide.id, now)
             filled += 1
         elif action == Action.DIFFERS:
-            differs += 1
+            differs += open_decision(catalog_row, rows)
         elif laptop.price_checked_at is None or laptop.price_checked_at < guide.uploaded_at:
             laptop.price_checked_at = now
             session.add(laptop)
@@ -330,6 +427,6 @@ def apply_guide(session: Session, guide_id: uuid.UUID, progress=None) -> dict:
         "filled": filled,
         "confirmed": confirmed,
         "differs_from_guide": differs,
-        "awaiting_confirmation": len(result.suffix_rule) + len(result.base_code),
+        "awaiting_confirmation": sum(open_decision(c, rows) for c, rows in result.suffix_rule + result.base_code),
         "skipped_unclear": len(result.ambiguous) + len(result.conflict),
     }

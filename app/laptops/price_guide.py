@@ -99,6 +99,17 @@ def sku_key(sku: Optional[str]) -> str:
     return re.sub(r"WP$", "W", (sku or "").strip().upper())
 
 
+def review_key(laptop_id, sku: Optional[str], price: Optional[float]) -> tuple:
+    """What a review is matched on: the laptop, the SKU (-W and -WP one) and the guide
+    price, so a later guide at the same price stays reviewed and a new price brings the
+    row back (Jack, 2026-11-15, option 2b)."""
+    return (str(laptop_id), sku_key(sku), round(price, 2) if price is not None else None)
+
+
+def is_reviewed(reviewed: set, laptop_id, sku: Optional[str], price: Optional[float]) -> bool:
+    return review_key(laptop_id, sku, price) in reviewed
+
+
 def _needs_suffix_rule(row: CatalogRow, guide_rows: list[GuideRow]) -> bool:
     """A SKU match that holds only because -W and -WP read as one."""
     stored = (row.manufacturer_sku or "").strip().upper()

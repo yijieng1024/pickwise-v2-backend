@@ -20,7 +20,9 @@ from app.common.job_service import create_job, job_accepted, refuse_if_running, 
 from app.config import settings
 from app.database import get_session
 from app.laptops.price_guide_model import PriceGuide, PriceGuideKind
-from app.laptops.price_guide_service import GuideInUse, NotSelectable, apply_guide, delete_guide, preview, use_guide_price
+from app.laptops.price_guide_service import (
+    GuideInUse, NotSelectable, apply_guide, delete_guide, mark_reviewed, preview, undo_reviewed, use_guide_price,
+)
 from app.logger import get_logger
 from app.users.auth import get_current_admin
 from app.users.models import User
@@ -217,19 +219,59 @@ def use_price_from_guide(
     guide_id: uuid.UUID,
     body: UseGuidePriceRequest,
     session: Session = Depends(get_session),
+    admin: User = Depends(get_current_admin),
 ) -> dict:
     """
     "Use guide price" on the differs, suffix-rule or base-code list, for one laptop or a
     selection. Writes as an apply does, so a later guide can update these prices; a
-    laptop not selected keeps its price. All or nothing: 409 if any id is no longer on
-    a list, or while an apply is running.
+    laptop not selected keeps its price. Each laptop is also marked reviewed (decision
+    `used_guide`), so it leaves its list until the guide price changes. All or nothing:
+    409 if any id is no longer on a list, or while an apply is running.
     """
     guide = _guide_or_404(session, guide_id)
     refuse_if_running(session, (JobType.PRICE_GUIDE_APPLY,), "A price guide apply is already running.")
     try:
-        return use_guide_price(session, guide, set(body.laptop_ids))
+        return use_guide_price(session, guide, set(body.laptop_ids), reviewed_by=admin.id)
     except NotSelectable as error:
         raise HTTPException(status_code=409, detail=str(error))
+
+
+@router.post("/{guide_id}/review")
+def mark_price_guide_reviewed(
+    guide_id: uuid.UUID,
+    body: UseGuidePriceRequest,
+    session: Session = Depends(get_session),
+    admin: User = Depends(get_current_admin),
+) -> dict:
+    """
+    "Mark reviewed" on the differs, suffix-rule or base-code list: the stored price stays
+    (decision `kept`), and the laptop leaves its list and the weekly email's counts until
+    the guide price for it changes, in this guide or a later one. All or nothing: 409 if
+    any id is on none of those lists, or while an apply is running.
+    """
+    guide = _guide_or_404(session, guide_id)
+    refuse_if_running(session, (JobType.PRICE_GUIDE_APPLY,), "A price guide apply is already running.")
+    try:
+        return mark_reviewed(session, guide, set(body.laptop_ids), reviewed_by=admin.id)
+    except NotSelectable as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
+@router.delete("/{guide_id}/review")
+def undo_price_guide_reviewed(
+    guide_id: uuid.UUID,
+    body: UseGuidePriceRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Undo "Mark reviewed" (or the mark "Use guide price" left): the laptops go back on
+    their list. Removes every review that hides them at this guide's price, including
+    one made on an earlier guide. A laptop with nothing to undo is ignored. 409 while an
+    apply is running.
+    """
+    guide = _guide_or_404(session, guide_id)
+    refuse_if_running(session, (JobType.PRICE_GUIDE_APPLY,), "A price guide apply is already running.")
+    return undo_reviewed(session, guide, set(body.laptop_ids))
 
 
 @router.delete("/{guide_id}", status_code=status.HTTP_204_NO_CONTENT)

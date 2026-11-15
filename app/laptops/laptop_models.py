@@ -204,6 +204,12 @@ class Laptop(LaptopBase, table=True):
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
+    # 3d. Guide rows an admin reviewed (price_guide_reviews): derived, go with the laptop
+    guide_reviews: List["PriceGuideReview"] = Relationship(
+        back_populates="laptop",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
     # 3b. Education price (step 10d): derived, at most one row
     edu_price: Optional["LaptopEduPrice"] = Relationship(
         back_populates="laptop",
@@ -405,6 +411,35 @@ class LaptopEduPrice(SQLModel, table=True):
     price_changed_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PriceGuideDecision(str, Enum):
+    KEPT = "kept"  # the stored price stays
+    USED_GUIDE = "used_guide"  # "Use guide price" wrote the guide's price
+
+
+class PriceGuideReview(SQLModel, table=True):
+    """A guide row an admin has decided on (Jack, 2026-11-15). It leaves the waiting and
+    differs lists, and the weekly email's counts, until the guide price for this laptop
+    and SKU differs from `guide_price_rm`; a later guide with the same price stays
+    reviewed. `guide_sku` is in sku_key form (-W and -WP one). Declared here, like
+    LaptopSku, so Laptop's delete cascade can name it."""
+    __tablename__ = "price_guide_reviews"  # type: ignore
+    __table_args__ = (UniqueConstraint("laptop_id", "guide_id", name="uq_price_guide_reviews_laptop_guide"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    laptop_id: uuid.UUID = Field(foreign_key="laptops.id", index=True)
+    laptop: Optional["Laptop"] = Relationship(back_populates="guide_reviews")
+    guide_id: uuid.UUID = Field(foreign_key="price_guides.id", index=True)
+    guide_sku: str = Field(max_length=64)
+    guide_price_rm: float
+    decision: str = Field(max_length=20)
+    # Null after the admin who decided deletes their account (DELETE /auth/me).
+    reviewed_by: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")
+    reviewed_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
 
 

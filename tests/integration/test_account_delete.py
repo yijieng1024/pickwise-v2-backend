@@ -10,6 +10,7 @@ from sqlmodel import select
 from app.agent.monitoring_models import AgentModelCall, AgentRunLog
 from app.common.job_model import BackgroundJob
 from app.common.llm_usage import LLMUsageLog
+from app.laptops.laptop_models import PriceGuideReview
 from app.laptops.price_guide_model import PriceGuide
 from app.rag.models import Conversation, ConversationLaptop, Message, PipelineEvalLog
 from app.saved.models import SavedLaptop
@@ -53,6 +54,11 @@ def _seed(session, user, laptop) -> None:
         SavedLaptop(user_id=user.id, laptop_id=laptop.id),
         UserAvatar(user_id=user.id, data=b"x", content_type="image/png"),
     ])
+    guide = PriceGuide(kind="rog", filename="g.pdf", pdf_sha256=uuid.uuid4().hex, row_count=0)
+    session.add(guide)
+    session.flush()
+    session.add(PriceGuideReview(laptop_id=laptop.id, guide_id=guide.id, guide_sku="X-1", guide_price_rm=1.0,
+                                 decision="kept", reviewed_by=user.id))
 
 
 def _delete(client, username, **kwargs):
@@ -84,6 +90,10 @@ def test_deleting_an_account_removes_its_rows_and_only_its_rows(
         assert _count(session, model) == 1, model.__name__  # the other user's row
     # Usage counts stay, for the quota and cost numbers, without the user.
     assert sorted(str(r.user_id) for r in session.exec(select(LLMUsageLog)).all()) == sorted(
+        ["None", str(other_id)]
+    )
+    # A guide review is the record of a pricing decision: it stays, without the user.
+    assert sorted(str(r.reviewed_by) for r in session.exec(select(PriceGuideReview)).all()) == sorted(
         ["None", str(other_id)]
     )
 
