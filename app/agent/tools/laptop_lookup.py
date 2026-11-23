@@ -40,13 +40,37 @@ _SIZE = re.compile(r"(?<![\d.])(13|14|15|16|18)(?![\d.])")
 _WORD = re.compile(r"\w+")
 _FOUND = (LaptopStatus.ACTIVE.value, LaptopStatus.DISCONTINUED.value)
 _MAX_CONFIGS = 15
+_NOT_NAME = re.compile(r"[^a-z0-9.\-]+")
+# A maker's code: letters then 3-5 digits, "g614p", "ux3405", "g614p-rrv012w". Never a CPU
+# or GPU number ("8940hx", "5070") or a line name ("g16", "m5").
+CODE = re.compile(r"^[a-z]{1,3}\d{3,5}[a-z0-9]*(?:-[a-z0-9]+)*$")
+
+
+def match_text(text: Optional[str]) -> str:
+    """*text* as both tools score it. Brackets, commas and other punctuation become
+    spaces, so the bare SKU "G614P-RRV012W" meets the name's "(G614P-RRV012W)"; a hyphen
+    inside a token stays, so the SKU stays one token and a part of it ("G614P") never
+    equals it. -W and -WP read as one SKU, as in the guides (price_guide.sku_key)."""
+    tokens = []
+    for token in _NOT_NAME.sub(" ", (text or "").lower()).split():
+        token = token.strip(".-")
+        if "-" in token and token.endswith("wp") and CODE.match(token):
+            token = token[:-1]
+        if token:
+            tokens.append(token)
+    return " ".join(tokens)
+
+
+def names_a_code(query: str) -> bool:
+    """Whether *query* carries a maker's code: then a tie is several machines, not one."""
+    return any(CODE.match(token) for token in match_text(query).split())
 
 
 def _score(query: str, row: Mapping) -> float:
-    name = (row["product_name"] or "").lower()
+    query, name = match_text(query), match_text(row["product_name"])
     score = fuzz.token_set_ratio(query, name)
     if row.get("brand"):
-        score = max(score, fuzz.token_set_ratio(query, f"{row['brand'].lower()} {name}"))
+        score = max(score, fuzz.token_set_ratio(query, f"{match_text(row['brand'])} {name}"))
     return score
 
 

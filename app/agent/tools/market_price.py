@@ -11,6 +11,7 @@ from app.database import engine
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, last_official_price
 from app.laptops.marketplace import marketplace_links as _marketplace_links
+from app.agent.tools.laptop_lookup import match_text, names_a_code
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -77,18 +78,26 @@ def _catalog_lookup(query: str, model_code: Optional[str], session: Session) -> 
         # threshold. Score against both forms and keep the best.
         brands = session.exec(select(LaptopBrand)).all()
         brand_map = {b.id: (b.name or "").lower() for b in brands}
-        q = query.lower()
+        # Scored as lookup_laptop scores: a bare SKU meets the name's "(SKU)".
+        q = match_text(query)
         scored = []
         for l in rows:
-            name = (l.product_name or "").lower()
+            name = match_text(l.product_name)
             score = fuzz.token_set_ratio(q, name)
             brand = brand_map.get(l.brand_id)
             if brand:
-                score = max(score, fuzz.token_set_ratio(q, f"{brand} {name}"))
+                score = max(score, fuzz.token_set_ratio(q, f"{match_text(brand)} {name}"))
             scored.append((score, l))
         scored = [(s, l) for s, l in scored if s >= _CATALOG_THRESHOLD]
         if scored:
             best_score, laptop = max(scored, key=lambda t: t[0])
+            tied = [l for s, l in scored if s == best_score]
+            if len(tied) > 1 and names_a_code(query):
+                # A code shared by several machines ("UX3405", a chassis) names none of
+                # them: picking one would quote one configuration's price as the code's.
+                return {"found": False, "ambiguous": True,
+                        "candidates": sorted(l.product_name for l in tied)[:_HISTORY_POINTS],
+                        "note": "Several catalog laptops carry this code: ask which configuration."}
 
     if laptop is None:
         return {"found": False}
