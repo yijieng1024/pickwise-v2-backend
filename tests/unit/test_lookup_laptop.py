@@ -112,7 +112,8 @@ def test_market_price_catalog_layer_is_unchanged():
     best row for an ambiguous name."""
     brand = SimpleNamespace(id=1, name="Asus")
     laptops = [SimpleNamespace(id=r["id"], product_name=r["product_name"], brand_id=1, model_code="x",
-                               price_rm=r["price_rm"]) for r in ROWS if r["brand"] == "Asus"]
+                               price_rm=r["price_rm"], status=r["status"], price_checked_at=None)
+               for r in ROWS if r["brand"] == "Asus"]
     session = _Session(laptops, [brand])
     assert market_price._catalog_lookup("TUF A16 2023", None, session) == {"found": False}
     found = market_price._catalog_lookup("TUF F16", None, session)

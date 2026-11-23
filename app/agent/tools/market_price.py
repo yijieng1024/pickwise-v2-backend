@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import engine
 from app.laptops.brand_model import LaptopBrand
-from app.laptops.laptop_models import Laptop, LaptopPriceHistory
+from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopStatus, last_official_price
 from app.laptops.marketplace import marketplace_links as _marketplace_links
 from app.logger import get_logger
 
@@ -37,6 +37,9 @@ _MIN_LAPTOP_PRICE_RM = 800.0
 # Minimum product_name similarity for a catalog match.
 _CATALOG_THRESHOLD = 75
 _HISTORY_POINTS = 5
+# What a name can find (ADR-0009 Amendment II), as lookup_laptop: inactive and suspended
+# rows are never found, and a discontinued one is reported as no longer sold.
+_FOUND = (LaptopStatus.ACTIVE.value, LaptopStatus.DISCONTINUED.value)
 
 # query → (fetched_at, listings section). Prices move slowly; credits don't.
 _CACHE_TTL_S = 6 * 3600
@@ -62,12 +65,12 @@ def _catalog_lookup(query: str, model_code: Optional[str], session: Session) -> 
     laptop = None
     if model_code:
         laptop = session.exec(
-            select(Laptop).where(Laptop.model_code == model_code)
+            select(Laptop).where(Laptop.model_code == model_code, Laptop.status.in_(_FOUND))  # type: ignore[attr-defined]
         ).first()
 
     best_score = None
     if laptop is None:
-        rows = session.exec(select(Laptop)).all()
+        rows = session.exec(select(Laptop).where(Laptop.status.in_(_FOUND))).all()  # type: ignore[attr-defined]
         # Catalog product_names omit the brand ("ROG Strix G16 …", no
         # "ASUS"), but the agent usually passes brand-qualified names — the
         # unmatched brand token alone drops token_set_ratio below the
@@ -90,24 +93,11 @@ def _catalog_lookup(query: str, model_code: Optional[str], session: Session) -> 
     if laptop is None:
         return {"found": False}
 
-    history = session.exec(
-        select(LaptopPriceHistory)
-        .where(LaptopPriceHistory.laptop_id == laptop.id)
-        .order_by(LaptopPriceHistory.recorded_at.desc())  # type: ignore[union-attr]
-        .limit(_HISTORY_POINTS)
-    ).all()
-
-    result = {
-        "found": True,
-        "product_name": laptop.product_name,
-        "model_code": laptop.model_code,
-        "official_price_rm": laptop.price_rm,
-        "match_score": best_score if best_score is not None else 100,
-        "price_history": [
-            {"price_rm": h.price_rm, "date": h.recorded_at.date().isoformat()}
-            for h in history
-        ],
-    }
+    if laptop.status == LaptopStatus.DISCONTINUED.value:
+        result = _discontinued(laptop, session)
+    else:
+        result = _active(laptop, session)
+    result["match_score"] = best_score if best_score is not None else 100
     if best_score is not None:
         # Fuzzy name match, not a model_code hit — the catalog may only have
         # a nearby variant (different chip generation / size / RAM).
@@ -118,6 +108,42 @@ def _catalog_lookup(query: str, model_code: Optional[str], session: Session) -> 
             "differences, NOT as the requested laptop's official price."
         )
     return result
+
+
+def _discontinued(laptop: Laptop, session: Session) -> dict:
+    """No official price today: the last one and its date, as lookup_laptop gives it."""
+    history = session.exec(
+        select(LaptopPriceHistory.price_rm, LaptopPriceHistory.recorded_at, LaptopPriceHistory.source)
+        .where(LaptopPriceHistory.laptop_id == laptop.id)
+    ).all()
+    price, at = last_official_price(laptop.price_rm, laptop.price_checked_at, history)
+    result = {"found": True, "product_name": laptop.product_name, "model_code": laptop.model_code,
+              "status": LaptopStatus.DISCONTINUED.value, "no_longer_sold": True}
+    if price:
+        result.update(last_official_price_rm=price, last_official_price_date=at.date().isoformat())
+    else:
+        result["last_official_price"] = "No recorded price"
+    return result
+
+
+def _active(laptop: Laptop, session: Session) -> dict:
+    history = session.exec(
+        select(LaptopPriceHistory)
+        .where(LaptopPriceHistory.laptop_id == laptop.id)
+        .order_by(LaptopPriceHistory.recorded_at.desc())  # type: ignore[union-attr]
+        .limit(_HISTORY_POINTS)
+    ).all()
+
+    return {
+        "found": True,
+        "product_name": laptop.product_name,
+        "model_code": laptop.model_code,
+        "official_price_rm": laptop.price_rm,
+        "price_history": [
+            {"price_rm": h.price_rm, "date": h.recorded_at.date().isoformat()}
+            for h in history
+        ],
+    }
 
 
 # ─── Layer 2: live listings via Google Shopping (SerpApi) ────────────────
@@ -249,6 +275,10 @@ def search_malaysian_market_price(product_name: str, model_code: Optional[str] =
         and say what's missing. When neither does, say so honestly and share
         the search links. Always cite store names and note prices are
         indicative.
+
+        A discontinued laptop comes back with catalog.no_longer_sold and its last
+        official price and date, and no store listings or links: say it is no longer
+        sold and give that price as its last official one, never as a current price.
     """
     query = " ".join(part for part in [product_name, model_code] if part).strip()
 
@@ -259,6 +289,11 @@ def search_malaysian_market_price(product_name: str, model_code: Optional[str] =
         logger.exception("market_price: catalog lookup failed for %r", query)
         catalog = {"found": False, "note": "Catalog lookup failed."}
 
+    if catalog.get("no_longer_sold"):
+        # Not searched: store listings beside it would read as still on sale.
+        return {"query": query, "catalog": catalog, "live_listings": {
+            "status": "not_searched", "listings": [],
+            "note": "Discontinued: no longer sold, so stores were not searched."}}
     return {
         "query": query,
         "catalog": catalog,
