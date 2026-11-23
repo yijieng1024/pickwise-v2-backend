@@ -214,8 +214,10 @@ def test_a_tie_writes_nothing_and_reports_the_page_every_run(session, monkeypatc
     [page] = result["pages_matching_several"]
     assert page["sku"] == "E0GP3PA"
     assert {l["laptop_id"] for l in page["laptops"]} == {str(first.id), str(second.id)}
-    assert result["writes"] == []
     raw = session.exec(select(RawScrapLaptop).where(RawScrapLaptop.source_url == "https://example.invalid/w")).one()
+    # A row that wrote no laptop still has one "skipped" entry (284852a): writes lists
+    # every raw row handled, and its readers count only inserted and updated.
+    assert result["writes"] == [{"raw_id": str(raw.id), "laptop_id": None, "action": "skipped"}]
     assert raw.processing_status == "failed", "a failed row is processed, and reported, again next run"
     for laptop in (first, second):
         session.refresh(laptop)
