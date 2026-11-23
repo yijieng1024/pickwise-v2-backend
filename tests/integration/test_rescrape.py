@@ -186,3 +186,33 @@ def test_an_unchanged_variant_still_counts_its_sku_as_seen(session, monkeypatch)
     _target(session, brand, HP_URL)
     report, _ = _scrape(session, monkeypatch, brand, {HP_URL: [page]})
     assert report.skipped == 1 and report.skus_seen == ["D93CDPA"]
+
+
+OLD_CHECK = datetime(2026, 8, 15, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("on_page, stored_price, confirmed", [
+    ("RM9,099.00", 9099.0, True),
+    # ROG's "unknown": nothing was confirmed.
+    ("RM0.00", 9099.0, False),
+    # The laptop keeps the lowest of its SKUs' prices; this page did not show it.
+    ("RM9,499.00", 9099.0, False),
+])
+def test_an_unchanged_page_moves_last_checked_only_when_it_shows_the_stored_price(
+        session, brand, monkeypatch, on_page, stored_price, confirmed):
+    laptop = make_laptop(brand.id, model_code="rog-strix-g16-v1", price_rm=stored_price)
+    laptop.manufacturer_sku = "G614PR-S5099W"
+    laptop.price_checked_at = OLD_CHECK
+    session.add(laptop)
+    session.commit()
+    updated_at = laptop.updated_at
+    page = _variant("SKU", "G614PR-S5099W", on_page)
+    _stored(session, brand, ROG_URL, page)
+    _target(session, brand, ROG_URL)
+
+    report, _ = _scrape(session, monkeypatch, brand, {ROG_URL: [page]})
+
+    session.refresh(laptop)
+    assert report.prices_confirmed == int(confirmed)
+    assert (laptop.price_checked_at > OLD_CHECK) is confirmed
+    assert laptop.updated_at == updated_at, "a confirmed price is not a catalog change"

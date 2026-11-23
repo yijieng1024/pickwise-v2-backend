@@ -44,7 +44,7 @@ from app.common.db_target import host_of, write_target
 from app.laptops.brand_model import LaptopBrand
 from app.laptops.laptop_models import Laptop, LaptopSku
 from app.laptops.price_guide import sku_key
-from app.laptops.sku_match import page_specs, same_machine
+from app.laptops.sku_match import page_specs, same_machines
 from app.processor.engine import raw_sku
 from app.scraper.asus_scraper import scrape_asus_laptop_specs
 from app.scraper.bulk_scraper import LIVE_FETCH_PAUSE_S, RESCRAPED_HOSTS, rescraped_every_run, unchanged
@@ -125,8 +125,12 @@ def plan(variants: Iterable[Any], laptops: Iterable[Any]) -> list[dict]:
             row["outcome"] = "slug"
             continue
         brand = [l for l in laptops if l.brand_id == v.brand_id]
-        same = same_machine(v.name, specs, brand)
-        if same is not None:
+        matches = same_machines(v.name, specs, brand)
+        if len(matches) > 1:  # a real run writes nothing and reports the page
+            row.update(outcome="several", laptop=matches[0])
+            continue
+        if matches:
+            same = matches[0]
             row.update(outcome="attach", laptop=same)
             same.skus.append(v.sku)
             continue
@@ -247,7 +251,7 @@ def main() -> int:
     variants, failures = asyncio.run(fetch(targets, stored))
     rows = plan(variants, laptops)
 
-    labels = {"SKU": "updates", "attach": "attaches to", "insert": "closest by name"}
+    labels = {"SKU": "updates", "attach": "attaches to", "insert": "closest by name", "several": "fits, among others"}
     for row in rows:
         price = f"RM{row['price']:,.0f}" if row["price"] else "no price"
         print(f"{row['outcome'].upper():9}  {row['sku'] or '-':18}  {price:9}  {row['name']}")
@@ -266,7 +270,7 @@ def main() -> int:
         pages = sum(1 for t in targets if t.url.split("/")[2].lower() == host)
         failed = sum(1 for page, _ in failures if page.split("/")[2].lower() == host)
         print(f"{host}: {pages} pages, {sum(counts.values())} variants, {failed} failed fetches | "
-              + ", ".join(f"{name} {counts[name]}" for name in ("unchanged", "no SKU", "SKU", "attach", "insert", "slug")))
+              + ", ".join(f"{name} {counts[name]}" for name in ("unchanged", "no SKU", "SKU", "attach", "several", "insert", "slug")))
     return 0
 
 

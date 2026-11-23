@@ -136,7 +136,7 @@ def step_scrape(run: Run) -> dict:
         return {"pages": report.total_pending, "succeeded": report.succeeded, "failed": report.failed,
                 "skipped": report.skipped,
                 "failed_pages": [{"url": r.url, "error": r.error} for r in report.results if r.status == "failed"],
-                "skus_seen": sorted(set(report.skus_seen))}
+                "skus_seen": sorted(set(report.skus_seen)), "prices_confirmed": report.prices_confirmed}
 
     sites = run.settings.sites()
     return _each(run, [(brand, (_brand_id(run.session, brand), hosts)) for brand, hosts in sites.items()], scrape)

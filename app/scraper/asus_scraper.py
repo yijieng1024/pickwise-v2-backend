@@ -15,7 +15,7 @@ import json
 import re
 from typing import Callable
 
-from .fetch import fetch_html as _fetch
+from .fetch import fetch_same_page as _fetch
 from .nuxt_state import nuxt2_state, nuxt3_state
 
 # Listing API behind https://www.asus.com/my/laptops/all-products/ -- a module

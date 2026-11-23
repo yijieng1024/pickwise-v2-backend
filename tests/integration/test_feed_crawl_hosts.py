@@ -18,6 +18,12 @@ GONE = "https://rog.asus.com/my/laptops/rog-zephyrus/old/"
 OTHER_SITE_GONE = "https://www.asus.com/my/laptops/old-vivobook/"
 
 
+@pytest.fixture(autouse=True)
+def _missing_pages_load(monkeypatch):
+    """The crawl checks a missing www.asus.com page with a GET: here every page loads."""
+    monkeypatch.setattr(bulk_scraper, "fetch_same_page", lambda url: "")
+
+
 @pytest.fixture
 def asus(session, monkeypatch):
     brand = LaptopBrand(name="ASUS", base_scrape_url="https://example.invalid/asus")

@@ -19,7 +19,7 @@ from typing import Callable
 from lxml import html as lxml_html
 
 from .acer_scraper import _gallery_urls, _parse_prices
-from .fetch import fetch_html as _fetch
+from .fetch import fetch_same_page as _fetch
 from .nuxt_state import read_js_object
 
 # ponytail: page walk stops on the first page with no new links; raise if HP

@@ -82,18 +82,44 @@ def test_same_machine_needs_the_line_and_every_spec():
     laptop = _laptop("HP OmniBook 5 16 inch Laptop Next Gen AI 16-bm0090TU Silver", "Intel Core Ultra 5 322",
                      "Intel Graphics", 16, 512, 16.0)
     name = "HP OmniBook 5 16 inch Laptop Next Gen AI 16-bm0089TU Blue"
-    assert sku_match.same_machine(name, page, [laptop]) is laptop
-    assert sku_match.same_machine("HP OmniBook X 16 inch Laptop Next Gen AI 16-xx Blue", page, [laptop]) is None
+    assert sku_match.same_machines(name, page, [laptop]) == [laptop]
+    assert sku_match.same_machines("HP OmniBook X 16 inch Laptop Next Gen AI 16-xx Blue", page, [laptop]) == []
     for field, other in (("ram_gb", 32), ("ssd_gb", 1024), ("display_size_inch", 14.0),
                          ("processor_model", "Intel Core Ultra 7 355"), ("gpu_model", "NVIDIA GeForce RTX 5050")):
         different = SimpleNamespace(**{**vars(laptop), field: other})
-        assert sku_match.same_machine(name, page, [different]) is None, field
+        assert sku_match.same_machines(name, page, [different]) == [], field
 
 
-def test_two_laptops_that_fit_give_the_active_one_then_the_lowest_id():
+def _fits(*rows):
+    return [_laptop(name, "Intel Core Ultra 5 322", "Intel Graphics", 16, 512, 16.0, laptop_id=i, status=s)
+            for i, name, s in rows]
+
+
+def test_of_several_that_fit_the_one_naming_the_pages_model_code_wins():
+    page = sku_match.page_specs(HP_PAGE)
+    fits = _fits(("a", "HP OmniBook 5 16 inch Laptop 16-bm0090TU Silver", "active"),
+                 ("b", "HP OmniBook 5 16 inch Laptop 16-bm0089TU", "inactive"))
+    name = "HP OmniBook 5 16 inch Laptop Next Gen AI 16-bm0089TU Blue"
+    assert [l.id for l in sku_match.same_machines(name, page, fits)] == ["b"], "the code beats the status"
+    # The slug counts too: it is never overwritten, so it survives a name another page wrote.
+    fits[1].product_name, fits[1].model_code = fits[0].product_name, "hp-omnibook-5-16-bm0089tu-x"
+    assert [l.id for l in sku_match.same_machines(name, page, fits)] == ["b"]
+
+
+def test_then_the_active_one_wins_and_a_tie_after_that_is_returned_whole():
     page = sku_match.page_specs(HP_PAGE)
     name = "HP OmniBook 5 16 inch Laptop Blue"
-    fits = [_laptop(name, "Intel Core Ultra 5 322", "Intel Graphics", 16, 512, 16.0, laptop_id=i, status=s)
-            for i, s in (("c", "suspended"), ("b", "active"), ("a", "inactive"))]
-    assert sku_match.same_machine(name, page, fits).id == "b"
-    assert sku_match.same_machine(name, page, fits[::2]).id == "a"
+    fits = _fits(("c", name, "suspended"), ("b", name, "active"), ("a", name, "inactive"))
+    assert [l.id for l in sku_match.same_machines(name, page, fits)] == ["b"]
+    # No rule by id: the lowest id put 14-em0298AU's name on 14-em0306AU.
+    assert [l.id for l in sku_match.same_machines(name, page, fits[::2])] == ["c", "a"]
+
+
+@pytest.mark.parametrize("name, code", [
+    ("HP 14 inch Laptop 14-em0298AU Silver", "EM0298AU"),
+    ("ROG Strix G16 (2025) G614 (G614P-WTS178W)", "G614P-WTS178W"),
+    # A CPU part starts with a digit; nothing else in the name is a code.
+    ("HP 15.6 inch Laptop (Ryzen 7 7730U, 16GB RAM, 512GB SSD)", None),
+])
+def test_the_model_code_of_a_name(name, code):
+    assert sku_match.model_code(name) == code

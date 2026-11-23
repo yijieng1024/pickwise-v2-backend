@@ -3,9 +3,10 @@ Which existing laptop a scraped page is another SKU of (plan step 11, decision 1
 
 One machine is sold under several SKUs: HP has a page and a part number per colour, and
 ROG renames a SKU and keeps the specs. When a page's SKU is on no laptop, the processor
-asks `same_machine` whether a laptop of the same brand, the same product line and the
+asks `same_machines` whether a laptop of the same brand, the same product line and the
 same CPU, GPU, RAM, storage and screen size exists, and attaches the SKU to it instead
-of inserting a second laptop.
+of inserting a second laptop. When more than one still fits, it attaches nothing and
+reports the page (Jack, 2026-11-23): a guess wrote 14-em0298AU's name on 14-em0306AU.
 
 Pure: no database, no LLM, no network. Both sides are read from text the scraper and the
 catalog already hold. The page's specs come from its own spec table, never from the
@@ -26,6 +27,9 @@ _PAGE_KEYS = {
     "screen": ("display", "display and graphics / display"),
 }
 _COLOUR_KEYS = ("appearance / product color", "color", "colour")
+# A maker's model code in a name: 14-em0298AU's EM0298AU, ROG's G614P-WTS178W. CPU parts
+# start with a digit; a GPU part (Arc B390) can match, hence `model_code` takes the longest.
+MODEL_CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{3,5}[A-Z]{0,4}(?:-[A-Z0-9]{2,})*\b")
 
 
 def _key(name: str) -> str:
@@ -135,18 +139,34 @@ def laptop_specs(laptop: Any) -> Specs:
                  float(screen) if screen else None)
 
 
-def same_machine(page_name: str, specs: Specs, laptops: Iterable[Any]) -> Optional[Any]:
+def model_code(name: str) -> Optional[str]:
+    """The longest model code in *name*, upper case, or None."""
+    return max(MODEL_CODE_RE.findall((name or "").upper()), key=len, default=None)
+
+
+def names_code(code: Optional[str], laptop: Any) -> bool:
+    """Whether *laptop*'s name or slug carries *code* as a whole word."""
+    text = f"{laptop.product_name} {getattr(laptop, 'model_code', '')}".upper()
+    return bool(code) and re.search(rf"(?<![A-Z0-9]){re.escape(code)}(?![A-Z0-9])", text) is not None
+
+
+def same_machines(page_name: str, specs: Specs, laptops: Iterable[Any]) -> list:
     """
-    The laptop *page_name* with *specs* is another SKU of, among *laptops* (the brand's
-    own, in any status), or None: then the page is a new machine.
+    The laptops *page_name* with *specs* may be another SKU of, among *laptops* (the
+    brand's own, in any status): none, then the page is a new machine; one, attach to
+    it; several, a tie no rule settled, which the caller reports and does not write.
 
     Same product line and the same five specs. The line is required: by specs alone an
-    OmniBook X 14 page is an OmniBook 5 Flip. When two laptops fit (a duplicate already in
-    the catalog), an active one wins, then the lowest id, so the answer never depends on
-    the order the rows came in.
+    OmniBook X 14 page is an OmniBook 5 Flip. When several fit (a duplicate already in the
+    catalog), the ones naming the page's model code are kept, then the active ones. No
+    rule by id: the lowest id is an accident, and picked the wrong row of a duplicate.
     """
     line = product_line(page_name)
     if not line:
-        return None
+        return []
     fits = [l for l in laptops if product_line(l.product_name) == line and laptop_specs(l) == specs]
-    return min(fits, key=lambda l: (l.status != "active", str(l.id))) if fits else None
+    code = model_code(page_name)
+    for keep in (lambda l: names_code(code, l), lambda l: l.status == "active"):
+        if len(fits) > 1:
+            fits = [l for l in fits if keep(l)] or fits
+    return fits
