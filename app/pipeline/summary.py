@@ -12,8 +12,10 @@ from typing import Optional
 
 from app.scraper.bulk_scraper import page_key
 
-# A fetch that says the page is gone, not that the site was slow (decision 8).
-_GONE_ERRORS = ("HTTP 404", "No spec rows found")
+# A fetch that says the page is gone, not that the site was slow (decision 8). Not
+# "No spec rows found": a changed layout or a block page says that too, and would
+# report every page of the site as gone.
+_GONE_ERRORS = ("HTTP 404", "Redirected to")
 
 
 def _money(value) -> str:
@@ -74,23 +76,26 @@ def _last_go_live(steps: dict) -> dict:
 
 def _pages(steps: dict) -> tuple[list[str], list[str], list[str]]:
     """(likely gone, not seen but still working, other failed fetches). A missing page is
-    likely gone when its fetch failed this run with a 404 or no spec rows; both sides
-    are compared as the crawler normalises a page."""
+    likely gone when its fetch failed this run with a 404 or a redirect to another page,
+    or, for a page this run did not scrape, the crawl's own check of it did (`error`);
+    both sides are compared as the crawler normalises a page."""
     failed = {page_key(p["url"]): (brand, p) for brand, scrape in (steps.get("scrape") or {}).items()
               for p in scrape.get("failed_pages") or []}
-    gone, working = [], []
-    for crawl in (steps.get("crawl") or {}).values():
+    gone, working, checked = [], [], []
+    for brand, crawl in (steps.get("crawl") or {}).items():
         for page in crawl.get("missing_pages") or []:
-            _, fetch = failed.get(page_key(page["url"]), (None, {}))
+            _, fetch = failed.get(page_key(page["url"]), (None, page))
             if any(e in (fetch.get("error") or "") for e in _GONE_ERRORS):
-                failed.pop(page_key(page["url"]))
+                failed.pop(page_key(page["url"]), None)
                 laptops = ", ".join(f"{_laptop(l)}, {l.get('status')}" for l in page.get("laptops") or [])
                 gone.append(f"{page['url']} ({fetch['error']}). From it: "
                             + (laptops or "no catalog laptop traced to this page"))
-            else:
+            elif fetch is page and page.get("error"):  # the crawl's check failed some other way
+                checked.append(f"{brand}: {page['url']}: {page['error']}")
+            elif not fetch.get("error"):  # a scrape that failed otherwise is under "other"
                 working.append(page["url"])
     other = [f"{brand}: {p['url']}: {p.get('error') or 'no reason given'}" for brand, p in failed.values()]
-    return gone, working, other
+    return gone, working, other + checked
 
 
 def build_summary(result: dict, threshold_percent: int, admin_url: str = "") -> tuple[str, str, str]:

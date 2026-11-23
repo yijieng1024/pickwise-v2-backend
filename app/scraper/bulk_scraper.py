@@ -39,6 +39,7 @@ from app.scraper.apple_options_fetch import run_options_step
 from app.scraper.apple_scraper import crawl_apple_specs_links, scrape_apple_buy_page, scrape_official_website
 from app.scraper.asus_scraper import _normalise_product_url as page_key, crawl_asus_specs_links, scrape_asus_laptop_specs
 from app.scraper.acer_scraper import crawl_acer_specs_links, scrape_acer_laptop_specs
+from app.scraper.fetch import fetch_same_page
 from app.scraper.hp_scraper import crawl_hp_specs_links, scrape_hp_laptop_specs
 from app.scraper.models import RawScrapLaptop, ScrapeStatus, ScrapeTarget
 
@@ -444,6 +445,28 @@ def _on_hosts(url: str, hosts: Optional[Iterable[str]]) -> bool:
     return hosts is None or urlsplit(url).netloc.lower() in hosts
 
 
+# Sites whose stored pages a bulk run never fetches again, so a page the crawl missed
+# is checked by the crawl itself. ASUS answers a removed page with a 200 on its series
+# page, which the redirect check catches. ponytail: by host; add one only after
+# checking how it answers a removed page (Acer is never fetched, Apple unchecked).
+CHECKED_WHEN_MISSING = frozenset({"www.asus.com"})
+
+
+async def check_missing(urls: list[str]) -> dict[str, str]:
+    """{url: error} for the pages on CHECKED_WHEN_MISSING sites whose fetch failed: one GET
+    each. A page that loads has no entry; the summary then lists it as still working."""
+    fetch = fetch_same_page  # looked up per call, so a test can stand it in
+    errors: dict[str, str] = {}
+    for i, url in enumerate(u for u in urls if urlsplit(u).netloc.lower() in CHECKED_WHEN_MISSING):
+        if i:
+            await asyncio.sleep(LIVE_FETCH_PAUSE_S)
+        try:
+            await asyncio.to_thread(fetch, url)
+        except Exception as e:
+            errors[url] = str(e)
+    return errors
+
+
 def missing_urls(target_urls: Iterable[str], found_urls: Iterable[str]) -> list[str]:
     """The targets the crawl did not find, one per page: /spec, /techspec, a trailing
     slash or a query reach the same page, so both sides are compared through the
@@ -507,7 +530,7 @@ async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Itera
     `missing_pages` lists the brand's active targets on the sites the crawl found pages
     on (and switched on) that it did not find, one per page and no Chromebooks, each with
     the catalog laptops that came from it (plan step 11, decision 8: reported, never a
-    status change); empty when
+    status change) and, for a CHECKED_WHEN_MISSING page whose check failed, the `error`; empty when
     the crawl found nothing, which is a failed crawl and not a catalog with no pages.
     """
     brand: Optional[LaptopBrand] = session.get(LaptopBrand, brand_id)
@@ -544,8 +567,11 @@ async def run_feed_crawl(brand_id: UUID, session: Session, hosts: Optional[Itera
     # could have found, so it has not disappeared.
     urls = missing_urls([u for u in targets if _on_hosts(u, covered)], found_urls)
     laptops = page_laptops(session, brand_id, urls)
-    missing = [{"url": u, "laptops": laptops.get(u, [])} for u in urls]
     session.commit()
+    # After the commit: the GETs below hold no pooled connection.
+    errors = await check_missing(urls)
+    missing = [{"url": u, "laptops": laptops.get(u, []), **({"error": errors[u]} if u in errors else {})}
+               for u in urls]
     return {"brand": brand_name, "total_found": len(found_urls), "added_to_queue": added, "sites": sites,
             "missing_pages": missing}
 

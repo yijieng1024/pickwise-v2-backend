@@ -13,13 +13,20 @@ def _completed() -> dict:
                 {"url": "https://rog.asus.com/x/", "laptops": [
                     {"laptop_id": "L5", "model_code": "G814", "product_name": "ROG Strix G18", "status": "active"}]},
                 {"url": "https://www.asus.com/gone/", "laptops": []},
+                {"url": "https://www.asus.com/layout/", "laptops": []},
+                # Not scraped this run: the crawl's own check found the redirect.
+                {"url": "https://www.asus.com/checked/", "laptops": [],
+                 "error": "Redirected to https://www.asus.com/my/laptops/for-home/vivobook/"},
+                {"url": "https://www.asus.com/slow/", "laptops": [], "error": "TimeoutError"},
                 {"url": "https://www.asus.com/still/", "laptops": []}]},
                       "hp": {"error": "TimeoutError: crawl"}},
             "scrape": {"rog": {"pages": 5, "succeeded": 4, "failed": 1, "skipped": 0,
                                "failed_pages": [
                                    # Reached as /spec: still the same page as the crawl's.
                                    {"url": "https://rog.asus.com/x/spec/", "error": "HTTP 404 from x"},
-                                   {"url": "https://www.asus.com/gone", "error": "No spec rows found on the page"},
+                                   {"url": "https://www.asus.com/gone", "error": "Redirected to https://www.asus.com/my/"},
+                                   # A changed layout says this too: not a reason to call a page gone.
+                                   {"url": "https://www.asus.com/layout/", "error": "No spec rows found on the page"},
                                    {"url": "https://rog.asus.com/y/", "error": "TimeoutError"}]}},
             "guides": {"rog": {"filled": 4, "confirmed": 7, "differs_from_guide": 11, "awaiting_confirmation": 5},
                        "business": {"error": "ValueError: no rows"}},
@@ -70,9 +77,13 @@ def test_each_section_of_a_completed_run():
     assert s["SKUs of one laptop at different prices"] == ["- G614JV ROG Strix G16: keeps RM5,999; G614JV-N3 RM6,299"]
     assert s["Pages likely gone: not found by the crawl, and the fetch failed"] == [
         "- https://rog.asus.com/x/ (HTTP 404 from x). From it: G814 ROG Strix G18, active",
-        "- https://www.asus.com/gone/ (No spec rows found on the page). From it: no catalog laptop traced to this page"]
+        "- https://www.asus.com/gone/ (Redirected to https://www.asus.com/my/). From it: no catalog laptop traced to this page",
+        "- https://www.asus.com/checked/ (Redirected to https://www.asus.com/my/laptops/for-home/vivobook/). "
+        "From it: no catalog laptop traced to this page"]
     assert s["Not seen by the crawl, but the page still works"] == ["- 1 page", "- https://www.asus.com/still/"]
-    assert s["Other pages that failed"] == ["- rog: https://rog.asus.com/y/: TimeoutError"]
+    assert s["Other pages that failed"] == ["- rog: https://www.asus.com/layout/: No spec rows found on the page",
+                                            "- rog: https://rog.asus.com/y/: TimeoutError",
+                                            "- asus: https://www.asus.com/slow/: TimeoutError"]
     assert s["Pages that gave no price (the old price was kept)"] == ["- G834-A", "- GU605-B"]
     # Only laptops this run inserted: L7 has no family too, but is not new.
     assert s["New laptops with no family"] == ["- FX608JM TUF A16"]

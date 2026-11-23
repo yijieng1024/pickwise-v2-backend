@@ -842,6 +842,7 @@ from app.pipeline import settings as pipeline_settings  # noqa: E402,F401
 from app.scripts import weekly_pipeline  # noqa: E402,F401
 from app.pipeline import summary as pipeline_summary  # noqa: E402,F401
 from app.scraper import bulk_scraper  # noqa: E402,F401
+from app.scraper import fetch as scraper_fetch  # noqa: E402,F401
 
 
 # The Malaysian day for "today" counts (agent monitoring /stats) - app/common/local_time.py
