@@ -32,6 +32,10 @@ def _completed() -> dict:
                        "business": {"error": "ValueError: no rows"}},
             "process": {"requests_made": 3, "total_new_variants_saved": 2, "total_variants_updated": 1,
                         "skus_attached": [],
+                        "pages_matching_several": [{
+                            "url": "https://www.hp.com/p.html", "sku": "E15ZYPA", "page_name": "HP 14 14-em0298AU Silver",
+                            "laptops": [{"laptop_id": "L3", "model_code": "hp-a", "product_name": "HP 14", "status": "active"},
+                                        {"laptop_id": "L4", "model_code": "hp-b", "product_name": "HP 14", "status": "inactive"}]}],
                         "prices_not_extracted": ["G834-A", "G834-A", "GU605-B"],
                         "writes": [{"laptop_id": "L1", "action": "inserted"},
                                    {"laptop_id": "L2", "action": "inserted"},
@@ -85,6 +89,8 @@ def test_each_section_of_a_completed_run():
                                             "- rog: https://rog.asus.com/y/: TimeoutError",
                                             "- asus: https://www.asus.com/slow/: TimeoutError"]
     assert s["Pages that gave no price (the old price was kept)"] == ["- G834-A", "- GU605-B"]
+    assert s["Pages matching more than one laptop: nothing written, decide which"] == [
+        "- https://www.hp.com/p.html (E15ZYPA, HP 14 14-em0298AU Silver) fits: hp-a HP 14, active; hp-b HP 14, inactive"]
     # Only laptops this run inserted: L7 has no family too, but is not new.
     assert s["New laptops with no family"] == ["- FX608JM TUF A16"]
     assert len(s["Price changes"]) == 2

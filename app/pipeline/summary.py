@@ -159,6 +159,12 @@ def build_summary(result: dict, threshold_percent: int, admin_url: str = "") -> 
         for g in result.get("skus_gone") or []] or ["None."]))
 
     to_check = (steps.get("process") or {}).get("spec_text_to_check") or []
+    several = (steps.get("process") or {}).get("pages_matching_several") or []
+    sections.append(("Pages matching more than one laptop: nothing written, decide which", [
+        f"{p['url']} ({p.get('sku')}, {p.get('page_name')}) fits: "
+        + "; ".join(f"{_laptop(l)}, {l.get('status')}" for l in p.get("laptops") or [])
+        for p in several] or ["None."]))
+
     sections.append(("Spec text to check", [f"{c['product_name']}: {c['field']} {c['value']!r}" for c in to_check]
                      or ["None."]))
 

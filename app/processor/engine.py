@@ -19,7 +19,7 @@ from app.logger import get_logger
 from app.laptops.family_service import resolve_family_id
 from app.laptops.go_live import run_go_live_check
 from app.laptops.laptop_models import Laptop, LaptopPriceHistory, LaptopSku, LaptopStatus, PriceSource
-from app.laptops.sku_match import page_colour, page_specs, same_machine
+from app.laptops.sku_match import MODEL_CODE_RE as _MODEL_CODE_RE, model_code, names_code, page_colour, page_specs, same_machines
 from app.laptops.price_guide import sku_key
 from app.laptops.laptop_category_model import LaptopCategory
 from app.scraper.models import RawScrapLaptop
@@ -163,7 +163,6 @@ def superscript_fields(fields: dict) -> dict:
 
 # An ASUS or Acer model code or SKU: S5406SAL, G615L-MS5068W, A715-59G-54Q6.
 # Three digits at least, so a line name such as "S14" is not read as a code.
-_MODEL_CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{3,5}[A-Z]{0,4}(?:-[A-Z0-9]{2,})*\b")
 
 
 def check_model_code(
@@ -276,7 +275,7 @@ def _variant_fields(variant, brand_id, image_urls, raw_specs_dump) -> dict:
 _RESULT_LISTS = (
     "identity_conflicts", "split_failures", "field_parse_failures", "fields_kept", "apple_configs_skipped",
     "not_on_buy_page", "matched_suspended", "relisted", "price_changes", "prices_not_overwritten", "unresolved_configs",
-    "writes", "skus_attached", "sku_price_differences", "spec_text_to_check",
+    "writes", "skus_attached", "sku_price_differences", "spec_text_to_check", "pages_matching_several",
 )
 
 
@@ -737,6 +736,8 @@ def _process_raw_laptop_data(
         # SKUs attached to a laptop that already existed, and laptops whose SKUs show
         # different prices (decisions 15 and 16).
         skus_attached: list[dict] = []
+        # Pages whose specs fit more than one laptop: written nowhere, for a person.
+        pages_matching_several: list[dict] = []
         sku_price_differences: list[dict] = []
         # CPU or GPU text that still holds a superscript digit after extraction.
         spec_text_to_check: list[dict] = []
@@ -769,16 +770,30 @@ def _process_raw_laptop_data(
                                     "value": value} for field, value in superscript_fields(laptop_data).items()]
 
             existing = _laptop_by_sku(session, sku) if sku else None
+            found_by = "sku" if existing else None
             # No laptop holds the SKU. One machine is sold under several (HP's colour
             # pages, a renamed ROG SKU), so look for the laptop this page is another SKU
             # of: same brand, product line and specs, read from the page's own spec
             # table. None when the specs cannot be read: then the slug decides, as before.
             specs = page_specs(_features) if sku and existing is None else None
             if specs is not None:
-                existing = same_machine(
+                matches = same_machines(
                     _product_name, specs, session.exec(select(Laptop).where(Laptop.brand_id == _brand_id)).all()
                 )
+                if len(matches) > 1:
+                    # Neither the model code nor the status settled it: a guess here put
+                    # one page's name on another laptop. Nothing is written, and the row
+                    # stays failed so every run reports it until a person decides.
+                    pages_matching_several.append({
+                        "raw_id": str(raw_laptop_id), "url": raw_data.source_url, "page_name": _product_name,
+                        "sku": sku, "laptops": [{"laptop_id": str(l.id), "model_code": l.model_code,
+                                                 "product_name": l.product_name, "status": l.status}
+                                                for l in matches],
+                    })
+                    continue
+                existing = matches[0] if matches else None
                 if existing is not None:
+                    found_by = "specs"
                     skus_attached.append({
                         "raw_id": str(raw_laptop_id), "laptop_id": str(existing.id),
                         "model_code": existing.model_code, "sku": sku, "colour": page_colour(_features),
@@ -794,6 +809,7 @@ def _process_raw_laptop_data(
                     laptop_data["model_code"] = f"{laptop_data['model_code']}-{sku.lower()}"
                 else:
                     existing = by_slug
+                    found_by = "slug"
 
             # The price the laptop takes from this page: the page's own, or the lowest of
             # the laptop's SKUs when it has several (decision 16).
@@ -820,9 +836,20 @@ def _process_raw_laptop_data(
                         existing.model_code, existing.price_rm,
                     )
 
+                # The name is the laptop's own page's. Another colour's page (a second
+                # SKU, or attached by specs) found the laptop but is not its page: its
+                # name put 14-em0298AU on the 14-em0306AU laptop.
+                own_page = (
+                    found_by == "slug"
+                    or (found_by == "sku" and (not existing.manufacturer_sku
+                                               or sku_key(existing.manufacturer_sku) == sku_key(sku)))
+                    or names_code(model_code(_product_name), existing)
+                )
                 kept = []
                 for key, value in laptop_data.items():
                     if key == "model_code":  # the lookup key — never overwrite
+                        continue
+                    if key == "product_name" and not own_page:
                         continue
                     # An empty extraction is "not found", not a value: writing it over a
                     # stored one erases data, like the 0 price above.
@@ -889,6 +916,13 @@ def _process_raw_laptop_data(
                 )
                 saved_count += 1
                 writes.append(_write(raw_laptop_id, new_laptop.id, "inserted"))
+
+        if pages_matching_several:
+            raw_data.processing_status = "failed"
+            session.add(raw_data)
+            session.commit()
+            return {"status": "error", "message": "The page's specs fit more than one laptop; nothing was written",
+                    "writes": writes, "pages_matching_several": pages_matching_several}
 
         raw_data.processing_status = "completed"
 

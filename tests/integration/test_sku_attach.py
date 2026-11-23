@@ -49,7 +49,8 @@ def _hp_laptop(session, **over) -> Laptop:
     return laptop
 
 
-def _process(session, monkeypatch, like: Laptop, name: str, features: dict, slug: str, price: float) -> dict:
+def _process(session, monkeypatch, like: Laptop, name: str, features: dict, slug: str, price: float,
+             status: str = "success") -> dict:
     """One page through the processor. The stubbed LLM extracts one variant with the specs
     of *like* under *slug*, a wording no laptop has, so the slug never decides."""
     fields = {field: getattr(like, field, None) for field in ExtractedLaptopVariant.model_fields}
@@ -66,7 +67,7 @@ def _process(session, monkeypatch, like: Laptop, name: str, features: dict, slug
     session.add(raw)
     session.commit()
     result = processor.process_raw_laptop_data(str(raw.id), session)
-    assert result["status"] == "success", result
+    assert result["status"] == status, result
     return result
 
 
@@ -89,6 +90,8 @@ def test_an_hp_colour_page_attaches_to_the_existing_laptop(session, monkeypatch)
     assert _skus(session, laptop.id) == {"E0GP3PA": ("Starlit blue aluminum", 5099.0)}
     session.refresh(laptop)
     assert (laptop.model_code, laptop.manufacturer_sku) == ("hp-omnibook-5-16-ultra5-322-16gb-512gb", "E0GP3PA")
+    # Another colour's page: its name (16-bm0089TU Blue) is not this laptop's.
+    assert laptop.product_name == OMNIBOOK
     assert result["skus_attached"] == [{
         "raw_id": result["writes"][0]["raw_id"], "laptop_id": str(laptop.id), "model_code": laptop.model_code,
         "sku": "E0GP3PA", "colour": "Starlit blue aluminum",
@@ -175,3 +178,46 @@ def test_the_lowest_price_of_a_laptops_skus_wins_and_the_difference_is_reported(
                                          "E0GP3PA": ("Starlit blue aluminum", 5099.0)}
     history = session.exec(select(LaptopPriceHistory.price_rm).where(LaptopPriceHistory.laptop_id == laptop.id)).all()
     assert history == [5099.0], "one change, 5499 to 5099, is one history row"
+
+
+def test_of_two_laptops_that_fit_the_one_naming_the_pages_code_wins(session, monkeypatch):
+    # 22 Nov: the 14-em0298AU page went to the 14-em0306AU laptop, the lower id.
+    other = _hp_laptop(session, product_name="HP OmniBook 5 16 inch Laptop Next Gen AI 16-bm0091TU Gold",
+                       model_code="hp-omnibook-5-16-bm0091tu-ultra5-322-16gb-512gb")
+    own = make_laptop(other.brand_id, **{**{f: getattr(other, f) for f in (
+        "processor_model", "gpu_model", "ram_gb", "ssd_gb", "display_size_inch", "price_rm")},
+        "product_name": "HP OmniBook 5 16 inch Laptop 16-bm0089TU", "model_code": "hp-omnibook-5-16-bm0089tu-x"})
+    session.add(own)
+    session.commit()
+    name = "HP OmniBook 5 16 inch Laptop Next Gen AI 16-bm0089TU Blue"
+
+    result = _process(session, monkeypatch, other, name, _hp_page("E0GP3PA", "Starlit blue aluminum"), "w", 5099.0)
+
+    assert result["skus_attached"][0]["laptop_id"] == str(own.id)
+    session.refresh(own)
+    session.refresh(other)
+    assert own.product_name == name, "the page's own laptop takes its name"
+    assert other.product_name == "HP OmniBook 5 16 inch Laptop Next Gen AI 16-bm0091TU Gold"
+
+
+def test_a_tie_writes_nothing_and_reports_the_page_every_run(session, monkeypatch):
+    first = _hp_laptop(session)
+    second = make_laptop(first.brand_id, **{**{f: getattr(first, f) for f in (
+        "product_name", "processor_model", "gpu_model", "ram_gb", "ssd_gb", "display_size_inch", "price_rm")},
+        "model_code": "hp-omnibook-5-16-duplicate"})
+    session.add(second)
+    session.commit()
+
+    result = _process(session, monkeypatch, first, "HP OmniBook 5 16 inch Laptop Next Gen AI 16-bm0089TU Blue",
+                      _hp_page("E0GP3PA", "Starlit blue aluminum"), "w", 4899.0, status="error")
+
+    [page] = result["pages_matching_several"]
+    assert page["sku"] == "E0GP3PA"
+    assert {l["laptop_id"] for l in page["laptops"]} == {str(first.id), str(second.id)}
+    assert result["writes"] == []
+    raw = session.exec(select(RawScrapLaptop).where(RawScrapLaptop.source_url == "https://example.invalid/w")).one()
+    assert raw.processing_status == "failed", "a failed row is processed, and reported, again next run"
+    for laptop in (first, second):
+        session.refresh(laptop)
+        assert (laptop.product_name, laptop.price_rm, laptop.manufacturer_sku) == (OMNIBOOK, 5099.0, None)
+        assert _skus(session, laptop.id) == {}
