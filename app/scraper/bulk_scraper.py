@@ -29,7 +29,7 @@ from typing import Awaitable, Callable, Iterable, List, Optional
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import or_
+from sqlalchemy import or_, update
 from sqlmodel import Session, select
 
 from app.laptops.brand_model import LaptopBrand
@@ -147,6 +147,8 @@ class BulkScrapeReport:
     #: The SKU of every variant fetched, stored or kept unchanged (the weekly email's
     #: "SKUs no longer on their page").
     skus_seen: List[str] = field(default_factory=list)
+    #: Laptops whose "Last checked" an unchanged page moved: it showed their stored price.
+    prices_confirmed: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +277,33 @@ def unchanged(stored: RawScrapLaptop, fresh: RawScrapLaptop) -> bool:
     )
 
 
+def _page_price(raw_prices) -> float:
+    """The price a raw row holds ("RM12,999.00"), 0 when it holds none ("N/A", "RM0.00")."""
+    first = (raw_prices or [""])[0]
+    text = str(first.get("price", "") if isinstance(first, dict) else first)
+    try:
+        return float(re.sub(r"[^\d.]", "", text) or 0)
+    except ValueError:
+        return 0.0
+
+
+def confirm_price(session: Session, fresh: RawScrapLaptop) -> bool:
+    """Stamp "Last checked" on the laptop holding *fresh*'s SKU when the page, unchanged and
+    so never processed, shows that laptop's stored price, and not 0 (ROG's "unknown").
+    Before, only processing stamped it, so a ROG price confirmed every week read as
+    months old. A Core UPDATE: a confirmed price is not a catalog change, and the mapper
+    event would stamp updated_at and mark every Pick Score stale."""
+    from app.laptops.laptop_models import Laptop
+    from app.processor.engine import _laptop_by_sku
+    sku, price = raw_sku(fresh.raw_specs_dump), _page_price(fresh.raw_prices)
+    laptop = _laptop_by_sku(session, sku) if sku and price > 0 else None
+    if laptop is None or laptop.price_rm != price:
+        return False
+    session.execute(update(Laptop).where(Laptop.id == laptop.id).values(price_checked_at=datetime.now(timezone.utc)))
+    session.commit()
+    return True
+
+
 def stored_rows_of(url: str):
     """The raw rows of one page: the bare URL, or URL?v=N for a multi-variant page. Not a
     prefix match: .../buy-mac/macbook-pro is a prefix of .../buy-mac/macbook-pro-proled-xdr."""
@@ -381,6 +410,7 @@ async def _process_target(
             raw_sku(raw_laptop.raw_specs_dump) is None or unchanged(stored, raw_laptop)
         ):
             url_variants_kept += 1
+            report.prices_confirmed += confirm_price(session, raw_laptop)
             continue
         if stored:
             session.delete(stored)
