@@ -107,14 +107,18 @@ class _Session:
 
 
 def test_market_price_catalog_layer_is_unchanged():
-    """lookup_laptop's year and size rules live in lookup_laptop only: the price tool
-    still scores the year ("TUF A16 2023" stays below its floor) and still returns one
-    best row for an ambiguous name."""
+    """lookup_laptop's year and size rules live in lookup_laptop only, and the price tool
+    still returns one best row for an ambiguous name. Since both strip brackets
+    (match_text), "TUF A16 2023" meets the name's "(2023)" and finds the discontinued
+    row lookup_laptop finds; before, the bracket kept it below the floor."""
     brand = SimpleNamespace(id=1, name="Asus")
     laptops = [SimpleNamespace(id=r["id"], product_name=r["product_name"], brand_id=1, model_code="x",
-                               price_rm=r["price_rm"]) for r in ROWS if r["brand"] == "Asus"]
+                               price_rm=r["price_rm"], status=r["status"], price_checked_at=None)
+               for r in ROWS if r["brand"] == "Asus"]
     session = _Session(laptops, [brand])
-    assert market_price._catalog_lookup("TUF A16 2023", None, session) == {"found": False}
+    a16 = market_price._catalog_lookup("TUF A16 2023", None, session)
+    assert a16["product_name"].startswith("ASUS TUF Gaming A16 Advantage Edition (2023)")
+    assert a16["no_longer_sold"] is True and "official_price_rm" not in a16
     found = market_price._catalog_lookup("TUF F16", None, session)
     assert found["found"] is True and "candidates" not in found
 

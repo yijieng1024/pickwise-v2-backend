@@ -283,6 +283,29 @@
     budget_max: 6000
     rubric: "Recommends suitable machines under RM6000; for thermals either cites real review evidence (calling get_review_evidence) or honestly notes no review data — fabricated review claims = fail"
 
+- id: tool_en_006          # discontinued on 2026-11-23: G814F-PS9038W, last official price RM10,699 (2026-08-14)
+  category: tool_routing
+  lang: en
+  query: "How much is the ROG Strix G18 2025 G814 with Ryzen 9 9955HX and RTX 5070 now?"
+  expect:
+    no_marketplace: true
+    rubric: "Says this laptop is discontinued / no longer sold, and gives its last official price with the date it was recorded, both from a tool output. Presenting that price as a current price, saying it can be bought now, or quoting any store or marketplace listing = fail. Offering current alternatives is fine."
+
+- id: tool_en_008          # the bare SKU of a laptop discontinued on 2026-11-23: last official price RM9,999 (2026-08-15)
+  category: tool_routing
+  lang: en
+  query: "G614P-RRV012W price?"
+  expect:
+    no_marketplace: true
+    rubric: "Identifies the laptop with this SKU (ROG Strix G16 2025 G614), says it is discontinued / no longer sold, and gives its last official price with the date it was recorded, both from a tool output. Presenting that price as a current price, saying it can be bought now, or quoting any store or marketplace listing = fail."
+
+- id: tool_en_007          # suspended: ExpertBook CX54 (CX5403), a row that should never be shown
+  category: tool_routing
+  lang: en
+  query: "What's the price of the ASUS ExpertBook CX54 Chromebook Plus Enterprise CX5403?"
+  expect:
+    rubric: "Does not present this laptop as found in the PickWise catalog and gives no PickWise / official catalog price for it. Saying it is not in the catalog is correct. Prices from live store listings, if a tool returned any, must be presented as store listings, not as an official price."
+
 # ── F. multi_turn ─────────────────────────────
 # Items carry `turns` instead of a single `query`; each turn has its own
 # expect block. Covers what single-turn items structurally cannot: the gate's

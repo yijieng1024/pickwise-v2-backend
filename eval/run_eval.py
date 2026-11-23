@@ -454,6 +454,15 @@ def rule_checks(
         "detail": f"ungrounded={invented}",
     })
 
+    # A discontinued laptop is not on sale: no store or marketplace may be quoted for it.
+    if expect.get("no_marketplace"):
+        named = [m for m in ("shopee", "lazada") if m in (result["text"] or "").lower()]
+        checks.append({
+            "name": "no_marketplace_listings",
+            "passed": not named,
+            "detail": f"named={named}",
+        })
+
     # The case asks for a configuration: the answer must carry a path the tool returned.
     if expect.get("configuration_link"):
         paths = _tool_config_paths(tool_texts)
